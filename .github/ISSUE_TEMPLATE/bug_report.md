@@ -25,7 +25,7 @@ screenshot is usually worth more than a description.
 
 **Environment**
  - Obsidian version: [e.g. 1.10.2]
- - Clew version: [e.g. 1.0.0]
+ - Clew version: [e.g. 0.0.1]
  - Platform: [macOS / Windows / Linux / iOS / Android]
  - Installed via: [Community plugins / manual / BRAT]
 
