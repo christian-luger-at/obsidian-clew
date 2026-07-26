@@ -20,3 +20,6 @@ data.json
 
 # Exclude macOS Finder (System Explorer) View States
 .DS_Store
+
+# Local release staging (assets are uploaded to GitHub releases instead)
+releases/

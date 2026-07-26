@@ -1,0 +1,174 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+PUBLISH=false
+NOTES=""
+BUMP=""
+
+while [[ $# -gt 0 ]]; do
+	case "$1" in
+		--publish|-p)
+			PUBLISH=true
+			shift
+			;;
+		--notes)
+			NOTES="${2:-}"
+			shift 2
+			;;
+		--bump)
+			BUMP="${2:-}"
+			shift 2
+			;;
+		*)
+			echo "Unknown option: $1" >&2
+			exit 1
+			;;
+	esac
+done
+
+# --- Bump the version (optional) --------------------------------------------
+
+if [[ -n "$BUMP" ]]; then
+	if [[ "$BUMP" != "patch" && "$BUMP" != "minor" && "$BUMP" != "major" ]]; then
+		echo "Error: --bump must be one of: patch, minor, major" >&2
+		exit 1
+	fi
+
+	if [[ -n "$(git status --porcelain)" ]]; then
+		echo "Error: working tree has uncommitted changes. Commit or stash them before bumping the version." >&2
+		exit 1
+	fi
+
+	# --no-git-tag-version: we commit and tag ourselves below/in the publish step,
+	# to keep full control and stay consistent whether or not --publish is used.
+	# This still runs the "version" lifecycle script (version-bump.mjs), which
+	# syncs manifest.json and versions.json to the new package.json version.
+	npm version "$BUMP" --no-git-tag-version
+
+	NEW_VERSION=$(node -p "require('./manifest.json').version")
+	# `npm version` also bumps package-lock.json — stage it too, otherwise it is
+	# left modified and the clean-tree check before publishing fails.
+	git add package.json package-lock.json manifest.json versions.json
+	git commit -m "chore: bump version to v${NEW_VERSION}"
+	echo "Bumped version to v${NEW_VERSION}"
+fi
+
+# Read version from manifest.json (reflects any --bump applied above)
+VERSION=$(node -p "require('./manifest.json').version")
+
+# IMPORTANT: the release tag must match manifest.json "version" EXACTLY, with no
+# "v" prefix. Obsidian's community-plugin store (and the auto-updater) look for a
+# GitHub release tagged e.g. "1.1.0" — a "v1.1.0" tag is not recognised.
+TAG="${VERSION}"
+
+# Local staging folder only (cosmetic) — keeps the "v" for readability.
+RELEASE_DIR="releases/v${VERSION}"
+
+echo "Building Clew ${VERSION}..."
+
+# Build production bundle (this also runs the TypeScript type check)
+npm run build
+
+# Create release directory
+mkdir -p "$RELEASE_DIR"
+
+# Copy required Obsidian plugin files
+cp main.js          "$RELEASE_DIR/main.js"
+cp manifest.json    "$RELEASE_DIR/manifest.json"
+cp styles.css       "$RELEASE_DIR/styles.css"
+
+echo ""
+echo "Release ready: $RELEASE_DIR"
+echo "  $(du -sh "$RELEASE_DIR" | cut -f1)  total"
+ls -lh "$RELEASE_DIR"
+
+if [[ "$PUBLISH" != "true" ]]; then
+	echo ""
+	echo "Local build only. Re-run with --publish to also tag, push, and create a GitHub release."
+	exit 0
+fi
+
+# --- Publish to GitHub (optional) -------------------------------------------
+
+echo ""
+echo "Preparing to publish ${TAG} to GitHub..."
+
+if ! command -v gh &> /dev/null; then
+	echo "Error: GitHub CLI ('gh') is not installed. Install it from https://cli.github.com/ and try again." >&2
+	exit 1
+fi
+
+if ! gh auth status &> /dev/null; then
+	echo "Error: 'gh' is not authenticated. Run 'gh auth login' and try again." >&2
+	exit 1
+fi
+
+if [[ -n "$(git status --porcelain)" ]]; then
+	echo "Error: working tree has uncommitted changes. Commit the version bump first (see DEVELOPMENT.md)." >&2
+	exit 1
+fi
+
+if git rev-parse "$TAG" &> /dev/null; then
+	echo "Error: tag '$TAG' already exists." >&2
+	exit 1
+fi
+
+# Release notes: use --notes if provided, otherwise auto-generate them from the
+# Conventional Commits since the previous tag, grouped into Features / Fixes /
+# Other. Noise (chore/ci/test/docs/style/build) is omitted.
+if [[ -z "$NOTES" ]]; then
+	PREV_TAG=$(git describe --tags --abbrev=0 2>/dev/null || true)
+	RANGE="HEAD"
+	[[ -n "$PREV_TAG" ]] && RANGE="${PREV_TAG}..HEAD"
+
+	SUBJECTS=$(git log "$RANGE" --no-merges --pretty='%s' || true)
+	FEATS=$(printf '%s\n' "$SUBJECTS" | sed -n -E 's/^feat(\([^)]*\))?(!)?: /- /p' || true)
+	FIXES=$(printf '%s\n' "$SUBJECTS" | sed -n -E 's/^fix(\([^)]*\))?(!)?: /- /p' || true)
+	OTHERS=$(printf '%s\n' "$SUBJECTS" \
+		| { grep -vE '^(feat|fix|chore|ci|test|docs|style|refactor|build|perf)(\([^)]*\))?(!)?: ' || true; } \
+		| sed '/^$/d; s/^/- /')
+
+	NOTES=""
+	[[ -n "$FEATS"  ]] && NOTES+="### Features"$'\n'"$FEATS"$'\n\n'
+	[[ -n "$FIXES"  ]] && NOTES+="### Fixes"$'\n'"$FIXES"$'\n\n'
+	[[ -n "$OTHERS" ]] && NOTES+="### Other"$'\n'"$OTHERS"$'\n\n'
+
+	[[ -z "$NOTES" ]] && NOTES="Release ${TAG}"
+
+	echo ""
+	echo "Auto-generated release notes:"
+	echo "-----------------------------"
+	printf '%s\n' "$NOTES"
+	echo "-----------------------------"
+fi
+
+read -r -p "Publish ${TAG} to GitHub? This will push a tag and create a public release. [y/N] " CONFIRM
+if [[ "$CONFIRM" != "y" && "$CONFIRM" != "Y" ]]; then
+	echo "Aborted. Local build in $RELEASE_DIR was kept; nothing was pushed."
+	exit 0
+fi
+
+git tag "$TAG"
+# Push the branch and ONLY this release's tag. Never `--tags`: that re-pushes
+# every local tag, re-creating any deleted ones.
+git push origin HEAD
+git push origin "refs/tags/${TAG}"
+
+# Publish the release directly (NOT as a draft): publishing fires the "release"
+# event that attest.yml needs, and Obsidian's plugin review only accepts
+# provenance whose build was triggered by a release. A draft fires no event, so
+# it could never be attested in a way the review accepts.
+#
+# This leaves a short window in which the assets are the locally built ones; the
+# attest workflow rebuilds them in CI and re-uploads them within ~30s. If the
+# review happens to look inside that window, just re-run it.
+gh release create "$TAG" \
+	"$RELEASE_DIR/main.js" \
+	"$RELEASE_DIR/manifest.json" \
+	"$RELEASE_DIR/styles.css" \
+	--title "$TAG" \
+	--notes "$NOTES"
+
+echo ""
+echo "Published ${TAG} to GitHub. The 'Attest release build' workflow now"
+echo "rebuilds and attests the assets, and re-uploads them (~30s)."

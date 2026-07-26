@@ -8,7 +8,12 @@
 		"dev": "node esbuild.config.mjs",
 		"build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
 		"version": "node version-bump.mjs && git add manifest.json versions.json",
-		"lint": "eslint ."
+		"lint": "eslint .",
+		"release": "bash release.sh",
+		"release:publish": "bash release.sh --publish",
+		"release:patch": "bash release.sh --bump patch --publish",
+		"release:minor": "bash release.sh --bump minor --publish",
+		"release:major": "bash release.sh --bump major --publish"
 	},
 	"keywords": [],
 	"license": "0-BSD",
