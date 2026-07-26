@@ -1,8 +1,40 @@
-/*
+.clew-graph-view {
+	position: relative;
+	width: 100%;
+	height: 100%;
+}
 
-This CSS file will be included with your plugin, and
-available in the app when your plugin is enabled.
+.clew-graph-canvas {
+	position: absolute;
+	inset: 0;
+}
 
-If your plugin does not need CSS, delete this file.
+.clew-find-path-button {
+	position: absolute;
+	top: var(--size-4-2);
+	left: var(--size-4-2);
+	z-index: 10;
+}
 
-*/
+.clew-path-panel {
+	position: absolute;
+	top: var(--size-4-2);
+	right: var(--size-4-2);
+	z-index: 10;
+	max-width: 280px;
+	max-height: calc(100% - var(--size-4-4));
+	overflow-y: auto;
+	padding: var(--size-4-3);
+	background: var(--background-primary);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-m);
+	box-shadow: var(--shadow-s);
+}
+
+.clew-path-item {
+	cursor: pointer;
+}
+
+.clew-path-item:hover {
+	color: var(--text-accent);
+}

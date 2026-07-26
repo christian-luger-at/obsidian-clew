@@ -8,6 +8,7 @@ export default defineConfig(
 		'dist',
 		'releases',
 		'spike',
+		'spike-vault',
 		'scripts',
 		'esbuild.config.mjs',
 		'version-bump.mjs',
