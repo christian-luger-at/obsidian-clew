@@ -2,6 +2,7 @@ import { Plugin } from 'obsidian';
 import { DEFAULT_SETTINGS, ClewSettings, ClewSettingTab } from './settings';
 import { CLEW_SPIKE_GRAPH_VIEW, SpikeGraphView } from './graph/basesSpikeView';
 import { CLEW_GRAPH_VIEW, GraphView } from './graph/graphView';
+import { openGraph } from './graph/openGraph';
 
 export default class ClewPlugin extends Plugin {
 	settings!: ClewSettings;
@@ -24,6 +25,15 @@ export default class ClewPlugin extends Plugin {
 		if (!graphRegistered || !spikeRegistered) {
 			console.warn('[Clew] Bases is not enabled in this vault; the graph views are unavailable.');
 		}
+
+		this.addRibbonIcon('lucide-share-2', 'Open graph', () => {
+			void openGraph(this.app);
+		});
+		this.addCommand({
+			id: 'open-graph',
+			name: 'Open graph',
+			callback: () => void openGraph(this.app),
+		});
 
 		this.addCommand({
 			id: 'find-path',
