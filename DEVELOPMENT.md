@@ -105,6 +105,11 @@ That's it! Your updated plugin is now active.
 src/
   main.ts            # plugin entry point and lifecycle management
   settings.ts        # settings interface, defaults, SettingTab UI
+  graph/
+    generateGraph.ts   # deterministic synthetic graph generator (shared by spike/ and scripts/gen-graph-vault.mjs)
+    layoutRunner.ts     # thin wrapper around graphology-layout-forceatlas2's worker-based layout
+    renderer.ts         # sigma.js setup, node styling, image-node program
+    basesSpikeView.ts   # provisional "Graph (spike)" Bases view - see the Spike section below
 ```
 
 As the plugin grows, keep `main.ts` limited to lifecycle (load/unload, registering
@@ -121,6 +126,7 @@ and the example layout in [AGENTS.md](AGENTS.md).
 | `npm run release` | Build and stage a release into `releases/v<version>/` (local only) |
 | `npm run release:publish` | Same, then tag, push, and publish the GitHub release |
 | `npm run release:patch` \| `:minor` \| `:major` | Bump the version, build, and publish in one command |
+| `npm run spike:build` | Build the standalone graph-rendering spike harness (`spike/`) - see below |
 
 ## Testing
 
@@ -132,6 +138,45 @@ If you add tests, [Vitest](https://vitest.dev) is the natural fit: Obsidian is n
 available in a Node environment, so it needs a minimal stub module aliased in the
 Vitest config. Wire the new script into `package.json`, add it to `release.sh`
 before the build step, and update this section plus [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Spike: 10,000-node graph
+
+Before any real feature work, the product-vision doc (section 6) calls for a risk-reduction spike, not a feature: does the chosen stack (Bases View API + Graphology + sigma.js/WebGL + a Web Worker for layout) hold up at vault scale? The plugin currently registers a provisional Bases view, **"Graph (spike)"**, for exactly this. It will be replaced, not extended, once real v1 view design starts.
+
+### 1. Browser harness (no Obsidian needed)
+
+`spike/` renders a synthetic 10,000-node graph in a plain browser tab, using the exact same `src/graph/` modules the real plugin uses - useful as a standing perf-regression check without opening Obsidian at all:
+
+```bash
+npm run spike:build   # bundles spike/main.ts -> spike/dist/bundle.js
+```
+
+Then open `spike/index.html` **through a local static server, not a `file://` URL** (script execution and module loading are unreliable for local files in most browser tooling). Any static server works, for example:
+
+```bash
+python3 -m http.server 4173 --directory spike
+# then open http://localhost:4173
+```
+
+The page logs (prefixed `CLEW_SPIKE`) node/edge counts, layout settle time, and a rolling average frame time. A subset of nodes render with a placeholder image, to exercise sigma's image-node program.
+
+### 2. Real Obsidian integration (only testable in the app)
+
+```bash
+node scripts/gen-graph-vault.mjs   # writes ./spike-vault: 10,000 notes + a .base file
+```
+
+1. Symlink the plugin into the generated vault the same way as [step 2](#2-link-the-plugin-to-obsidian-symlink) above, e.g. `ln -s ~/dev/obsidian-clew spike-vault/.obsidian/plugins/clew`, then open `spike-vault` in Obsidian and enable the plugin.
+2. Open `Clew Spike.base` and switch to the **Graph (spike)** view.
+3. Check: pan, zoom, click a node (should select without noticeable lag), and confirm the ~100 image nodes render their cover image - this exercises `app.vault.getResourcePath()` feeding a WebGL texture, the actually-risky part of "images in nodes" (the browser harness only proves sigma *can* render images at all, not that a real vault image loads cleanly).
+4. Repeat once on an iPad in Obsidian mobile - the one check nothing else substitutes for.
+
+### Abort criteria (from the product-vision doc)
+
+- Unusable on tablet → re-evaluate the renderer entirely.
+- Image rendering disproportionately costly to get working → drop images/icons from scope permanently, before any feature communication.
+
+`spike-vault/` and `spike/dist/` are gitignored - regenerate them locally; they never land in a commit.
 
 ## Build production release
 

@@ -13,7 +13,8 @@
 		"release:publish": "bash release.sh --publish",
 		"release:patch": "bash release.sh --bump patch --publish",
 		"release:minor": "bash release.sh --bump minor --publish",
-		"release:major": "bash release.sh --bump major --publish"
+		"release:major": "bash release.sh --bump major --publish",
+		"spike:build": "node spike/esbuild.mjs"
 	},
 	"keywords": [],
 	"license": "0-BSD",
@@ -28,5 +29,11 @@
 		"obsidian": "latest",
 		"typescript": "^5.8.3",
 		"typescript-eslint": "^8.59.1"
+	},
+	"dependencies": {
+		"@sigma/node-image": "^3.0.0",
+		"graphology": "^0.26.0",
+		"graphology-layout-forceatlas2": "^0.10.1",
+		"sigma": "^3.0.3"
 	}
 }
