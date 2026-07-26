@@ -117,9 +117,17 @@ fi
 # Conventional Commits since the previous tag, grouped into Features / Fixes /
 # Other. Noise (chore/ci/test/docs/style/build) is omitted.
 if [[ -z "$NOTES" ]]; then
-	PREV_TAG=$(git describe --tags --abbrev=0 2>/dev/null || true)
-	RANGE="HEAD"
-	[[ -n "$PREV_TAG" ]] && RANGE="${PREV_TAG}..HEAD"
+	# Find the previous tag (before the one we're about to create).
+	# For the first release, there is no previous tag, so include all commits.
+	PREV_TAG=$(git describe --tags --abbrev=0 HEAD 2>/dev/null || true)
+	if [[ "$PREV_TAG" == "$TAG" ]]; then
+		# The describe returned the current tag (can happen if HEAD is tagged),
+		# so try to find the one before it.
+		PREV_TAG=$(git describe --tags --abbrev=0 "$TAG"^ 2>/dev/null || true)
+	fi
+
+	RANGE="$TAG"
+	[[ -n "$PREV_TAG" ]] && RANGE="${PREV_TAG}..$TAG"
 
 	SUBJECTS=$(git log "$RANGE" --no-merges --pretty='%s' || true)
 	FEATS=$(printf '%s\n' "$SUBJECTS" | sed -n -E 's/^feat(\([^)]*\))?(!)?: /- /p' || true)
