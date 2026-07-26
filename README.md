@@ -1,7 +1,7 @@
 # Clew
 
 [![Version](https://img.shields.io/github/manifest-json/v/christian-luger-at/obsidian-clew?color=blue&label=version)](https://github.com/christian-luger-at/obsidian-clew/releases)
-[![Obsidian minimum version](https://img.shields.io/badge/Obsidian-%E2%89%A5%201.0.0-7c3aed)](https://obsidian.md)
+[![Obsidian minimum version](https://img.shields.io/badge/Obsidian-%E2%89%A5%201.12.0-7c3aed)](https://obsidian.md)
 [![License: 0-BSD](https://img.shields.io/badge/license-0--BSD-blue)](LICENSE)
 [![Build](https://github.com/christian-luger-at/obsidian-clew/actions/workflows/lint.yml/badge.svg)](https://github.com/christian-luger-at/obsidian-clew/actions/workflows/lint.yml)
 [![GitHub issues](https://img.shields.io/github/issues/christian-luger-at/obsidian-clew)](../../issues)
@@ -35,7 +35,7 @@ Not yet published to the community plugin list.
 
 ## Compatibility
 
-- Requires an Obsidian version with **Bases** available.
+- Requires Obsidian **1.12.0** or later (for **Bases**).
 - Works on desktop and mobile.
 
 ## Support
