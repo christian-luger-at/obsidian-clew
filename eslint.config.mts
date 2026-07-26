@@ -10,6 +10,7 @@ export default defineConfig(
 		'spike',
 		'spike-vault',
 		'scripts',
+		'coverage',
 		'esbuild.config.mjs',
 		'version-bump.mjs',
 		'versions.json',
