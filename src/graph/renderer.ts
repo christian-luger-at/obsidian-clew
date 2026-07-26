@@ -35,6 +35,21 @@ export function createRenderer(graph: Graph, container: HTMLElement): Sigma {
 	return new Sigma(graph, container, {
 		nodeProgramClasses: { image: NodeImageProgram },
 		renderEdgeLabels: false,
-		defaultEdgeColor: '#8884',
+		// At vault scale (tens of thousands of edges) even a fairly
+		// transparent edge color saturates into a solid mass once enough
+		// lines overlap - low alpha here matters more than it looks like it
+		// should in isolation.
+		defaultEdgeColor: '#8888881a',
+		hideEdgesOnMove: true,
+		// Level-of-detail: without this, sigma renders a label for nearly
+		// every node regardless of zoom, which is unreadable at vault scale
+		// (thousands of overlapping labels). Raising the threshold means a
+		// node's on-screen size has to cross it before its label shows, so
+		// only hub nodes (sized bigger via sizeNodesByDegree in
+		// vaultGraph.ts) label at low zoom - zooming in grows every node's
+		// screen size and progressively reveals the rest.
+		labelRenderedSizeThreshold: 9,
+		labelDensity: 0.5,
+		hideLabelsOnMove: true,
 	});
 }

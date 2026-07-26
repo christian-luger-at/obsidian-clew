@@ -32,7 +32,6 @@ export function buildVaultGraph(app: App, files: TFile[], options: BuildVaultGra
 			label: file.basename,
 			x: Math.random(),
 			y: Math.random(),
-			size: image ? 6 : 3,
 			color: image ? IMAGE_NODE_COLOR : GRAPH_COLOR,
 			type: image ? 'image' : undefined,
 			image,
@@ -52,8 +51,23 @@ export function buildVaultGraph(app: App, files: TFile[], options: BuildVaultGra
 	}
 
 	stampPathCosts(graph);
+	sizeNodesByDegree(graph);
 
 	return graph;
+}
+
+/**
+ * Sized by degree (not a flat default) so hub notes stand out at a glance
+ * and sigma's label-density threshold (see renderer.ts) naturally shows hub
+ * labels first when zoomed out - without this, a vault-scale graph is an
+ * undifferentiated blob of same-sized dots with every label overlapping.
+ */
+function sizeNodesByDegree(graph: Graph): void {
+	graph.forEachNode((node, attr) => {
+		const base = attr.type === 'image' ? 6 : 3;
+		const size = base + Math.log(1 + graph.degree(node)) * 1.5;
+		graph.setNodeAttribute(node, 'size', size);
+	});
 }
 
 /**
