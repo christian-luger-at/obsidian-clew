@@ -6,5 +6,8 @@
 	"description": "Graph view for Bases. Filter your vault into a graph, find the paths between two notes, and see which clusters have gone quiet.",
 	"author": "Christian Luger",
 	"authorUrl": "https://luger.digital",
+	"fundingUrl": {
+		"Buy Me a Coffee": "https://buymeacoffee.com/christianlugerat"
+	},
 	"isDesktopOnly": false
 }
