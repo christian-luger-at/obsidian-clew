@@ -2,12 +2,8 @@ import { ItemView, WorkspaceLeaf } from 'obsidian';
 import { GraphPane } from './graphPane';
 
 /**
- * The standalone graph view: opened directly via ribbon icon or command, no
- * Base file involved at all. There is no public API to run a Bases query
- * without opening a `.base` file as a leaf, so this can't be filter-driven
- * the way GraphView is - it shows the whole vault's markdown notes instead,
- * closer to the core Graph View. The Bases-integrated GraphView remains the
- * way to get a filtered, declarative subset.
+ * The graph view: opened directly via ribbon icon or command, showing the
+ * whole vault's markdown notes.
  */
 
 export const CLEW_STANDALONE_GRAPH_VIEW = 'clew-standalone-graph';

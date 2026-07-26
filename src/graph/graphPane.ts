@@ -14,17 +14,14 @@ const DIM_NODE_COLOR = '#4b5563';
 const DIM_EDGE_COLOR = '#37415155';
 
 /**
- * Shared graph-rendering + path-finding UI, composed into both the
- * Bases-integrated GraphView (node set = a Base's filter result) and the
- * standalone StandaloneGraphView (node set = the whole vault). Neither
- * Obsidian view base class (BasesView vs. ItemView) can share a common
- * superclass, so this is composed rather than inherited.
+ * Graph-rendering + path-finding UI, composed into StandaloneGraphView
+ * rather than inherited so the rendering/UI logic stays separate from
+ * Obsidian's view lifecycle (onOpen/onClose etc.).
  */
 export class GraphPane {
 	/**
 	 * Tracks the most recently interacted-with pane, so the "Find path"
-	 * command can target "the current graph" regardless of which kind of
-	 * view it lives in - neither BasesView nor a plain ItemView is
+	 * command can target "the current graph" - a plain ItemView isn't
 	 * discoverable via `getActiveViewOfType` the way MarkdownView is.
 	 */
 	private static active: GraphPane | null = null;

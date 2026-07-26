@@ -1,7 +1,7 @@
 {
 	"name": "obsidian-clew",
 	"version": "0.0.1",
-	"description": "Graph view for Bases. Filter your vault into a graph, find the paths between two notes, and see which clusters have gone quiet.",
+	"description": "See your whole vault as a graph and find how any two notes connect, without every path routing through your index notes.",
 	"main": "main.js",
 	"type": "module",
 	"scripts": {

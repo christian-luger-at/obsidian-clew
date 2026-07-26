@@ -6,20 +6,20 @@
 [![Build](https://github.com/christian-luger-at/obsidian-clew/actions/workflows/lint.yml/badge.svg)](https://github.com/christian-luger-at/obsidian-clew/actions/workflows/lint.yml)
 [![GitHub issues](https://img.shields.io/github/issues/christian-luger-at/obsidian-clew)](../../issues)
 
-Graph view for [Bases](https://help.obsidian.md/bases). Filter your vault into a graph, find the paths between two notes, and see which clusters have gone quiet.
+See your whole vault as a graph, and find how any two notes actually connect - without every path routing through your index notes.
 
 A plugin for [Obsidian](https://obsidian.md).
 
 > [!note]
-> **Early development.** The repository is scaffolded and the release tooling is in place, but the graph view itself is still being built. Expect the feature list below to change.
+> **Early development.** The repository is scaffolded and the release tooling is in place, but the plugin itself is still being built. Expect the feature list below to change.
 
 ## What it's for
 
-Obsidian's built-in graph shows you everything at once. Clew starts from a **Base** instead: whatever set of notes your Base defines becomes the graph, so you look at one project, one area, or one tag at a time.
+Obsidian's built-in graph shows you everything at once, but it can't answer "how are X and Y connected?" - and a naive answer to that question almost always routes through a hub note (an index, a MOC, a daily note), which is technically correct and practically useless.
 
-- **Filter your vault into a graph** - the Base is the query; the graph is the view.
-- **Paths between two notes** - pick a start and an end and see how they actually connect.
-- **Quiet clusters** - surface groups of notes that stopped being touched, so stale corners of the vault don't disappear.
+- **See your whole vault as a graph** - open it from the ribbon icon or the **"Open graph"** command, no setup needed.
+- **Find the path between two notes** - pick a start and an end; routing is weighted to avoid cutting through hub notes, with alternative routes shown alongside the best one.
+- **Export a path to Canvas** - turn a found path into an editable `.canvas` file.
 
 ## Installing the plugin
 
@@ -35,8 +35,8 @@ Not yet published to the community plugin list.
 
 ## Compatibility
 
-- Requires Obsidian **1.12.0** or later (for **Bases**).
-- Works on desktop and mobile.
+- Requires Obsidian **1.12.0** or later.
+- Works on desktop. Mobile is declared supported (`isDesktopOnly: false`) but hasn't been verified on a tablet yet - see [DEVELOPMENT.md](DEVELOPMENT.md).
 
 ## Support
 

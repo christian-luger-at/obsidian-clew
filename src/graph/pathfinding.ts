@@ -10,9 +10,9 @@ import { bidirectional } from 'graphology-shortest-path/dijkstra';
  * Each candidate spur search runs against a throwaway `graph.copy()` with
  * the relevant nodes/edges removed, rather than mutating and restoring the
  * live graph - simpler and less error-prone than manual remove/restore
- * bookkeeping, at the cost of a copy per attempt (fine at the scale a
- * Bases-filtered graph is expected to be searched at; switch to
- * remove-then-restore if this turns out to be a hot path on huge graphs).
+ * bookkeeping, at the cost of a copy per attempt (fine for typical vault
+ * sizes; switch to remove-then-restore if this turns out to be a hot path
+ * on huge graphs).
  */
 
 export type PathResult = { found: false } | { found: true; paths: string[][] };

@@ -27,9 +27,8 @@ export interface PathfindingRequest {
 
 /**
  * Note selection is restricted to `candidates` - the notes currently in the
- * Bases-filtered graph, not the whole vault. Picking a note outside that set
- * would just fail to find a path for a confusing reason (it isn't part of
- * the graph being searched at all).
+ * graph being searched. Picking a note outside that set would just fail to
+ * find a path for a confusing reason (it isn't part of the graph at all).
  */
 export class PathfindingModal extends Modal {
 	private sourceFile: TFile | null = null;

@@ -1,8 +1,7 @@
 #!/usr/bin/env node
-// Test-vault generator for the Clew spike (product-vision doc, section 6):
-// 10,000 markdown notes with a hub-heavy link structure, a few with a cover
-// image (to exercise loading a vault image into a WebGL texture via
-// app.vault.getResourcePath()), plus a .base file selecting them.
+// Stress-test vault generator: 10,000 markdown notes with a hub-heavy link
+// structure, a few with a cover image (to exercise loading a vault image
+// into a WebGL texture via app.vault.getResourcePath()).
 //
 // Mirrors the structure of src/graph/generateGraph.ts (same mulberry32 PRNG,
 // same Barabási–Albert preferential attachment), ported to plain JS since
@@ -91,18 +90,5 @@ for (const id of nodeIds) {
 	writeFileSync(join(ROOT, NOTES_FOLDER, `Note ${id}.md`), body);
 }
 
-writeFileSync(
-	join(ROOT, 'Clew Spike.base'),
-	[
-		`filters: file.inFolder("${NOTES_FOLDER}")`,
-		'views:',
-		'  - type: clew-spike-graph',
-		'    name: "Graph (spike)"',
-		'  - type: table',
-		'    name: "All notes"',
-		'',
-	].join('\n'),
-);
-
 console.log(`Wrote ${nodeIds.length} notes, ${edges.length} links, ${imageNodeIds.size} cover images to ${ROOT}/`);
-console.log(`Open ${ROOT} as an Obsidian vault, symlink the plugin (see DEVELOPMENT.md), then open "Clew Spike.base" and switch to "Graph (spike)".`);
+console.log(`Open ${ROOT} as an Obsidian vault, symlink the plugin (see DEVELOPMENT.md), then use the ribbon icon or "Open graph" command.`);

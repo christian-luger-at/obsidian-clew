@@ -1,10 +1,9 @@
 # Security Policy
 
 Clew is a source-available Obsidian plugin maintained by a single person. It runs
-entirely inside Obsidian on your own device: it reads the notes, links, and Bases
-definitions in your vault and renders them as a graph. It has no backend, sends no
-telemetry, and makes no network requests of its own. Security reports are still
-very welcome.
+entirely inside Obsidian on your own device: it reads the notes and links in your
+vault and renders them as a graph. It has no backend, sends no telemetry, and
+makes no network requests of its own. Security reports are still very welcome.
 
 ## Supported versions
 
@@ -54,8 +53,8 @@ surface is small. Examples of **in-scope** reports:
 - Writing to or deleting files outside the vault, or unexpected mutation of notes
   the user did not act on (path traversal, data loss or corruption).
 - Executing arbitrary code or commands as a result of rendering a crafted note,
-  link, frontmatter value, or Base definition - including anything injected into
-  the graph as a node label or tooltip.
+  link, or frontmatter value - including anything injected into the graph as a
+  node label or tooltip.
 - Leaking vault contents off the device (any unexpected network activity).
 - Denial of service that is reachable from vault content rather than vault size -
   for example a crafted link structure that hangs Obsidian regardless of how small
@@ -63,8 +62,8 @@ surface is small. Examples of **in-scope** reports:
 
 Examples of **out of scope** reports:
 
-- Vulnerabilities in Obsidian itself, in Bases, or in any other third-party plugin
-  or dependency. Report those to the respective project. If a dependency advisory
+- Vulnerabilities in Obsidian itself or in any other third-party plugin or
+  dependency. Report those to the respective project. If a dependency advisory
   affects this plugin, a Dependabot alert or an issue is enough.
 - Issues that require an already-compromised device, a malicious Obsidian plugin,
   or physical access.

@@ -103,13 +103,18 @@ That's it! Your updated plugin is now active.
 
 ```bash
 src/
-  main.ts            # plugin entry point and lifecycle management
-  settings.ts        # settings interface, defaults, SettingTab UI
+  main.ts                  # plugin entry point and lifecycle management
+  settings.ts              # settings interface, defaults, SettingTab UI
   graph/
-    generateGraph.ts   # deterministic synthetic graph generator (shared by spike/ and scripts/gen-graph-vault.mjs)
-    layoutRunner.ts     # thin wrapper around graphology-layout-forceatlas2's worker-based layout
-    renderer.ts         # sigma.js setup, node styling, image-node program
-    basesSpikeView.ts   # provisional "Graph (spike)" Bases view - see the Spike section below
+    generateGraph.ts       # deterministic synthetic graph generator (shared by spike/ and scripts/gen-graph-vault.mjs)
+    vaultGraph.ts           # builds a graphology graph from vault files + the link graph
+    layoutRunner.ts         # thin wrapper around graphology-layout-forceatlas2's worker-based layout
+    renderer.ts             # sigma.js setup, node styling, image-node program
+    graphPane.ts             # rendering + find-path UI, composed into the view below
+    standaloneGraphView.ts   # the "Graph" view - ribbon icon / "Open graph" command, whole vault
+    pathfinding.ts           # Yen's k-shortest-paths, hub-avoidance weighting
+    pathfindingModal.ts      # note-picker modal for path finding
+    canvasExport.ts          # export a found path as a .canvas file
 ```
 
 As the plugin grows, keep `main.ts` limited to lifecycle (load/unload, registering
@@ -139,13 +144,13 @@ available in a Node environment, so it needs a minimal stub module aliased in th
 Vitest config. Wire the new script into `package.json`, add it to `release.sh`
 before the build step, and update this section plus [CONTRIBUTING.md](CONTRIBUTING.md).
 
-## Spike: 10,000-node graph
+## Performance testing at scale
 
-Before any real feature work, the product-vision doc (section 6) calls for a risk-reduction spike, not a feature: does the chosen stack (Bases View API + Graphology + sigma.js/WebGL + a Web Worker for layout) hold up at vault scale? The plugin currently registers a provisional Bases view, **"Graph (spike)"**, for exactly this. It will be replaced, not extended, once real v1 view design starts.
+The stack (Graphology + sigma.js/WebGL + a Web Worker for layout) was validated against a 10,000-node graph before path finding was built on top of it. Two tools from that exercise remain as standing perf-regression checks - useful whenever a rendering or layout change might affect how the graph behaves at vault scale.
 
 ### 1. Browser harness (no Obsidian needed)
 
-`spike/` renders a synthetic 10,000-node graph in a plain browser tab, using the exact same `src/graph/` modules the real plugin uses - useful as a standing perf-regression check without opening Obsidian at all:
+`spike/` renders a synthetic 10,000-node graph in a plain browser tab, using the exact same `src/graph/` modules the real plugin uses:
 
 ```bash
 npm run spike:build   # bundles spike/main.ts -> spike/dist/bundle.js
@@ -160,21 +165,19 @@ python3 -m http.server 4173 --directory spike
 
 The page logs (prefixed `CLEW_SPIKE`) node/edge counts, layout settle time, and a rolling average frame time. A subset of nodes render with a placeholder image, to exercise sigma's image-node program.
 
-### 2. Real Obsidian integration (only testable in the app)
+### 2. A large test vault (only testable in the app)
 
 ```bash
-node scripts/gen-graph-vault.mjs   # writes ./spike-vault: 10,000 notes + a .base file
+node scripts/gen-graph-vault.mjs   # writes ./spike-vault: 10,000 notes with a hub-heavy link structure
 ```
 
 1. Symlink the plugin into the generated vault the same way as [step 2](#2-link-the-plugin-to-obsidian-symlink) above, e.g. `ln -s ~/dev/obsidian-clew spike-vault/.obsidian/plugins/clew`, then open `spike-vault` in Obsidian and enable the plugin.
-2. Open `Clew Spike.base` and switch to the **Graph (spike)** view.
-3. Check: pan, zoom, click a node (should select without noticeable lag), and confirm the ~100 image nodes render their cover image - this exercises `app.vault.getResourcePath()` feeding a WebGL texture, the actually-risky part of "images in nodes" (the browser harness only proves sigma *can* render images at all, not that a real vault image loads cleanly).
-4. Repeat once on an iPad in Obsidian mobile - the one check nothing else substitutes for.
+2. Use the ribbon icon or the **"Open graph"** command.
+3. Check: pan, zoom, click a node (should select without noticeable lag), and confirm the ~100 image nodes render their cover image - this exercises `app.vault.getResourcePath()` feeding a WebGL texture (the browser harness only proves sigma *can* render images at all, not that a real vault image loads cleanly).
 
-### Abort criteria (from the product-vision doc)
+### Known open item
 
-- Unusable on tablet → re-evaluate the renderer entirely.
-- Image rendering disproportionately costly to get working → drop images/icons from scope permanently, before any feature communication.
+The graph view has not yet been checked on a tablet (Obsidian mobile). Desktop performance has comfortable margin (steady 60fps at 10k nodes), so this isn't currently blocking feature work, but it hasn't been confirmed either - worth doing before relying on mobile behavior for anything.
 
 `spike-vault/` and `spike/dist/` are gitignored - regenerate them locally; they never land in a commit.
 
@@ -301,7 +304,7 @@ Getting the plugin into the in-app **Community Plugins** browser is a **one-time
 Submissions are checked by an automated bot **and** a human reviewer. Make sure:
 
 - **`manifest.json`** sits in the repo root with a unique `id` (lowercase, hyphenated, no spaces, and must not contain `obsidian` or `plugin`), a `name` that doesn't start with "Obsidian", a concise `description` that doesn't start with the plugin name, plus `author`, `minAppVersion`, and `isDesktopOnly`.
-- **`minAppVersion`** is accurate. Clew builds on **Bases**, so it must not claim support for Obsidian versions that predate the APIs it uses.
+- **`minAppVersion`** is accurate - it must not claim support for Obsidian versions that predate the APIs the plugin uses.
 - **`versions.json`** maps each released plugin version to its minimum Obsidian version.
 - A **`LICENSE`** file and a **`README.md`** (what it does + how to use it) exist.
 - No leftover sample-plugin code, no `console.log`, no obfuscated code - the source is public and reviewable.
@@ -319,7 +322,7 @@ Run `npm run lint` and `npm run build`, then cut the release with `npm run relea
      "id": "clew",
      "name": "Clew",
      "author": "Christian Luger",
-     "description": "Graph view for Bases. Filter your vault into a graph, find the paths between two notes, and see which clusters have gone quiet.",
+     "description": "See your whole vault as a graph and find how any two notes connect, without every path routing through your index notes.",
      "repo": "christian-luger-at/obsidian-clew"
    }
    ```

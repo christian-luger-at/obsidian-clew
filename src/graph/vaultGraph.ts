@@ -11,13 +11,8 @@ export interface BuildVaultGraphOptions {
 
 /**
  * Builds a graphology graph from a node set (files) plus Obsidian's link
- * graph. Takes plain TFiles rather than BasesEntry so it works equally for
- * a Bases-filtered subset (GraphView) and the whole vault (StandaloneGraphView,
- * via app.vault.getMarkdownFiles()) - edges come from
- * app.metadataCache.resolvedLinks either way, filtered down to pairs where
- * both endpoints are in the given file set (for a Bases-filtered set, this
- * is a free preview of the "Ausschluss per Bases-Filter" idea from the
- * path-finding feature, doc section 3.2).
+ * graph - edges come from app.metadataCache.resolvedLinks, filtered down to
+ * pairs where both endpoints are in the given file set.
  *
  * Each edge is also stamped with `pathCost`, used by pathfinding.ts to
  * discourage routing through hub nodes. Deliberately NOT named `weight`:
@@ -50,7 +45,7 @@ export function buildVaultGraph(app: App, files: TFile[], options: BuildVaultGra
 		if (!targets) continue;
 		for (const targetPath of Object.keys(targets)) {
 			if (targetPath === sourcePath) continue;
-			if (!nodePaths.has(targetPath)) continue; // Bases-filtered subgraph
+			if (!nodePaths.has(targetPath)) continue;
 			if (graph.hasEdge(sourcePath, targetPath)) continue;
 			graph.addEdge(sourcePath, targetPath);
 		}
@@ -67,8 +62,7 @@ export function buildVaultGraph(app: App, files: TFile[], options: BuildVaultGra
  * need node-splitting (in/out copies) - real complexity for a first pass.
  * Approximation used here: each edge's cost is the average of its two
  * endpoints' log(1 + degree), still making hub-adjacent edges expensive on
- * both sides without a graph-transformation step. Degree is computed on
- * this already Bases-filtered graph, not the whole vault.
+ * both sides without a graph-transformation step.
  */
 function stampPathCosts(graph: Graph): void {
 	graph.forEachEdge((edge, _attrs, source, target) => {
