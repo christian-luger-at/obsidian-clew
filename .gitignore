@@ -33,3 +33,6 @@ spike/dist/
 # Generated spike test vault (scripts/gen-graph-vault.mjs) - never lands in git
 spike-vault/
 spike-vault.zip
+
+# Test coverage (vitest --coverage)
+coverage/
