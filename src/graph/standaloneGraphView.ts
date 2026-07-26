@@ -41,6 +41,16 @@ export class StandaloneGraphView extends ItemView {
 		this.registerEvent(this.app.vault.on('delete', () => this.scheduleRefresh()));
 		this.registerEvent(this.app.vault.on('rename', () => this.scheduleRefresh()));
 		this.registerEvent(this.app.metadataCache.on('changed', () => this.scheduleRefresh()));
+		// 'changed' fires once a file is indexed, but link resolution (what
+		// populates resolvedLinks - what buildVaultGraph's edges come from)
+		// "happens sometimes after a file has been indexed" per Obsidian's
+		// own doc comment on this event. Without listening for 'resolved'
+		// too, opening the view while a large vault is still resolving links
+		// (e.g. right after Obsidian starts) can permanently miss edges: the
+		// initial refresh() below runs against an incomplete resolvedLinks
+		// map, and unless some other file happens to change afterward,
+		// nothing ever triggers a re-check.
+		this.registerEvent(this.app.metadataCache.on('resolved', () => this.scheduleRefresh()));
 	}
 
 	onClose(): Promise<void> {
