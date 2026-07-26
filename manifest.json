@@ -1,0 +1,10 @@
+{
+	"id": "clew",
+	"name": "Clew",
+	"version": "1.0.0",
+	"minAppVersion": "1.0.0",
+	"description": "Graph view for Bases. Filter your vault into a graph, find the paths between two notes, and see which clusters have gone quiet.",
+	"author": "Christian Luger",
+	"authorUrl": "https://luger.digital",
+	"isDesktopOnly": false
+}
