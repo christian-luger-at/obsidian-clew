@@ -1,4 +1,4 @@
-import { App, BasesEntry, TFile } from 'obsidian';
+import { App, TFile } from 'obsidian';
 import Graph from 'graphology';
 
 const GRAPH_COLOR = '#7c3aed';
@@ -10,12 +10,14 @@ export interface BuildVaultGraphOptions {
 }
 
 /**
- * Builds a graphology graph from a Bases-filtered node set (entries) plus
- * Obsidian's link graph. Bases supplies the node set only - edges come from
- * app.metadataCache.resolvedLinks, filtered down to pairs where both
- * endpoints are in the current Bases result (a free preview of the
- * "Ausschluss per Bases-Filter" idea from the path-finding feature, doc
- * section 3.2). Shared by the graph views (rendering) and pathfinding.ts.
+ * Builds a graphology graph from a node set (files) plus Obsidian's link
+ * graph. Takes plain TFiles rather than BasesEntry so it works equally for
+ * a Bases-filtered subset (GraphView) and the whole vault (StandaloneGraphView,
+ * via app.vault.getMarkdownFiles()) - edges come from
+ * app.metadataCache.resolvedLinks either way, filtered down to pairs where
+ * both endpoints are in the given file set (for a Bases-filtered set, this
+ * is a free preview of the "Ausschluss per Bases-Filter" idea from the
+ * path-finding feature, doc section 3.2).
  *
  * Each edge is also stamped with `pathCost`, used by pathfinding.ts to
  * discourage routing through hub nodes. Deliberately NOT named `weight`:
@@ -23,20 +25,16 @@ export interface BuildVaultGraphOptions {
  * literally named `weight` for its own physics (see layoutRunner.ts), and
  * reusing that name here would silently corrupt the force layout.
  */
-export function buildVaultGraph(
-	app: App,
-	entries: BasesEntry[],
-	options: BuildVaultGraphOptions = {},
-): Graph {
+export function buildVaultGraph(app: App, files: TFile[], options: BuildVaultGraphOptions = {}): Graph {
 	const { directed = false } = options;
 	const graph = new Graph({ type: directed ? 'directed' : 'undirected' });
-	const nodePaths = new Set(entries.map((entry) => entry.file.path));
+	const nodePaths = new Set(files.map((file) => file.path));
 
-	for (const entry of entries) {
-		const cover = entry.getValue('note.cover');
-		const image = cover?.isTruthy() ? resolveImage(app, cover.toString()) : undefined;
-		graph.addNode(entry.file.path, {
-			label: entry.file.basename,
+	for (const file of files) {
+		const cover = app.metadataCache.getFileCache(file)?.frontmatter?.cover as string | undefined;
+		const image = cover ? resolveImage(app, cover) : undefined;
+		graph.addNode(file.path, {
+			label: file.basename,
 			x: Math.random(),
 			y: Math.random(),
 			size: image ? 6 : 3,

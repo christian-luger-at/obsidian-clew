@@ -33,7 +33,10 @@ export class SpikeGraphView extends BasesView {
 		this.renderer?.kill();
 		this.containerEl.empty();
 
-		const graph = buildVaultGraph(this.app, this.data.data);
+		const graph = buildVaultGraph(
+			this.app,
+			this.data.data.map((entry) => entry.file),
+		);
 		this.renderer = createRenderer(graph, this.containerEl);
 		this.layout = runLayout(graph, {
 			durationMs: 6000,
