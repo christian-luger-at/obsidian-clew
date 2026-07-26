@@ -72,7 +72,13 @@ export class GraphView extends BasesView {
 		this.layout?.stop();
 		this.renderer?.kill();
 		this.graphContainerEl.empty();
-		this.clearHighlight();
+		// The old renderer is already killed above, so highlight state on it
+		// is moot - what actually matters is clearing the results panel: it
+		// isn't rebuilt from this.data automatically, so a note deleted (or
+		// filtered out) mid-result would otherwise leave stale entries with
+		// dead click handlers.
+		this.panelEl.empty();
+		this.panelEl.hide();
 
 		this.graph = buildVaultGraph(this.app, this.data.data, { directed: false });
 		this.renderer = createRenderer(this.graph, this.graphContainerEl);
