@@ -73,11 +73,6 @@ export default class ClewPlugin extends Plugin {
 		this.registerDomEvent(activeDocument, 'click', (_evt: MouseEvent) => {
 			new Notice('Click');
 		});
-
-		// When registering intervals, this function will automatically clear the interval when the plugin is disabled.
-		this.registerInterval(
-			window.setInterval(() => console.log('setInterval'), 5 * 60 * 1000),
-		);
 	}
 
 	onunload() {}
