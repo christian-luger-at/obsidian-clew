@@ -7,11 +7,14 @@ import { buildVaultGraph } from './vaultGraph';
 import { findPaths, PathResult } from './pathfinding';
 import { PathfindingModal } from './pathfindingModal';
 import { exportPathToCanvas } from './canvasExport';
+import { CommunityStats, computeCommunityStats, detectCommunities, formatRelativeTime, staleness, stalenessColor } from './stagnation';
 
 const PRIMARY_PATH_COLOR = '#22c55e';
 const ALT_PATH_COLOR = '#eab308';
 const DIM_NODE_COLOR = '#4b5563';
 const DIM_EDGE_COLOR = '#37415155';
+const FOCUS_COMMUNITY_COLOR = '#22c55e';
+const MIN_COMMUNITY_SIZE_SHOWN = 2;
 
 /**
  * Graph-rendering + path-finding UI, composed into StandaloneGraphView
@@ -31,10 +34,13 @@ export class GraphPane {
 
 	private readonly graphContainerEl: HTMLElement;
 	private readonly panelEl: HTMLElement;
+	private readonly stagnationButton: HTMLElement;
 	private renderer: Sigma | null = null;
 	private layout: LayoutRun | null = null;
 	private graph: Graph | null = null;
 	private files: TFile[] = [];
+	private mtimeByPath = new Map<string, number>();
+	private stagnationActive = false;
 
 	constructor(
 		private readonly app: App,
@@ -47,11 +53,13 @@ export class GraphPane {
 		// button/panel below along with the canvases.
 		this.graphContainerEl = this.containerEl.createDiv({ cls: 'clew-graph-canvas' });
 
-		const findPathButton = this.containerEl.createEl('button', {
-			text: 'Find path…',
-			cls: 'clew-find-path-button',
-		});
+		const toolbarEl = this.containerEl.createDiv({ cls: 'clew-toolbar' });
+
+		const findPathButton = toolbarEl.createEl('button', { text: 'Find path…' });
 		findPathButton.addEventListener('click', () => this.openPathfindingModal());
+
+		this.stagnationButton = toolbarEl.createEl('button', { text: 'Stagnation heatmap' });
+		this.stagnationButton.addEventListener('click', () => this.toggleStagnationHeatmap());
 
 		this.panelEl = this.containerEl.createDiv({ cls: 'clew-path-panel' });
 		this.panelEl.hide();
@@ -70,8 +78,11 @@ export class GraphPane {
 		// with dead click handlers.
 		this.panelEl.empty();
 		this.panelEl.hide();
+		this.stagnationActive = false;
+		this.stagnationButton.removeClass('is-active');
 
 		this.files = files;
+		this.mtimeByPath = new Map(files.map((file) => [file.path, file.stat.mtime]));
 		this.graph = buildVaultGraph(this.app, files, { directed: false });
 		this.renderer = createRenderer(this.graph, this.graphContainerEl);
 		this.layout = runLayout(this.graph, { durationMs: 6000 });
@@ -87,6 +98,7 @@ export class GraphPane {
 
 	openPathfindingModal(): void {
 		if (!this.graph) return;
+		this.hideStagnationHeatmap();
 		new PathfindingModal(this.app, this.files, (request) => {
 			this.runPathSearch(request.source, request.target, request.directed);
 		}).open();
@@ -165,6 +177,89 @@ export class GraphPane {
 	private clearHighlight(): void {
 		this.renderer?.setSetting('nodeReducer', null);
 		this.renderer?.setSetting('edgeReducer', null);
+	}
+
+	private toggleStagnationHeatmap(): void {
+		if (this.stagnationActive) {
+			this.hideStagnationHeatmap();
+		} else {
+			this.showStagnationHeatmap();
+		}
+	}
+
+	private showStagnationHeatmap(): void {
+		if (!this.graph) return;
+		this.stagnationActive = true;
+		this.stagnationButton.addClass('is-active');
+
+		const communities = detectCommunities(this.graph);
+		const stats = computeCommunityStats(communities, (nodeId) => this.mtimeByPath.get(nodeId) ?? 0);
+		const newestValues = stats.map((s) => s.newestMtime);
+		const minNewest = Math.min(...newestValues);
+		const maxNewest = Math.max(...newestValues);
+		const colorByCommunity = new Map(
+			stats.map((s) => [s.communityId, stalenessColor(staleness(s.newestMtime, minNewest, maxNewest))]),
+		);
+
+		this.renderer?.setSetting('nodeReducer', (node, attr) => {
+			const communityId = communities.get(node);
+			const color = communityId !== undefined ? colorByCommunity.get(communityId) : undefined;
+			return color ? { ...attr, color } : attr;
+		});
+		this.renderer?.setSetting('edgeReducer', null);
+
+		this.renderStagnationPanel(stats);
+	}
+
+	private hideStagnationHeatmap(): void {
+		if (!this.stagnationActive) return;
+		this.stagnationActive = false;
+		this.stagnationButton.removeClass('is-active');
+		this.clearHighlight();
+		this.panelEl.empty();
+		this.panelEl.hide();
+	}
+
+	private renderStagnationPanel(stats: CommunityStats[]): void {
+		this.panelEl.empty();
+		this.panelEl.show();
+
+		const shown = stats
+			.filter((community) => community.noteCount >= MIN_COMMUNITY_SIZE_SHOWN)
+			.sort((a, b) => a.newestMtime - b.newestMtime);
+
+		if (shown.length === 0) {
+			this.panelEl.createEl('p', { text: `No clusters with ${MIN_COMMUNITY_SIZE_SHOWN}+ notes found.` });
+			return;
+		}
+
+		this.panelEl.createEl('h4', { text: 'Stagnation by cluster (stalest first)' });
+		const list = this.panelEl.createEl('ol');
+		for (const community of shown) {
+			const item = list.createEl('li', { cls: 'clew-path-item' });
+			item.createDiv({ text: `${community.noteCount} notes` });
+			item.createDiv({ text: `newest edit: ${formatRelativeTime(community.newestMtime)}` });
+			item.createDiv({ text: `median edit: ${formatRelativeTime(community.medianMtime)}` });
+			item.addEventListener('click', () => this.focusCommunity(community.nodeIds));
+		}
+	}
+
+	private focusCommunity(nodeIds: string[]): void {
+		if (!this.renderer || !this.graph) return;
+		const graph = this.graph;
+		const nodeSet = new Set(nodeIds);
+		const edgeSet = new Set(
+			graph.edges().filter((edge) => nodeSet.has(graph.source(edge)) && nodeSet.has(graph.target(edge))),
+		);
+
+		this.renderer.setSetting('nodeReducer', (node, attr) => {
+			if (nodeSet.has(node)) return { ...attr, color: FOCUS_COMMUNITY_COLOR, zIndex: 2, forceLabel: true };
+			return { ...attr, color: DIM_NODE_COLOR };
+		});
+		this.renderer.setSetting('edgeReducer', (edge, attr) => {
+			if (edgeSet.has(edge)) return { ...attr, color: FOCUS_COMMUNITY_COLOR, size: 2, zIndex: 2 };
+			return { ...attr, color: DIM_EDGE_COLOR };
+		});
 	}
 
 	private async openNote(vaultPath: string): Promise<void> {

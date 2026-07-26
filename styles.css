@@ -9,11 +9,18 @@
 	inset: 0;
 }
 
-.clew-find-path-button {
+.clew-toolbar {
 	position: absolute;
 	top: var(--size-4-2);
 	left: var(--size-4-2);
 	z-index: 10;
+	display: flex;
+	gap: var(--size-4-2);
+}
+
+.clew-toolbar button.is-active {
+	background-color: var(--interactive-accent);
+	color: var(--text-on-accent);
 }
 
 .clew-path-panel {
