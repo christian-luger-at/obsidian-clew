@@ -162,7 +162,7 @@ describe('stagnation', () => {
 			expect(result).toMatch(/^rgb\(\d+, \d+, \d+\)$/);
 			const match = result.match(/rgb\((\d+), (\d+), (\d+)\)/);
 			expect(match).toBeTruthy();
-			const [_, r, g, b] = match!.map(Number);
+			const [_match, r] = match!.map(Number);
 			// At 0.5, should be roughly midpoint
 			expect(r).toBeGreaterThan(59);
 			expect(r).toBeLessThan(239);
