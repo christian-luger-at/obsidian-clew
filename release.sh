@@ -117,17 +117,17 @@ fi
 # Conventional Commits since the previous tag, grouped into Features / Fixes /
 # Other. Noise (chore/ci/test/docs/style/build) is omitted.
 if [[ -z "$NOTES" ]]; then
-	# Find the previous tag (before the one we're about to create).
-	# For the first release, there is no previous tag, so include all commits.
+	# Find the previous tag (before the one we're about to create). Note:
+	# $TAG itself doesn't exist as a git ref yet at this point - tagging
+	# happens later, after the confirmation prompt below - so the range
+	# must end at HEAD, never at $TAG. (An earlier version of this script
+	# used $TAG here, which made every release's notes silently fall back
+	# to "Release X.Y.Z" instead of real commit-derived notes, since `git
+	# log $PREV_TAG..$TAG` always failed with "unknown revision".)
 	PREV_TAG=$(git describe --tags --abbrev=0 HEAD 2>/dev/null || true)
-	if [[ "$PREV_TAG" == "$TAG" ]]; then
-		# The describe returned the current tag (can happen if HEAD is tagged),
-		# so try to find the one before it.
-		PREV_TAG=$(git describe --tags --abbrev=0 "$TAG"^ 2>/dev/null || true)
-	fi
 
-	RANGE="$TAG"
-	[[ -n "$PREV_TAG" ]] && RANGE="${PREV_TAG}..$TAG"
+	RANGE="HEAD"
+	[[ -n "$PREV_TAG" ]] && RANGE="${PREV_TAG}..HEAD"
 
 	SUBJECTS=$(git log "$RANGE" --no-merges --pretty='%s' || true)
 	FEATS=$(printf '%s\n' "$SUBJECTS" | sed -n -E 's/^feat(\([^)]*\))?(!)?: /- /p' || true)
