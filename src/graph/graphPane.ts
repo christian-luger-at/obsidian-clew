@@ -10,7 +10,7 @@ import { PathfindingModal } from './pathfindingModal';
 import { exportPathToCanvas } from './canvasExport';
 import { CommunityStats, computeCommunityStats, detectCommunities, formatRelativeTime, staleness, stalenessColor } from './stagnation';
 import { readThemeColors, ThemeColors } from './theme';
-import { colorByCategory, sizeByNumericValue } from './visualEncoding';
+import { assignCategoryColors, colorByCategory, sizeByNumericValue } from './visualEncoding';
 import { VisualEncodingModal, VisualEncodingRequest } from './visualEncodingModal';
 import type ClewPlugin from '../main';
 
@@ -18,6 +18,9 @@ import type ClewPlugin from '../main';
 const DRAG_SETTLE_DURATION_MS = 1500;
 
 const MIN_COMMUNITY_SIZE_SHOWN = 2;
+
+/** Caps the visual-encoding legend so a property with many distinct values doesn't turn it into a second scrollable panel. */
+const MAX_LEGEND_CATEGORIES = 8;
 
 /**
  * Graph-rendering + path-finding UI, composed into StandaloneGraphView
@@ -37,6 +40,7 @@ export class GraphPane {
 
 	private readonly graphContainerEl: HTMLElement;
 	private readonly panelEl: HTMLElement;
+	private readonly legendEl: HTMLElement;
 	private readonly stagnationButton: HTMLElement;
 	private readonly searchInputEl: HTMLInputElement;
 	private readonly hierarchicalButton: HTMLButtonElement;
@@ -53,6 +57,8 @@ export class GraphPane {
 	private colorProperty: string | null = null;
 	private sizeProperty: string | null = null;
 	private draggedNode: string | null = null;
+	/** Whether a found path result is the reason nodes/edges are currently colored - see renderLegend()'s precedence over this vs. stagnation/search, which visually override a path's reducer when active. */
+	private pathResultActive = false;
 
 	constructor(
 		private readonly app: App,
@@ -100,6 +106,10 @@ export class GraphPane {
 		this.panelEl = this.containerEl.createDiv({ cls: 'clew-path-panel' });
 		this.panelEl.hide();
 
+		// Bottom-left - opposite the top-left toolbar and top-right path
+		// panel, so it doesn't compete with either for space.
+		this.legendEl = this.containerEl.createDiv({ cls: 'clew-legend' });
+
 		this.containerEl.addEventListener('click', () => {
 			GraphPane.active = this;
 		});
@@ -123,6 +133,7 @@ export class GraphPane {
 		this.colorProperty = null;
 		this.sizeProperty = null;
 		this.visualEncodingButton.removeClass('is-active');
+		this.pathResultActive = false;
 
 		this.files = files;
 		this.mtimeByPath = new Map(files.map((file) => [file.path, file.stat.mtime]));
@@ -133,6 +144,8 @@ export class GraphPane {
 		this.paintVisualEncoding();
 		this.renderer = createRenderer(this.graph, this.graphContainerEl, this.theme.defaultEdgeColor);
 		this.setupNodeDragging();
+		this.setupNodeClick();
+		this.setupNodeHover();
 		this.layout = runLayout(this.graph, { durationMs: 6000 });
 
 		// Proactively disable rather than let the user click and get
@@ -144,6 +157,7 @@ export class GraphPane {
 			? `Too many notes (${this.graph.order}) for hierarchical layout - it doesn't scale past ~${HIERARCHICAL_LAYOUT_NODE_LIMIT}.`
 			: '';
 
+		this.renderLegend();
 		GraphPane.active = this;
 	}
 
@@ -183,10 +197,13 @@ export class GraphPane {
 			// "Kein Pfad gefunden" is a result, not an error (doc 3.2).
 			this.panelEl.createEl('p', { text: 'No path found between these notes.' });
 			this.clearHighlight();
+			this.renderLegend();
 			return;
 		}
 
 		this.applyHighlight(result.paths);
+		this.pathResultActive = true;
+		this.renderLegend();
 
 		result.paths.forEach((path, index) => {
 			this.panelEl.createEl('h4', {
@@ -207,6 +224,7 @@ export class GraphPane {
 		const clearButton = this.panelEl.createEl('button', { text: 'Clear' });
 		clearButton.addEventListener('click', () => {
 			this.clearHighlight();
+			this.renderLegend();
 			this.panelEl.hide();
 		});
 	}
@@ -233,6 +251,7 @@ export class GraphPane {
 	}
 
 	private clearHighlight(): void {
+		this.pathResultActive = false;
 		this.renderer?.setSetting('nodeReducer', null);
 		this.renderer?.setSetting('edgeReducer', null);
 	}
@@ -290,6 +309,64 @@ export class GraphPane {
 		return result;
 	}
 
+	/**
+	 * GitHub issue #13: a small always-visible key explaining what the
+	 * current node/edge colors mean - without it, the graph's coloring
+	 * (which means something different depending on which mode is active)
+	 * is unexplained decoration. Called from every mode-transition point
+	 * rather than computed lazily on render, matching this file's existing
+	 * pattern of pushing state changes into their own DOM update (e.g.
+	 * button `is-active` classes) right where the state changes.
+	 *
+	 * Reflects what's actually painted right now, not merely which piece of
+	 * state happens to be set: stagnation and search both overwrite
+	 * whatever reducer a shown path result set, so they take precedence
+	 * here too, ahead of pathResultActive - otherwise toggling the heatmap
+	 * on top of a shown path would leave the legend describing colors that
+	 * are no longer on screen.
+	 */
+	private renderLegend(): void {
+		this.legendEl.empty();
+
+		if (this.stagnationActive) {
+			this.addLegendItem(rgbToCss(this.theme.freshColorRgb), 'Recently edited cluster');
+			this.addLegendItem(rgbToCss(this.theme.staleColorRgb), 'Stagnant cluster');
+			return;
+		}
+		if (this.searchQuery) {
+			this.addLegendItem(this.theme.matchColor, 'Matches search');
+			this.addLegendItem(this.theme.dimNodeColor, 'No match');
+			return;
+		}
+		if (this.pathResultActive) {
+			this.addLegendItem(this.theme.primaryPathColor, 'Shortest path');
+			this.addLegendItem(this.theme.altPathColor, 'Alternative path');
+			this.addLegendItem(this.theme.dimNodeColor, 'Not on a shown path');
+			return;
+		}
+		if (this.colorProperty) {
+			const values = [...this.propertyValues(this.colorProperty, toStringValue).values()].filter(
+				(value): value is string => value !== undefined,
+			);
+			const entries = [...assignCategoryColors(values).entries()];
+			const shown = entries.slice(0, MAX_LEGEND_CATEGORIES);
+			for (const [value, color] of shown) this.addLegendItem(color, value);
+			if (entries.length > shown.length) {
+				this.legendEl.createDiv({ cls: 'clew-legend-item', text: `+${entries.length - shown.length} more` });
+			}
+			return;
+		}
+
+		this.addLegendItem(this.theme.graphColor, 'Note');
+		this.addLegendItem(this.theme.imageNodeColor, 'Note with cover image');
+	}
+
+	private addLegendItem(color: string, label: string): void {
+		const item = this.legendEl.createDiv({ cls: 'clew-legend-item' });
+		item.createSpan({ cls: 'clew-legend-swatch' }).style.backgroundColor = color;
+		item.createSpan({ text: label });
+	}
+
 	private openVisualEncodingModal(): void {
 		if (!this.graph) return;
 
@@ -307,6 +384,7 @@ export class GraphPane {
 			this.visualEncodingButton.toggleClass('is-active', request.colorProperty !== null || request.sizeProperty !== null);
 			this.paintVisualEncoding();
 			this.renderer?.refresh();
+			this.renderLegend();
 		}).open();
 	}
 
@@ -343,6 +421,7 @@ export class GraphPane {
 		this.paintVisualEncoding();
 		this.clearHighlight();
 		this.renderer?.refresh();
+		this.renderLegend();
 	}
 
 	private toggleHierarchicalLayout(): void {
@@ -487,6 +566,81 @@ export class GraphPane {
 		this.layout = runLayout(this.graph, { durationMs: DRAG_SETTLE_DURATION_MS });
 	}
 
+	/**
+	 * GitHub issue #10: click a node to open its note - matches Obsidian's
+	 * own core Graph View convention (single click opens), rather than
+	 * introducing a different interaction Clew users would have to relearn.
+	 * sigma's own click/drag differentiation (its `draggedEventsTolerance`
+	 * setting) means `clickNode` only fires for a genuine click, not after a
+	 * real drag - confirmed by reading sigma's mouse captor settings, not
+	 * assumed - so this coexists with setupNodeDragging() without a
+	 * conflict, no extra bookkeeping needed here.
+	 */
+	private setupNodeClick(): void {
+		if (!this.renderer) return;
+		this.renderer.on('clickNode', (payload) => {
+			void this.openNote(payload.node);
+		});
+	}
+
+	/**
+	 * GitHub issue #9: hovering a node highlights it and its neighbors,
+	 * dimming the rest - deliberately hover, not click, so it doesn't
+	 * compete with click-to-open (setupNodeClick) for the same gesture.
+	 *
+	 * Composes with whatever mode is currently active (default coloring,
+	 * stagnation heatmap, search, a shown path result) rather than
+	 * replacing it: saves the current nodeReducer/edgeReducer via
+	 * renderer.getSetting() before overlaying the hover highlight, and
+	 * restores exactly those saved reducers on mouse-leave - so hovering
+	 * while, say, the stagnation heatmap is active shows neighbor-highlight
+	 * on top of the heatmap's colors, and un-hovering returns to the
+	 * heatmap exactly as it was, not a reset to plain default coloring.
+	 */
+	private setupNodeHover(): void {
+		if (!this.renderer) return;
+		const renderer = this.renderer;
+
+		// Bridges state between the enterNode/leaveNode handlers below - both
+		// registered once (not re-registered per hover, which would leak a
+		// new leaveNode listener - closured over a *fresh* previous-reducer
+		// pair - on every single hover instead of reusing one).
+		let hoveredNode: string | null = null;
+		let previousNodeReducer = renderer.getSetting('nodeReducer');
+		let previousEdgeReducer = renderer.getSetting('edgeReducer');
+
+		renderer.on('enterNode', (payload) => {
+			if (this.draggedNode || !this.graph) return;
+			const graph = this.graph;
+			hoveredNode = payload.node;
+
+			const neighbors = new Set(graph.neighbors(hoveredNode));
+			neighbors.add(hoveredNode);
+			const incidentEdges = new Set(graph.edges(hoveredNode));
+
+			previousNodeReducer = renderer.getSetting('nodeReducer');
+			previousEdgeReducer = renderer.getSetting('edgeReducer');
+
+			renderer.setSetting('nodeReducer', (n, attr) => {
+				if (!neighbors.has(n)) return { ...attr, color: this.theme.dimNodeColor };
+				const base = previousNodeReducer ? previousNodeReducer(n, attr) : attr;
+				return { ...base, color: this.theme.matchColor, zIndex: 2, forceLabel: true };
+			});
+			renderer.setSetting('edgeReducer', (e, attr) => {
+				if (!incidentEdges.has(e)) return { ...attr, color: this.theme.dimEdgeColor };
+				const base = previousEdgeReducer ? previousEdgeReducer(e, attr) : attr;
+				return { ...base, color: this.theme.matchColor, size: 2, zIndex: 2 };
+			});
+		});
+
+		renderer.on('leaveNode', () => {
+			if (!hoveredNode) return;
+			hoveredNode = null;
+			renderer.setSetting('nodeReducer', previousNodeReducer);
+			renderer.setSetting('edgeReducer', previousEdgeReducer);
+		});
+	}
+
 	private toggleStagnationHeatmap(): void {
 		if (this.stagnationActive) {
 			this.hideStagnationHeatmap();
@@ -498,6 +652,7 @@ export class GraphPane {
 	private showStagnationHeatmap(): void {
 		if (!this.graph) return;
 		this.clearSearch();
+		this.pathResultActive = false;
 		this.stagnationActive = true;
 		this.stagnationButton.addClass('is-active');
 
@@ -521,6 +676,7 @@ export class GraphPane {
 		this.renderer?.setSetting('edgeReducer', null);
 
 		this.renderStagnationPanel(stats);
+		this.renderLegend();
 	}
 
 	private hideStagnationHeatmap(): void {
@@ -530,6 +686,7 @@ export class GraphPane {
 		this.clearHighlight();
 		this.panelEl.empty();
 		this.panelEl.hide();
+		this.renderLegend();
 	}
 
 	private onSearchInput(value: string): void {
@@ -543,9 +700,12 @@ export class GraphPane {
 			this.hideStagnationHeatmap();
 			this.panelEl.empty();
 			this.panelEl.hide();
+			this.pathResultActive = false;
 			this.applyFocusFilter(this.searchQuery);
+			this.renderLegend();
 		} else {
 			this.clearHighlight();
+			this.renderLegend();
 		}
 	}
 
@@ -622,6 +782,10 @@ function edgeKeysAlongPath(graph: Graph, path: string[]): string[] {
 		if (edge !== undefined) keys.push(edge);
 	}
 	return keys;
+}
+
+function rgbToCss(rgb: [number, number, number]): string {
+	return `rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]})`;
 }
 
 function basename(vaultPath: string): string {

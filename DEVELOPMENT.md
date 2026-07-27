@@ -288,6 +288,27 @@ open `test-vault` in Obsidian, then check:
   how many notes have a pinned position, with a "Clear all pinned
   positions" button that actually clears them (verify a previously
   dragged note goes back to its normal position after using it).
+- **Click a node** (GitHub issue #10): should open that note in the editor,
+  same as clicking a node in Obsidian's own core Graph View. Should still
+  work after dragging some other node around.
+- **Hover a node** (GitHub issue #9): should highlight it and its direct
+  neighbors, dimming everything else, without opening the note (that's the
+  click, not the hover). Un-hovering should restore the view exactly as it
+  was before - try hovering while "Stagnation heatmap" or "Find path" is
+  active: the heatmap/path colors should still show through on the
+  highlighted nodes, and un-hovering should return to the heatmap/path view
+  unchanged, not reset to plain default coloring.
+- **Legend** (GitHub issue #13): a small panel, bottom-left, always visible,
+  showing what the current colors mean. Should read "Note" / "Note with
+  cover image" by default; switch to "Shortest path" / "Alternative path" /
+  "Not on a shown path" once "Find path" finds a result; switch to
+  "Recently edited cluster" / "Stagnant cluster" once the stagnation
+  heatmap is on; switch to "Matches search" / "No match" while typing in
+  the search box; and show one swatch per distinct value (capped at 8,
+  with a "+N more" line beyond that) when a "Color by property" is chosen
+  in Visual encoding. Toggling the heatmap or search on top of a shown path
+  result should switch the legend to the heatmap's/search's own labels,
+  not leave it describing the path.
 
 ## Performance testing at scale (rendering)
 

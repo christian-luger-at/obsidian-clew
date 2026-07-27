@@ -28,23 +28,33 @@ const CATEGORICAL_PALETTE = [
 ];
 
 /**
- * Assigns each distinct value in `valueByNode` a stable color from a fixed
- * palette - distinct values are sorted before assigning colors (not
- * assigned in first-seen order), so the same set of values always maps to
- * the same colors regardless of node iteration order, matching this
- * project's other determinism guarantees (see vaultGraph.ts's
- * deterministicPosition). Nodes with an undefined value are simply absent
- * from the returned map - the caller decides the fallback.
+ * Assigns each distinct value a stable color from a fixed palette - values
+ * are sorted before assigning colors (not assigned in first-seen order), so
+ * the same set of values always maps to the same colors regardless of
+ * iteration order, matching this project's other determinism guarantees
+ * (see vaultGraph.ts's deterministicPosition).
+ *
+ * Exported (not just an internal step of colorByCategory) so the legend
+ * (GitHub issue #13) can show the same value->color mapping currently
+ * driving the graph, rather than recomputing or duplicating it.
  */
-export function colorByCategory(valueByNode: Map<string, string | undefined>): Map<string, string> {
-	const distinctValues = [...new Set(valueByNode.values())]
-		.filter((value): value is string => value !== undefined)
-		.sort((a, b) => a.localeCompare(b));
+export function assignCategoryColors(values: Iterable<string>): Map<string, string> {
+	const distinctValues = [...new Set(values)].sort((a, b) => a.localeCompare(b));
 
 	const colorByValue = new Map<string, string>();
 	distinctValues.forEach((value, i) => {
 		colorByValue.set(value, CATEGORICAL_PALETTE[i % CATEGORICAL_PALETTE.length]!);
 	});
+	return colorByValue;
+}
+
+/**
+ * Nodes with an undefined value are simply absent from the returned map -
+ * the caller decides the fallback.
+ */
+export function colorByCategory(valueByNode: Map<string, string | undefined>): Map<string, string> {
+	const definedValues = [...valueByNode.values()].filter((value): value is string => value !== undefined);
+	const colorByValue = assignCategoryColors(definedValues);
 
 	const result = new Map<string, string>();
 	for (const [node, value] of valueByNode) {
