@@ -298,6 +298,21 @@ open `test-vault` in Obsidian, then check:
   active: the heatmap/path colors should still show through on the
   highlighted nodes, and un-hovering should return to the heatmap/path view
   unchanged, not reset to plain default coloring.
+- **Radial layout**: click "Radial layout…", pick `Hub` in the picker, click
+  Apply - `Hub` should land dead center, its direct link neighbors on one
+  ring around it, their neighbors on a ring further out, and `Island X`/
+  `Island Y` (disconnected from `Hub`) on one additional outer ring beyond
+  the farthest reachable ring. Re-picking a different note (e.g. `Topic A`)
+  should re-center around that note instead. Clicking "Radial layout…"
+  again while it's already active should return to the force layout.
+  Dragging a node should do nothing while radial layout is active (same
+  reasoning as hierarchical - see `setupNodeDragging`'s docstring).
+- **Circular layout**: click "Circular layout" - every note should land on
+  a single ring, with directly-linked notes (e.g. `Topic A` and `Topic A -
+  Detail 1`) positioned near each other around the ring rather than
+  scattered, so short chains of links read as short arcs rather than lines
+  crossing the whole circle. Clicking it again should return to the force
+  layout. Dragging should do nothing while it's active.
 - **Legend** (GitHub issue #13): a small panel, bottom-left, always visible,
   showing what the current colors mean. Should read "Note" / "Note with
   cover image" by default; switch to "Shortest path" / "Alternative path" /

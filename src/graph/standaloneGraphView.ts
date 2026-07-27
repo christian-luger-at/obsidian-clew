@@ -27,7 +27,7 @@ export class StandaloneGraphView extends ItemView {
 	}
 
 	getDisplayText(): string {
-		return 'Graph';
+		return 'Clew graph';
 	}
 
 	getIcon(): string {

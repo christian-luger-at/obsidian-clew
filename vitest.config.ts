@@ -18,12 +18,12 @@ export default defineConfig({
 			provider: 'v8',
 			// Scoped to the pure graph-algorithm modules, not all of src/: the
 			// rest (graphPane.ts, standaloneGraphView.ts, pathfindingModal.ts,
-			// renderer.ts, layoutRunner.ts, main.ts, settings.ts) is Obsidian
-			// UI/view-lifecycle or sigma.js rendering wiring that would need a
-			// real Obsidian instance or a browser to meaningfully test - see
-			// DEVELOPMENT.md's Testing section for the reasoning. Coverage
-			// thresholds only mean something where unit tests are the actual
-			// verification strategy.
+			// radialLayoutModal.ts, noteSuggest.ts, renderer.ts, layoutRunner.ts,
+			// main.ts, settings.ts) is Obsidian UI/view-lifecycle or sigma.js
+			// rendering wiring that would need a real Obsidian instance or a
+			// browser to meaningfully test - see DEVELOPMENT.md's Testing
+			// section for the reasoning. Coverage thresholds only mean
+			// something where unit tests are the actual verification strategy.
 			include: [
 				'src/graph/vaultGraph.ts',
 				'src/graph/pathfinding.ts',
@@ -32,6 +32,8 @@ export default defineConfig({
 				'src/graph/generateGraph.ts',
 				'src/graph/hierarchicalLayout.ts',
 				'src/graph/visualEncoding.ts',
+				'src/graph/radialLayout.ts',
+				'src/graph/circularLayout.ts',
 			],
 			reporter: ['text', 'json-summary'],
 			// Mirrors obsidian-focus-first's thresholds: per-file so no single

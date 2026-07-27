@@ -13,8 +13,10 @@
 	position: absolute;
 	top: var(--size-4-2);
 	left: var(--size-4-2);
+	right: var(--size-4-2);
 	z-index: 10;
 	display: flex;
+	flex-wrap: wrap;
 	gap: var(--size-4-2);
 }
 

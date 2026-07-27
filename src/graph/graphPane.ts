@@ -5,8 +5,11 @@ import { createRenderer } from './renderer';
 import { runLayout, LayoutRun } from './layoutRunner';
 import { buildVaultGraph, resetToDeterministicPositions, sizeNodesByDegree } from './vaultGraph';
 import { runHierarchicalLayout, HIERARCHICAL_LAYOUT_NODE_LIMIT } from './hierarchicalLayout';
+import { computeRadialLayout } from './radialLayout';
+import { computeCircularLayout } from './circularLayout';
 import { findPaths, PathResult } from './pathfinding';
 import { PathfindingModal } from './pathfindingModal';
+import { RadialLayoutModal } from './radialLayoutModal';
 import { exportPathToCanvas } from './canvasExport';
 import { CommunityStats, computeCommunityStats, detectCommunities, formatRelativeTime, staleness, stalenessColor } from './stagnation';
 import { readThemeColors, ThemeColors } from './theme';
@@ -21,6 +24,14 @@ const MIN_COMMUNITY_SIZE_SHOWN = 2;
 
 /** Caps the visual-encoding legend so a property with many distinct values doesn't turn it into a second scrollable panel. */
 const MAX_LEGEND_CATEGORIES = 8;
+
+/**
+ * 'force' is the only mode with live physics (ForceAtlas2) and the only one
+ * dragging (setupNodeDragging) or pinning (finishDrag) works against - the
+ * other three lay the whole graph out fresh from a pure function each time,
+ * with no per-node "leave this one alone" concept.
+ */
+type LayoutMode = 'force' | 'hierarchical' | 'radial' | 'circular';
 
 /**
  * Graph-rendering + path-finding UI, composed into StandaloneGraphView
@@ -44,6 +55,9 @@ export class GraphPane {
 	private readonly stagnationButton: HTMLElement;
 	private readonly searchInputEl: HTMLInputElement;
 	private readonly hierarchicalButton: HTMLButtonElement;
+	private readonly radialButton: HTMLButtonElement;
+	private readonly circularButton: HTMLButtonElement;
+	private readonly layoutButtons: HTMLButtonElement[];
 	private readonly visualEncodingButton: HTMLButtonElement;
 	private renderer: Sigma | null = null;
 	private layout: LayoutRun | null = null;
@@ -52,7 +66,7 @@ export class GraphPane {
 	private mtimeByPath = new Map<string, number>();
 	private stagnationActive = false;
 	private searchQuery = '';
-	private hierarchicalActive = false;
+	private layoutMode: LayoutMode = 'force';
 	private theme: ThemeColors;
 	private colorProperty: string | null = null;
 	private sizeProperty: string | null = null;
@@ -86,6 +100,19 @@ export class GraphPane {
 		// graphs (see hierarchicalLayout.ts).
 		this.hierarchicalButton = toolbarEl.createEl('button', { text: 'Hierarchical layout' });
 		this.hierarchicalButton.addEventListener('click', () => this.toggleHierarchicalLayout());
+
+		// Rings the graph out from one chosen note by link distance (see
+		// radialLayout.ts) - needs a focus note, so this opens a picker
+		// rather than toggling straight on like the other layout buttons.
+		this.radialButton = toolbarEl.createEl('button', { text: 'Radial layout…' });
+		this.radialButton.addEventListener('click', () => this.openRadialLayoutModal());
+
+		// All notes on a single ring (see circularLayout.ts) - no
+		// configuration needed, so this toggles directly like hierarchical.
+		this.circularButton = toolbarEl.createEl('button', { text: 'Circular layout' });
+		this.circularButton.addEventListener('click', () => this.toggleCircularLayout());
+
+		this.layoutButtons = [this.hierarchicalButton, this.radialButton, this.circularButton];
 
 		// Doc section 3.1 / GitHub issue #1: color/size driven by a chosen
 		// frontmatter property instead of the fixed image/degree defaults.
@@ -127,8 +154,8 @@ export class GraphPane {
 		this.stagnationActive = false;
 		this.stagnationButton.removeClass('is-active');
 		this.clearSearch();
-		this.hierarchicalActive = false;
-		this.hierarchicalButton.removeClass('is-active');
+		this.layoutMode = 'force';
+		for (const button of this.layoutButtons) button.removeClass('is-active');
 		this.hierarchicalButton.setText('Hierarchical layout');
 		this.colorProperty = null;
 		this.sizeProperty = null;
@@ -424,9 +451,16 @@ export class GraphPane {
 		this.renderLegend();
 	}
 
+	/** Clears every layout button's `is-active` class and activates only the given one (none, for 'force') - kept in one place so the buttons can never end up disagreeing with `layoutMode` or each other. */
+	private activateLayoutMode(mode: LayoutMode, activeButton: HTMLButtonElement | null): void {
+		this.layoutMode = mode;
+		for (const button of this.layoutButtons) button.removeClass('is-active');
+		activeButton?.addClass('is-active');
+	}
+
 	private toggleHierarchicalLayout(): void {
 		if (this.hierarchicalButton.disabled) return;
-		if (this.hierarchicalActive) {
+		if (this.layoutMode === 'hierarchical') {
 			this.setForceLayout();
 		} else {
 			this.setHierarchicalLayout();
@@ -450,25 +484,62 @@ export class GraphPane {
 			runHierarchicalLayout(this.graph);
 			void this.resetCameraAndRefresh();
 
-			this.hierarchicalActive = true;
+			this.activateLayoutMode('hierarchical', this.hierarchicalButton);
 			this.hierarchicalButton.disabled = false;
 			this.hierarchicalButton.setText('Hierarchical layout');
-			this.hierarchicalButton.addClass('is-active');
 		}, 0);
+	}
+
+	private toggleCircularLayout(): void {
+		if (this.layoutMode === 'circular') {
+			this.setForceLayout();
+		} else {
+			this.setCircularLayout();
+		}
+	}
+
+	private setCircularLayout(): void {
+		if (!this.graph) return;
+		this.layout?.stop();
+		computeCircularLayout(this.graph);
+		this.activateLayoutMode('circular', this.circularButton);
+		void this.resetCameraAndRefresh();
+	}
+
+	/**
+	 * Needs a focus note first (radialLayout.ts rings the graph out from
+	 * one), so unlike the other layout buttons this opens a picker instead
+	 * of toggling straight on - but re-clicking it while radial is already
+	 * active still toggles back to force, matching the others.
+	 */
+	private openRadialLayoutModal(): void {
+		if (!this.graph) return;
+		if (this.layoutMode === 'radial') {
+			this.setForceLayout();
+			return;
+		}
+		new RadialLayoutModal(this.app, this.files, (focusFile) => this.setRadialLayout(focusFile.path)).open();
+	}
+
+	private setRadialLayout(focusPath: string): void {
+		if (!this.graph) return;
+		this.layout?.stop();
+		computeRadialLayout(this.graph, focusPath);
+		this.activateLayoutMode('radial', this.radialButton);
+		void this.resetCameraAndRefresh();
 	}
 
 	private setForceLayout(): void {
 		if (!this.graph) return;
-		this.hierarchicalActive = false;
-		this.hierarchicalButton.removeClass('is-active');
+		this.activateLayoutMode('force', null);
 
 		// Restores the deterministic seed rather than letting FA2 relax from
-		// wherever the hierarchical layout left nodes - otherwise the "same
+		// wherever the previous layout left nodes - otherwise the "same
 		// graph looks the same on reopen" guarantee (see vaultGraph.ts)
 		// would depend on layout-switch history, not just the graph itself.
 		// Pinned nodes (GitHub issue #12) are restored to their pin instead,
-		// and kept fixed - hierarchical layout doesn't respect pins, so this
-		// is what makes a pin survive a round trip through it.
+		// and kept fixed - none of the other layouts respect pins, so this
+		// is what makes a pin survive a round trip through any of them.
 		resetToDeterministicPositions(this.graph, this.plugin.settings.pinnedPositions);
 		this.layout = runLayout(this.graph, { durationMs: 6000 });
 		void this.resetCameraAndRefresh();
@@ -496,11 +567,12 @@ export class GraphPane {
 	 * renderer instance (setFiles() creates a new Sigma each time, so this
 	 * runs again each time too) rather than once for the pane's lifetime.
 	 *
-	 * Force-layout only: hierarchical layout lays out the whole graph fresh
-	 * from dagre each time, with no per-node "leave this one alone" concept
-	 * the way ForceAtlas2's `fixed` flag provides - dragging a node there
-	 * would just get overwritten on the next hierarchical run anyway, so
-	 * it's disabled rather than offering an interaction that doesn't stick.
+	 * Force-layout only (see LayoutMode's docstring): every other layout lays
+	 * out the whole graph fresh from a pure function each time, with no
+	 * per-node "leave this one alone" concept the way ForceAtlas2's `fixed`
+	 * flag provides - dragging a node there would just get overwritten on
+	 * the next layout run anyway, so it's disabled rather than offering an
+	 * interaction that doesn't stick.
 	 */
 	private setupNodeDragging(): void {
 		if (!this.renderer) return;
@@ -511,7 +583,7 @@ export class GraphPane {
 		let dragMoved = false;
 
 		renderer.on('downNode', (payload) => {
-			if (this.hierarchicalActive) return;
+			if (this.layoutMode !== 'force') return;
 			this.draggedNode = payload.node;
 			dragMoved = false;
 			renderer.getCamera().disable();
