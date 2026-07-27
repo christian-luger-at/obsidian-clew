@@ -1,5 +1,6 @@
 import { ItemView, WorkspaceLeaf } from 'obsidian';
 import { GraphPane } from './graphPane';
+import type ClewPlugin from '../main';
 
 /**
  * The graph view: opened directly via ribbon icon or command, showing the
@@ -14,7 +15,10 @@ export class StandaloneGraphView extends ItemView {
 	private pane: GraphPane | null = null;
 	private refreshTimer: number | null = null;
 
-	constructor(leaf: WorkspaceLeaf) {
+	constructor(
+		leaf: WorkspaceLeaf,
+		private readonly plugin: ClewPlugin,
+	) {
 		super(leaf);
 	}
 
@@ -31,7 +35,7 @@ export class StandaloneGraphView extends ItemView {
 	}
 
 	async onOpen(): Promise<void> {
-		this.pane = new GraphPane(this.app, this.contentEl);
+		this.pane = new GraphPane(this.app, this.contentEl, this.plugin);
 		this.refresh();
 
 		// Vault-wide, so react to it changing - debounced, since a sync or a

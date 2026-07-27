@@ -1,12 +1,25 @@
 import { App, PluginSettingTab, Setting } from 'obsidian';
 import ClewPlugin from './main';
 
+export interface PinnedPosition {
+	x: number;
+	y: number;
+}
+
 export interface ClewSettings {
-	mySetting: string;
+	/**
+	 * Manually dragged node positions, keyed by note path - GitHub issue
+	 * #12. Not stored in the note's frontmatter (that would be file-content
+	 * editing, a much bigger/riskier feature category per the product-vision
+	 * doc's "Editability" backlog) - a position is presentation state, not
+	 * note content, so it lives in the plugin's own data (this file, backed
+	 * by Obsidian's loadData()/saveData()) instead.
+	 */
+	pinnedPositions: Record<string, PinnedPosition>;
 }
 
 export const DEFAULT_SETTINGS: ClewSettings = {
-	mySetting: 'default',
+	pinnedPositions: {},
 };
 
 export class ClewSettingTab extends PluginSettingTab {
@@ -19,19 +32,25 @@ export class ClewSettingTab extends PluginSettingTab {
 
 	display(): void {
 		const { containerEl } = this;
-
 		containerEl.empty();
 
+		const count = Object.keys(this.plugin.settings.pinnedPositions).length;
+
 		new Setting(containerEl)
-			.setName('Settings #1')
-			.setDesc("It's a secret")
-			.addText((text) =>
-				text
-					.setPlaceholder('Enter your secret')
-					.setValue(this.plugin.settings.mySetting)
-					.onChange(async (value) => {
-						this.plugin.settings.mySetting = value;
+			.setName('Pinned node positions')
+			.setDesc(
+				count === 0
+					? 'No notes have a manually pinned position yet - drag a node in the graph view to pin it.'
+					: `${count} note${count === 1 ? '' : 's'} currently ${count === 1 ? 'has' : 'have'} a pinned position.`,
+			)
+			.addButton((button) =>
+				button
+					.setButtonText('Clear all pinned positions')
+					.setDisabled(count === 0)
+					.onClick(async () => {
+						this.plugin.settings.pinnedPositions = {};
 						await this.plugin.saveSettings();
+						this.display();
 					}),
 			);
 	}

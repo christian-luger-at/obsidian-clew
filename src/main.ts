@@ -10,7 +10,7 @@ export default class ClewPlugin extends Plugin {
 		await this.loadSettings();
 		this.addSettingTab(new ClewSettingTab(this.app, this));
 
-		this.registerView(CLEW_STANDALONE_GRAPH_VIEW, (leaf) => new StandaloneGraphView(leaf));
+		this.registerView(CLEW_STANDALONE_GRAPH_VIEW, (leaf) => new StandaloneGraphView(leaf, this));
 
 		this.addRibbonIcon('lucide-share-2', 'Open graph', () => {
 			void this.activateStandaloneGraphView();

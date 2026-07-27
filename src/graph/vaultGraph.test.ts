@@ -213,4 +213,61 @@ describe('buildVaultGraph', () => {
 			expect(graph.getNodeAttribute('A.md', 'y')).toBe(originalY);
 		});
 	});
+
+	describe('pinned positions (GitHub issue #12)', () => {
+		it('uses a pinned position instead of the deterministic one, and marks the node fixed', () => {
+			const { app, files } = createFakeApp([{ path: 'A.md' }, { path: 'B.md' }]);
+
+			const graph = buildVaultGraph(app, files, { pinnedPositions: { 'A.md': { x: 42, y: 99 } } });
+
+			expect(graph.getNodeAttribute('A.md', 'x')).toBe(42);
+			expect(graph.getNodeAttribute('A.md', 'y')).toBe(99);
+			expect(graph.getNodeAttribute('A.md', 'fixed')).toBe(true);
+		});
+
+		it('leaves an unpinned note with its deterministic position and no fixed attribute', () => {
+			const { app, files } = createFakeApp([{ path: 'A.md' }, { path: 'B.md' }]);
+
+			const graph = buildVaultGraph(app, files, { pinnedPositions: { 'A.md': { x: 42, y: 99 } } });
+
+			expect(graph.getNodeAttribute('B.md', 'x')).not.toBe(42);
+			expect(graph.getNodeAttribute('B.md', 'fixed')).toBeUndefined();
+		});
+
+		it('resetToDeterministicPositions restores a pinned node to its pin, not the hash-derived position', () => {
+			const { app, files } = createFakeApp([{ path: 'A.md' }, { path: 'B.md' }]);
+			const pinnedPositions = { 'A.md': { x: 42, y: 99 } };
+			const graph = buildVaultGraph(app, files, { pinnedPositions });
+
+			// Simulate hierarchical layout having moved the pinned node away,
+			// the exact scenario this exists for (hierarchical doesn't
+			// respect pins - see resetToDeterministicPositions's docstring).
+			graph.setNodeAttribute('A.md', 'x', 12345);
+			graph.setNodeAttribute('A.md', 'y', 12345);
+			graph.setNodeAttribute('A.md', 'fixed', undefined);
+
+			resetToDeterministicPositions(graph, pinnedPositions);
+
+			expect(graph.getNodeAttribute('A.md', 'x')).toBe(42);
+			expect(graph.getNodeAttribute('A.md', 'y')).toBe(99);
+			expect(graph.getNodeAttribute('A.md', 'fixed')).toBe(true);
+		});
+
+		it('resetToDeterministicPositions still resets an unpinned node normally alongside a pinned one', () => {
+			const { app, files } = createFakeApp([{ path: 'A.md' }, { path: 'B.md' }]);
+			const pinnedPositions = { 'A.md': { x: 42, y: 99 } };
+			const graph = buildVaultGraph(app, files, { pinnedPositions });
+
+			const originalBx = Number(graph.getNodeAttribute('B.md', 'x'));
+			const originalBy = Number(graph.getNodeAttribute('B.md', 'y'));
+			graph.setNodeAttribute('B.md', 'x', 777);
+			graph.setNodeAttribute('B.md', 'y', 777);
+
+			resetToDeterministicPositions(graph, pinnedPositions);
+
+			expect(graph.getNodeAttribute('B.md', 'x')).toBe(originalBx);
+			expect(graph.getNodeAttribute('B.md', 'y')).toBe(originalBy);
+			expect(graph.getNodeAttribute('B.md', 'fixed')).toBeUndefined();
+		});
+	});
 });

@@ -274,6 +274,20 @@ open `test-vault` in Obsidian, then check:
   dropdown back to "Default" should restore the original coloring/sizing
   exactly - not a stale value left over from the property that was
   selected before.
+- **Drag to pin a node** (force layout only): drag any note - its
+  *neighbors* should visibly shift/readjust for a second or two after you
+  release it (ForceAtlas2 briefly re-settling around the now-fixed
+  dropped node - see `DRAG_SETTLE_DURATION_MS` in `graphPane.ts`), not
+  just the dragged node jumping with nothing else reacting. Close and
+  reopen the graph view (or reload the plugin) - the dragged note should
+  reappear exactly where you dropped it, not back at its deterministic
+  starting position. A plain click (no movement) must NOT pin the note
+  where it already was. Try dragging while "Hierarchical layout" is
+  active - dragging should do nothing there (by design, see
+  `setupNodeDragging`'s docstring). Check Settings → Clew: it should show
+  how many notes have a pinned position, with a "Clear all pinned
+  positions" button that actually clears them (verify a previously
+  dragged note goes back to its normal position after using it).
 
 ## Performance testing at scale (rendering)
 

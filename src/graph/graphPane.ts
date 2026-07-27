@@ -12,6 +12,10 @@ import { CommunityStats, computeCommunityStats, detectCommunities, formatRelativ
 import { readThemeColors, ThemeColors } from './theme';
 import { colorByCategory, sizeByNumericValue } from './visualEncoding';
 import { VisualEncodingModal, VisualEncodingRequest } from './visualEncodingModal';
+import type ClewPlugin from '../main';
+
+/** How long ForceAtlas2 briefly re-runs after a drag ends, so neighbors visibly adapt to the dropped node's new (now fixed) position - much shorter than the initial 6s settle, since this is just a local readjustment, not settling the whole graph from scratch. */
+const DRAG_SETTLE_DURATION_MS = 1500;
 
 const MIN_COMMUNITY_SIZE_SHOWN = 2;
 
@@ -48,10 +52,12 @@ export class GraphPane {
 	private theme: ThemeColors;
 	private colorProperty: string | null = null;
 	private sizeProperty: string | null = null;
+	private draggedNode: string | null = null;
 
 	constructor(
 		private readonly app: App,
 		private readonly containerEl: HTMLElement,
+		private readonly plugin: ClewPlugin,
 	) {
 		this.containerEl.classList.add('clew-graph-view');
 		this.theme = readThemeColors(this.containerEl);
@@ -120,9 +126,13 @@ export class GraphPane {
 
 		this.files = files;
 		this.mtimeByPath = new Map(files.map((file) => [file.path, file.stat.mtime]));
-		this.graph = buildVaultGraph(this.app, files, { directed: false });
+		this.graph = buildVaultGraph(this.app, files, {
+			directed: false,
+			pinnedPositions: this.plugin.settings.pinnedPositions,
+		});
 		this.paintVisualEncoding();
 		this.renderer = createRenderer(this.graph, this.graphContainerEl, this.theme.defaultEdgeColor);
+		this.setupNodeDragging();
 		this.layout = runLayout(this.graph, { durationMs: 6000 });
 
 		// Proactively disable rather than let the user click and get
@@ -377,7 +387,10 @@ export class GraphPane {
 		// wherever the hierarchical layout left nodes - otherwise the "same
 		// graph looks the same on reopen" guarantee (see vaultGraph.ts)
 		// would depend on layout-switch history, not just the graph itself.
-		resetToDeterministicPositions(this.graph);
+		// Pinned nodes (GitHub issue #12) are restored to their pin instead,
+		// and kept fixed - hierarchical layout doesn't respect pins, so this
+		// is what makes a pin survive a round trip through it.
+		resetToDeterministicPositions(this.graph, this.plugin.settings.pinnedPositions);
 		this.layout = runLayout(this.graph, { durationMs: 6000 });
 		void this.resetCameraAndRefresh();
 	}
@@ -396,6 +409,82 @@ export class GraphPane {
 	private async resetCameraAndRefresh(): Promise<void> {
 		await this.renderer?.getCamera().animatedReset();
 		this.renderer?.refresh();
+	}
+
+	/**
+	 * GitHub issue #12: drag a node to reposition it, with neighbors visibly
+	 * adapting and the new position persisted. Wired up fresh against every
+	 * renderer instance (setFiles() creates a new Sigma each time, so this
+	 * runs again each time too) rather than once for the pane's lifetime.
+	 *
+	 * Force-layout only: hierarchical layout lays out the whole graph fresh
+	 * from dagre each time, with no per-node "leave this one alone" concept
+	 * the way ForceAtlas2's `fixed` flag provides - dragging a node there
+	 * would just get overwritten on the next hierarchical run anyway, so
+	 * it's disabled rather than offering an interaction that doesn't stick.
+	 */
+	private setupNodeDragging(): void {
+		if (!this.renderer) return;
+		const renderer = this.renderer;
+		// Tracks whether the mouse actually moved between downNode and
+		// mouseup - a plain click (mousedown+mouseup, no movement) must NOT
+		// pin the node where it already was; only a real drag should.
+		let dragMoved = false;
+
+		renderer.on('downNode', (payload) => {
+			if (this.hierarchicalActive) return;
+			this.draggedNode = payload.node;
+			dragMoved = false;
+			renderer.getCamera().disable();
+		});
+
+		renderer.getMouseCaptor().on('mousemovebody', (coordinates) => {
+			if (!this.draggedNode || !this.graph) return;
+			dragMoved = true;
+			const position = renderer.viewportToGraph(coordinates);
+			this.graph.setNodeAttribute(this.draggedNode, 'x', position.x);
+			this.graph.setNodeAttribute(this.draggedNode, 'y', position.y);
+
+			// Otherwise sigma also tries to pan/select on the same drag.
+			coordinates.preventSigmaDefault();
+			coordinates.original.preventDefault();
+			coordinates.original.stopPropagation();
+		});
+
+		const endDrag = (): void => {
+			if (!this.draggedNode) return;
+			if (dragMoved) this.finishDrag(this.draggedNode);
+			this.draggedNode = null;
+			renderer.getCamera().enable();
+		};
+		renderer.getMouseCaptor().on('mouseup', endDrag);
+		// Also on mouseleave, so releasing the button outside the canvas
+		// doesn't leave a drag "stuck" with the camera permanently disabled.
+		renderer.getMouseCaptor().on('mouseleave', endDrag);
+	}
+
+	/**
+	 * Pins the dropped node at its current position (persisted via
+	 * ClewPlugin's settings - see settings.ts's PinnedPosition) and marks it
+	 * `fixed` so future layout runs never move it again, then briefly
+	 * re-runs ForceAtlas2 (DRAG_SETTLE_DURATION_MS, much shorter than the
+	 * initial 6s settle) so its neighbors visibly readjust to the new
+	 * position - the whole point of using FA2's `fixed` flag rather than a
+	 * dumber "just move it and freeze everything" drag, see
+	 * vaultGraph.ts's BuildVaultGraphOptions.pinnedPositions docstring for
+	 * why this makes neighbors adapt instead of the pin sitting there inert.
+	 */
+	private finishDrag(node: string): void {
+		if (!this.graph) return;
+		const x = Number(this.graph.getNodeAttribute(node, 'x'));
+		const y = Number(this.graph.getNodeAttribute(node, 'y'));
+		this.graph.setNodeAttribute(node, 'fixed', true);
+
+		this.plugin.settings.pinnedPositions[node] = { x, y };
+		void this.plugin.saveSettings();
+
+		this.layout?.stop();
+		this.layout = runLayout(this.graph, { durationMs: DRAG_SETTLE_DURATION_MS });
 	}
 
 	private toggleStagnationHeatmap(): void {

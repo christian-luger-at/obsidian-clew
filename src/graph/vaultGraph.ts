@@ -1,9 +1,27 @@
 import { App, TFile } from 'obsidian';
 import Graph from 'graphology';
 
+export interface PinnedPosition {
+	x: number;
+	y: number;
+}
+
 export interface BuildVaultGraphOptions {
 	/** "Undirected by default, with a toggle" (doc section 3.2). */
 	directed?: boolean;
+	/**
+	 * Manually dragged positions (GitHub issue #12), keyed by note path -
+	 * used instead of deterministicPosition() for whichever notes have one,
+	 * and marks that node `fixed` so ForceAtlas2 never moves it (see
+	 * layoutRunner.ts / graphology-layout-forceatlas2's own support for this
+	 * - forces to/from a fixed node's neighbors still apply, only the fixed
+	 * node's own position is left alone, which is what makes a drag's
+	 * neighbors visibly adapt instead of the pin just sitting there inert).
+	 * Persisted by GraphPane via ClewPlugin's settings, not passed here as
+	 * anything more than plain data - this module stays Obsidian-Plugin/data
+	 * free.
+	 */
+	pinnedPositions?: Record<string, PinnedPosition>;
 }
 
 /**
@@ -26,18 +44,20 @@ export interface BuildVaultGraphOptions {
  * set here since it's structural, not a style choice.
  */
 export function buildVaultGraph(app: App, files: TFile[], options: BuildVaultGraphOptions = {}): Graph {
-	const { directed = false } = options;
+	const { directed = false, pinnedPositions = {} } = options;
 	const graph = new Graph({ type: directed ? 'directed' : 'undirected' });
 	const nodePaths = new Set(files.map((file) => file.path));
 
 	for (const file of files) {
 		const cover = app.metadataCache.getFileCache(file)?.frontmatter?.cover as string | undefined;
 		const image = cover ? resolveImage(app, cover) : undefined;
-		const position = deterministicPosition(file.path);
+		const pinned = pinnedPositions[file.path];
+		const position = pinned ?? deterministicPosition(file.path);
 		graph.addNode(file.path, {
 			label: file.basename,
 			x: position.x,
 			y: position.y,
+			fixed: pinned ? true : undefined,
 			type: image ? 'image' : undefined,
 			image,
 		});
@@ -100,12 +120,20 @@ function fnv1a(str: string): number {
  * hierarchical layout (hierarchicalLayout.ts) to the force layout, so
  * ForceAtlas2 relaxes from the same stable starting scatter it always does,
  * rather than continuing from wherever the hierarchical layout left nodes.
+ *
+ * A node with a pinned position (GitHub issue #12) is restored to *that*
+ * position instead, and kept `fixed` - hierarchical layout doesn't respect
+ * pins (dagre lays out the whole graph fresh, no per-node exceptions), so
+ * without this a pin would silently not survive a hierarchical-then-back-
+ * to-force round trip.
  */
-export function resetToDeterministicPositions(graph: Graph): void {
+export function resetToDeterministicPositions(graph: Graph, pinnedPositions: Record<string, PinnedPosition> = {}): void {
 	graph.forEachNode((node) => {
-		const position = deterministicPosition(node);
+		const pinned = pinnedPositions[node];
+		const position = pinned ?? deterministicPosition(node);
 		graph.setNodeAttribute(node, 'x', position.x);
 		graph.setNodeAttribute(node, 'y', position.y);
+		graph.setNodeAttribute(node, 'fixed', pinned ? true : undefined);
 	});
 }
 
