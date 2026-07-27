@@ -132,4 +132,67 @@ describe('buildVaultGraph', () => {
 		// base size (3) + log(1 + 0) * 1.5 === 3
 		expect(graph.getNodeAttribute('Isolated.md', 'size')).toBe(3);
 	});
+
+	describe('deterministic layout positions', () => {
+		it('gives the same node the same starting position across independent builds', () => {
+			// The actual "same graph looks the same on reopen" property -
+			// two unrelated buildVaultGraph calls (simulating two separate
+			// vault opens) must place A.md identically.
+			const fixtureA = createFakeApp([{ path: 'A.md' }, { path: 'B.md' }]);
+			const fixtureB = createFakeApp([{ path: 'A.md' }, { path: 'B.md' }]);
+
+			const graphA = buildVaultGraph(fixtureA.app, fixtureA.files);
+			const graphB = buildVaultGraph(fixtureB.app, fixtureB.files);
+
+			expect(graphA.getNodeAttribute('A.md', 'x')).toBe(graphB.getNodeAttribute('A.md', 'x'));
+			expect(graphA.getNodeAttribute('A.md', 'y')).toBe(graphB.getNodeAttribute('A.md', 'y'));
+		});
+
+		it('gives different notes different starting positions', () => {
+			const { app, files } = createFakeApp([{ path: 'A.md' }, { path: 'B.md' }]);
+			const graph = buildVaultGraph(app, files);
+
+			const a = { x: Number(graph.getNodeAttribute('A.md', 'x')), y: Number(graph.getNodeAttribute('A.md', 'y')) };
+			const b = { x: Number(graph.getNodeAttribute('B.md', 'x')), y: Number(graph.getNodeAttribute('B.md', 'y')) };
+
+			expect(a).not.toEqual(b);
+		});
+
+		it('decorrelates x and y for the same note (not on the diagonal)', () => {
+			const { app, files } = createFakeApp([{ path: 'A.md' }]);
+			const graph = buildVaultGraph(app, files);
+
+			expect(graph.getNodeAttribute('A.md', 'x')).not.toBe(graph.getNodeAttribute('A.md', 'y'));
+		});
+
+		it('produces positions within [0, 1)', () => {
+			const { app, files } = createFakeApp([{ path: 'A.md' }, { path: 'Some/Nested/Path.md' }]);
+			const graph = buildVaultGraph(app, files);
+
+			graph.forEachNode((node) => {
+				const x = Number(graph.getNodeAttribute(node, 'x'));
+				const y = Number(graph.getNodeAttribute(node, 'y'));
+				expect(x).toBeGreaterThanOrEqual(0);
+				expect(x).toBeLessThan(1);
+				expect(y).toBeGreaterThanOrEqual(0);
+				expect(y).toBeLessThan(1);
+			});
+		});
+
+		it('keeps an existing note at the same position when an unrelated note is added', () => {
+			// The point of hashing per-node-id rather than consuming a single
+			// global RNG in file order: a vault refresh after one note is
+			// created shouldn't reshuffle where every *other* note starts.
+			const before = createFakeApp([{ path: 'A.md' }, { path: 'B.md' }]);
+			const after = createFakeApp([{ path: 'A.md' }, { path: 'B.md' }, { path: 'C.md' }]);
+
+			const graphBefore = buildVaultGraph(before.app, before.files);
+			const graphAfter = buildVaultGraph(after.app, after.files);
+
+			expect(graphAfter.getNodeAttribute('A.md', 'x')).toBe(graphBefore.getNodeAttribute('A.md', 'x'));
+			expect(graphAfter.getNodeAttribute('A.md', 'y')).toBe(graphBefore.getNodeAttribute('A.md', 'y'));
+			expect(graphAfter.getNodeAttribute('B.md', 'x')).toBe(graphBefore.getNodeAttribute('B.md', 'x'));
+			expect(graphAfter.getNodeAttribute('B.md', 'y')).toBe(graphBefore.getNodeAttribute('B.md', 'y'));
+		});
+	});
 });

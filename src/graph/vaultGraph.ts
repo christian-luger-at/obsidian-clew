@@ -28,10 +28,11 @@ export function buildVaultGraph(app: App, files: TFile[], options: BuildVaultGra
 	for (const file of files) {
 		const cover = app.metadataCache.getFileCache(file)?.frontmatter?.cover as string | undefined;
 		const image = cover ? resolveImage(app, cover) : undefined;
+		const position = deterministicPosition(file.path);
 		graph.addNode(file.path, {
 			label: file.basename,
-			x: Math.random(),
-			y: Math.random(),
+			x: position.x,
+			y: position.y,
 			color: image ? IMAGE_NODE_COLOR : GRAPH_COLOR,
 			type: image ? 'image' : undefined,
 			image,
@@ -54,6 +55,39 @@ export function buildVaultGraph(app: App, files: TFile[], options: BuildVaultGra
 	sizeNodesByDegree(graph);
 
 	return graph;
+}
+
+/**
+ * Deterministic (x, y) in [0, 1), derived purely from the node's own id -
+ * not a single global RNG seed consumed in file-iteration order. Addresses
+ * a named complaint about the core Graph View: reopening the same vault (or
+ * even just refreshing after an unrelated note changes) used to scatter
+ * every note to a fresh Math.random() position, so the layout never looked
+ * "the same" twice. Per-node hashing also means an unrelated file being
+ * added/removed doesn't shift where *other* notes start - only the
+ * changed note's own position is new, which keeps FA2's relaxation stable
+ * across incremental vault refreshes, not just across a full reopen.
+ *
+ * FNV-1a: fast, well-distributed for this (not cryptographic - collisions
+ * are not remotely a concern at real-vault node counts).
+ */
+function deterministicPosition(nodeId: string): { x: number; y: number } {
+	return {
+		x: fnv1a(nodeId) / 0xffffffff,
+		// Different hash input (not just a different seed) so x and y are
+		// decorrelated - reusing the same hash for both would place every
+		// node exactly on the diagonal.
+		y: fnv1a(`${nodeId}:y`) / 0xffffffff,
+	};
+}
+
+function fnv1a(str: string): number {
+	let hash = 0x811c9dc5;
+	for (let i = 0; i < str.length; i++) {
+		hash ^= str.charCodeAt(i);
+		hash = Math.imul(hash, 0x01000193);
+	}
+	return hash >>> 0;
 }
 
 /**

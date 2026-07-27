@@ -233,6 +233,15 @@ open `test-vault` in Obsidian, then check:
   while a search is active should clear the search box; typing in the
   search box while the heatmap is active should turn the heatmap off (all
   three modes are mutually exclusive).
+- **Deterministic layout**: close and reopen the graph view (or reload the
+  plugin) a few times - each note should *start* the force layout from the
+  same position every time, so the settled result looks recognizably the
+  same rather than a fresh scatter on every open. Not pixel-exact (FA2's
+  Worker runs for a fixed wall-clock budget, not a fixed iteration count -
+  see `vaultGraph.ts`'s `deterministicPosition` docstring for why only the
+  starting positions, not the physics run itself, are seeded), but the
+  overall arrangement and which notes end up near each other should be
+  stable.
 
 ## Performance testing at scale (rendering)
 
