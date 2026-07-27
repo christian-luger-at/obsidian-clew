@@ -242,7 +242,7 @@ export class GraphPane {
 		window.setTimeout(() => {
 			if (!this.graph) return;
 			runHierarchicalLayout(this.graph);
-			void this.renderer?.getCamera().animatedReset();
+			void this.resetCameraAndRefresh();
 
 			this.hierarchicalActive = true;
 			this.hierarchicalButton.disabled = false;
@@ -262,7 +262,23 @@ export class GraphPane {
 		// would depend on layout-switch history, not just the graph itself.
 		resetToDeterministicPositions(this.graph);
 		this.layout = runLayout(this.graph, { durationMs: 6000 });
-		void this.renderer?.getCamera().animatedReset();
+		void this.resetCameraAndRefresh();
+	}
+
+	/**
+	 * Camera reset alone isn't enough after a bulk position change (switching
+	 * layouts moves every node at once, unlike FA2's gradual per-frame
+	 * relaxation): sigma's `hideEdgesOnMove` treats a running camera
+	 * animation as "moving" and hides edges for its duration, but sigma's
+	 * render loop is event-driven, not continuous - if nothing schedules a
+	 * repaint after the animation's last frame, the view can be left
+	 * showing that final "still moving, edges hidden" frame indefinitely.
+	 * Explicitly refreshing once the animation's promise resolves guarantees
+	 * one more paint against the now-idle camera state.
+	 */
+	private async resetCameraAndRefresh(): Promise<void> {
+		await this.renderer?.getCamera().animatedReset();
+		this.renderer?.refresh();
 	}
 
 	private toggleStagnationHeatmap(): void {
