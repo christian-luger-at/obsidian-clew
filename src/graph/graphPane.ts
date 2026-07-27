@@ -108,8 +108,8 @@ export class GraphPane {
 		this.files = files;
 		this.mtimeByPath = new Map(files.map((file) => [file.path, file.stat.mtime]));
 		this.graph = buildVaultGraph(this.app, files, { directed: false });
+		this.paintDefaultColors();
 		this.renderer = createRenderer(this.graph, this.graphContainerEl, this.theme.defaultEdgeColor);
-		this.applyDefaultColoring();
 		this.layout = runLayout(this.graph, { durationMs: 6000 });
 
 		// Proactively disable rather than let the user click and get
@@ -216,17 +216,27 @@ export class GraphPane {
 
 	/**
 	 * The "nothing else active" coloring - a node's color depends only on
-	 * its `type` (plain vs. cover-image), read from `this.theme` rather than
-	 * baked into the graph's own node attributes at build time (see
-	 * vaultGraph.ts's docstring on why it no longer sets `color`), so
-	 * refreshTheme() can update colors without rebuilding the graph.
+	 * its `type` (plain vs. cover-image) plus the current theme (see
+	 * vaultGraph.ts's docstring on why it doesn't set `color` itself).
+	 *
+	 * Bakes the color into each node's own attribute and leaves nodeReducer
+	 * null, rather than an always-on reducer computing it every frame -
+	 * deliberately not the first version of this (a reducer set here,
+	 * removed after it turned out to noticeably slow down ForceAtlas2's
+	 * initial settle: unlike the other reducers in this file, which only
+	 * run while a user has explicitly turned on a highlight mode, this one
+	 * would have run on literally every graph open/refresh, for the full
+	 * settle duration, every frame, for every node). refreshTheme() calls
+	 * this again (a one-time pass over the graph) rather than needing a
+	 * live reducer to react to a theme change.
 	 */
-	private applyDefaultColoring(): void {
-		this.renderer?.setSetting('nodeReducer', (node, attr) => {
+	private paintDefaultColors(): void {
+		if (!this.graph) return;
+		const graph = this.graph;
+		graph.forEachNode((node, attr) => {
 			const color = attr.type === 'image' ? this.theme.imageNodeColor : this.theme.graphColor;
-			return { ...attr, color };
+			graph.setNodeAttribute(node, 'color', color);
 		});
-		this.renderer?.setSetting('edgeReducer', null);
 	}
 
 	/**
@@ -254,7 +264,8 @@ export class GraphPane {
 		this.clearSearch();
 		this.panelEl.empty();
 		this.panelEl.hide();
-		this.applyDefaultColoring();
+		this.paintDefaultColors();
+		this.clearHighlight();
 		this.renderer?.refresh();
 	}
 
