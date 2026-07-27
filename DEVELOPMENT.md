@@ -225,6 +225,14 @@ open `test-vault` in Obsidian, then check:
   *not* appear in the stagnation panel's ranked list (communities smaller
   than 2 notes are filtered out there, see `MIN_COMMUNITY_SIZE_SHOWN` in
   `graphPane.ts`) even though it's still colored in the graph itself.
+- **Search** (focus mode), typing `Topic`: should highlight `Topic A`,
+  `Topic A - Detail 1/2`, `Topic B`, `Topic B - Detail 1`, and `Topic C`
+  (forced labels), dim everything else - notes stay visible/positioned, not
+  hidden, since this dims rather than filters. Clearing the box should
+  restore the normal view. Opening "Find path" or "Stagnation heatmap"
+  while a search is active should clear the search box; typing in the
+  search box while the heatmap is active should turn the heatmap off (all
+  three modes are mutually exclusive).
 
 ## Performance testing at scale (rendering)
 

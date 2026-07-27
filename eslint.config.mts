@@ -9,6 +9,7 @@ export default defineConfig(
 		'releases',
 		'spike',
 		'spike-vault',
+		'test-vault',
 		'scripts',
 		'coverage',
 		'esbuild.config.mjs',

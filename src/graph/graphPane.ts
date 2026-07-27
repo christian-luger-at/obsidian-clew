@@ -13,7 +13,10 @@ const PRIMARY_PATH_COLOR = '#22c55e';
 const ALT_PATH_COLOR = '#eab308';
 const DIM_NODE_COLOR = '#4b5563';
 const DIM_EDGE_COLOR = '#37415155';
-const FOCUS_COMMUNITY_COLOR = '#22c55e';
+// Shared "this is what you're looking for" accent - community-focus clicks
+// and search-match highlighting are different triggers for the same idea,
+// so they share one color rather than each getting their own.
+const MATCH_COLOR = '#22c55e';
 const MIN_COMMUNITY_SIZE_SHOWN = 2;
 
 /**
@@ -35,12 +38,14 @@ export class GraphPane {
 	private readonly graphContainerEl: HTMLElement;
 	private readonly panelEl: HTMLElement;
 	private readonly stagnationButton: HTMLElement;
+	private readonly searchInputEl: HTMLInputElement;
 	private renderer: Sigma | null = null;
 	private layout: LayoutRun | null = null;
 	private graph: Graph | null = null;
 	private files: TFile[] = [];
 	private mtimeByPath = new Map<string, number>();
 	private stagnationActive = false;
+	private searchQuery = '';
 
 	constructor(
 		private readonly app: App,
@@ -61,6 +66,17 @@ export class GraphPane {
 		this.stagnationButton = toolbarEl.createEl('button', { text: 'Stagnation heatmap' });
 		this.stagnationButton.addEventListener('click', () => this.toggleStagnationHeatmap());
 
+		// Focus mode: highlights matches, dims the rest - doesn't filter/hide
+		// anything, so the surrounding structure stays visible for context
+		// (doc's "Fokusmodus", matching an open Obsidian forum request rather
+		// than the more disruptive "hide non-matches" a naive filter would do).
+		this.searchInputEl = toolbarEl.createEl('input', {
+			type: 'search',
+			placeholder: 'Search notes…',
+			cls: 'clew-search-input',
+		});
+		this.searchInputEl.addEventListener('input', () => this.onSearchInput(this.searchInputEl.value));
+
 		this.panelEl = this.containerEl.createDiv({ cls: 'clew-path-panel' });
 		this.panelEl.hide();
 
@@ -80,6 +96,7 @@ export class GraphPane {
 		this.panelEl.hide();
 		this.stagnationActive = false;
 		this.stagnationButton.removeClass('is-active');
+		this.clearSearch();
 
 		this.files = files;
 		this.mtimeByPath = new Map(files.map((file) => [file.path, file.stat.mtime]));
@@ -99,6 +116,7 @@ export class GraphPane {
 	openPathfindingModal(): void {
 		if (!this.graph) return;
 		this.hideStagnationHeatmap();
+		this.clearSearch();
 		new PathfindingModal(this.app, this.files, (request) => {
 			this.runPathSearch(request.source, request.target, request.directed);
 		}).open();
@@ -189,6 +207,7 @@ export class GraphPane {
 
 	private showStagnationHeatmap(): void {
 		if (!this.graph) return;
+		this.clearSearch();
 		this.stagnationActive = true;
 		this.stagnationButton.addClass('is-active');
 
@@ -218,6 +237,41 @@ export class GraphPane {
 		this.clearHighlight();
 		this.panelEl.empty();
 		this.panelEl.hide();
+	}
+
+	private onSearchInput(value: string): void {
+		this.searchQuery = value.trim();
+
+		if (this.searchQuery) {
+			// Mutually exclusive with the other modes, same as they are with
+			// each other - clears their state directly rather than only
+			// overwriting reducers, so re-toggling one of them later doesn't
+			// resurrect stale UI (e.g. the stagnation button staying "active").
+			this.hideStagnationHeatmap();
+			this.panelEl.empty();
+			this.panelEl.hide();
+			this.applyFocusFilter(this.searchQuery);
+		} else {
+			this.clearHighlight();
+		}
+	}
+
+	private applyFocusFilter(query: string): void {
+		if (!this.renderer) return;
+		const q = query.toLowerCase();
+
+		this.renderer.setSetting('nodeReducer', (node, attr) => {
+			const label = typeof attr.label === 'string' ? attr.label.toLowerCase() : '';
+			if (label.includes(q)) return { ...attr, color: MATCH_COLOR, zIndex: 2, forceLabel: true };
+			return { ...attr, color: DIM_NODE_COLOR };
+		});
+		this.renderer.setSetting('edgeReducer', (edge, attr) => ({ ...attr, color: DIM_EDGE_COLOR }));
+	}
+
+	/** Resets search state - called when another mode takes over, not from the search input's own handler (which must never overwrite what the user is actively typing). */
+	private clearSearch(): void {
+		this.searchQuery = '';
+		this.searchInputEl.value = '';
 	}
 
 	private renderStagnationPanel(stats: CommunityStats[]): void {
@@ -253,11 +307,11 @@ export class GraphPane {
 		);
 
 		this.renderer.setSetting('nodeReducer', (node, attr) => {
-			if (nodeSet.has(node)) return { ...attr, color: FOCUS_COMMUNITY_COLOR, zIndex: 2, forceLabel: true };
+			if (nodeSet.has(node)) return { ...attr, color: MATCH_COLOR, zIndex: 2, forceLabel: true };
 			return { ...attr, color: DIM_NODE_COLOR };
 		});
 		this.renderer.setSetting('edgeReducer', (edge, attr) => {
-			if (edgeSet.has(edge)) return { ...attr, color: FOCUS_COMMUNITY_COLOR, size: 2, zIndex: 2 };
+			if (edgeSet.has(edge)) return { ...attr, color: MATCH_COLOR, size: 2, zIndex: 2 };
 			return { ...attr, color: DIM_EDGE_COLOR };
 		});
 	}

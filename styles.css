@@ -23,6 +23,10 @@
 	color: var(--text-on-accent);
 }
 
+.clew-search-input {
+	width: 160px;
+}
+
 .clew-path-panel {
 	position: absolute;
 	top: var(--size-4-2);
