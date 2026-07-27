@@ -3,13 +3,15 @@ import Graph from 'graphology';
 import type Sigma from 'sigma';
 import { createRenderer } from './renderer';
 import { runLayout, LayoutRun } from './layoutRunner';
-import { buildVaultGraph, resetToDeterministicPositions } from './vaultGraph';
+import { buildVaultGraph, resetToDeterministicPositions, sizeNodesByDegree } from './vaultGraph';
 import { runHierarchicalLayout, HIERARCHICAL_LAYOUT_NODE_LIMIT } from './hierarchicalLayout';
 import { findPaths, PathResult } from './pathfinding';
 import { PathfindingModal } from './pathfindingModal';
 import { exportPathToCanvas } from './canvasExport';
 import { CommunityStats, computeCommunityStats, detectCommunities, formatRelativeTime, staleness, stalenessColor } from './stagnation';
 import { readThemeColors, ThemeColors } from './theme';
+import { colorByCategory, sizeByNumericValue } from './visualEncoding';
+import { VisualEncodingModal, VisualEncodingRequest } from './visualEncodingModal';
 
 const MIN_COMMUNITY_SIZE_SHOWN = 2;
 
@@ -34,6 +36,7 @@ export class GraphPane {
 	private readonly stagnationButton: HTMLElement;
 	private readonly searchInputEl: HTMLInputElement;
 	private readonly hierarchicalButton: HTMLButtonElement;
+	private readonly visualEncodingButton: HTMLButtonElement;
 	private renderer: Sigma | null = null;
 	private layout: LayoutRun | null = null;
 	private graph: Graph | null = null;
@@ -43,6 +46,8 @@ export class GraphPane {
 	private searchQuery = '';
 	private hierarchicalActive = false;
 	private theme: ThemeColors;
+	private colorProperty: string | null = null;
+	private sizeProperty: string | null = null;
 
 	constructor(
 		private readonly app: App,
@@ -69,6 +74,11 @@ export class GraphPane {
 		// graphs (see hierarchicalLayout.ts).
 		this.hierarchicalButton = toolbarEl.createEl('button', { text: 'Hierarchical layout' });
 		this.hierarchicalButton.addEventListener('click', () => this.toggleHierarchicalLayout());
+
+		// Doc section 3.1 / GitHub issue #1: color/size driven by a chosen
+		// frontmatter property instead of the fixed image/degree defaults.
+		this.visualEncodingButton = toolbarEl.createEl('button', { text: 'Visual encoding…' });
+		this.visualEncodingButton.addEventListener('click', () => this.openVisualEncodingModal());
 
 		// Focus mode: highlights matches, dims the rest - doesn't filter/hide
 		// anything, so the surrounding structure stays visible for context
@@ -104,11 +114,14 @@ export class GraphPane {
 		this.hierarchicalActive = false;
 		this.hierarchicalButton.removeClass('is-active');
 		this.hierarchicalButton.setText('Hierarchical layout');
+		this.colorProperty = null;
+		this.sizeProperty = null;
+		this.visualEncodingButton.removeClass('is-active');
 
 		this.files = files;
 		this.mtimeByPath = new Map(files.map((file) => [file.path, file.stat.mtime]));
 		this.graph = buildVaultGraph(this.app, files, { directed: false });
-		this.paintDefaultColors();
+		this.paintVisualEncoding();
 		this.renderer = createRenderer(this.graph, this.graphContainerEl, this.theme.defaultEdgeColor);
 		this.layout = runLayout(this.graph, { durationMs: 6000 });
 
@@ -215,28 +228,76 @@ export class GraphPane {
 	}
 
 	/**
-	 * The "nothing else active" coloring - a node's color depends only on
-	 * its `type` (plain vs. cover-image) plus the current theme (see
-	 * vaultGraph.ts's docstring on why it doesn't set `color` itself).
+	 * The "nothing else active" color/size - a node's color depends on
+	 * `colorProperty` if set (falling back to `type`, plain vs. cover-image,
+	 * for any node missing that property, plus the current theme - see
+	 * vaultGraph.ts's docstring on why it doesn't set `color` itself), size
+	 * on `sizeProperty` if set (falling back to vaultGraph.ts's degree-based
+	 * default). sizeNodesByDegree() always runs first to (re-)establish that
+	 * true baseline, then the property-driven value overlays wherever it
+	 * applies - so switching from one sizeProperty to another, or back to
+	 * "Default", never leaves a node showing a stale size left over from a
+	 * previous choice that no longer covers it.
 	 *
-	 * Bakes the color into each node's own attribute and leaves nodeReducer
-	 * null, rather than an always-on reducer computing it every frame -
-	 * deliberately not the first version of this (a reducer set here,
-	 * removed after it turned out to noticeably slow down ForceAtlas2's
-	 * initial settle: unlike the other reducers in this file, which only
-	 * run while a user has explicitly turned on a highlight mode, this one
-	 * would have run on literally every graph open/refresh, for the full
-	 * settle duration, every frame, for every node). refreshTheme() calls
-	 * this again (a one-time pass over the graph) rather than needing a
-	 * live reducer to react to a theme change.
+	 * Bakes color/size into each node's own attributes and leaves
+	 * nodeReducer null, rather than an always-on reducer computing them
+	 * every frame - deliberately not the first version of this (a reducer
+	 * set here, removed after it turned out to noticeably slow down
+	 * ForceAtlas2's initial settle: unlike the other reducers in this file,
+	 * which only run while a user has explicitly turned on a highlight
+	 * mode, this one would have run on literally every graph open/refresh,
+	 * for the full settle duration, every frame, for every node).
+	 * refreshTheme() calls this again (a one-time pass over the graph)
+	 * rather than needing a live reducer to react to a theme change.
 	 */
-	private paintDefaultColors(): void {
+	private paintVisualEncoding(): void {
 		if (!this.graph) return;
 		const graph = this.graph;
+
+		sizeNodesByDegree(graph);
+		if (this.sizeProperty) {
+			const sizeByNode = sizeByNumericValue(this.propertyValues(this.sizeProperty, toNumberValue));
+			graph.forEachNode((node) => {
+				const size = sizeByNode.get(node);
+				if (size !== undefined) graph.setNodeAttribute(node, 'size', size);
+			});
+		}
+
+		const colorByNode = this.colorProperty ? colorByCategory(this.propertyValues(this.colorProperty, toStringValue)) : null;
 		graph.forEachNode((node, attr) => {
-			const color = attr.type === 'image' ? this.theme.imageNodeColor : this.theme.graphColor;
-			graph.setNodeAttribute(node, 'color', color);
+			const defaultColor = attr.type === 'image' ? this.theme.imageNodeColor : this.theme.graphColor;
+			graph.setNodeAttribute(node, 'color', colorByNode?.get(node) ?? defaultColor);
 		});
+	}
+
+	/** Reads a frontmatter property across the current file set, parsing each raw value with `parse` (undefined for anything that doesn't fit). */
+	private propertyValues<T>(property: string, parse: (raw: unknown) => T | undefined): Map<string, T | undefined> {
+		const result = new Map<string, T | undefined>();
+		for (const file of this.files) {
+			const raw = this.app.metadataCache.getFileCache(file)?.frontmatter?.[property] as unknown;
+			result.set(file.path, parse(raw));
+		}
+		return result;
+	}
+
+	private openVisualEncodingModal(): void {
+		if (!this.graph) return;
+
+		const availableProperties = new Set<string>();
+		for (const file of this.files) {
+			const frontmatter = this.app.metadataCache.getFileCache(file)?.frontmatter;
+			if (!frontmatter) continue;
+			for (const key of Object.keys(frontmatter)) availableProperties.add(key);
+		}
+
+		const current: VisualEncodingRequest = { colorProperty: this.colorProperty, sizeProperty: this.sizeProperty };
+		new VisualEncodingModal(this.app, [...availableProperties].sort(), current, (request) => {
+			this.colorProperty = request.colorProperty;
+			this.sizeProperty = request.sizeProperty;
+			this.visualEncodingButton.toggleClass('is-active', request.colorProperty !== null || request.sizeProperty !== null);
+			this.paintVisualEncoding();
+			this.renderer?.refresh();
+		}).open();
 	}
 
 	/**
@@ -251,8 +312,13 @@ export class GraphPane {
 	 * resets on a vault refresh (setFiles()), and a user-initiated theme
 	 * switch is rare enough that this isn't worth the added complexity of
 	 * remembering and reapplying arbitrary mode state. Layout mode (force
-	 * vs. hierarchical) is a position concern, not a color one, so it's left
-	 * untouched here.
+	 * vs. hierarchical) and visual encoding (colorProperty/sizeProperty) are
+	 * left untouched here, unlike stagnation/search - neither is actually
+	 * theme-dependent (the categorical palette in visualEncoding.ts is a
+	 * fixed set of colors, not derived from `this.theme`), so there's
+	 * nothing about them a theme switch would make stale. paintVisualEncoding()
+	 * still re-runs below, since its *fallback* colors (nodes without the
+	 * chosen property) do use `this.theme`.
 	 */
 	refreshTheme(): void {
 		if (!this.graph) return;
@@ -264,7 +330,7 @@ export class GraphPane {
 		this.clearSearch();
 		this.panelEl.empty();
 		this.panelEl.hide();
-		this.paintDefaultColors();
+		this.paintVisualEncoding();
 		this.clearHighlight();
 		this.renderer?.refresh();
 	}
@@ -471,4 +537,23 @@ function edgeKeysAlongPath(graph: Graph, path: string[]): string[] {
 
 function basename(vaultPath: string): string {
 	return vaultPath.split('/').pop()?.replace(/\.md$/, '') ?? vaultPath;
+}
+
+/**
+ * Frontmatter values are usually a string, number, or boolean - stringified
+ * directly. An array-valued property (e.g. a multi-value select/list) is
+ * joined into one category rather than picking one value or producing
+ * "[object Object]" - a reasonable, simple fallback, not a claim that it's
+ * the "right" way to categorize a list. Any other object shape isn't
+ * treated as colorable at all.
+ */
+function toStringValue(raw: unknown): string | undefined {
+	if (Array.isArray(raw)) return raw.map((item) => toStringValue(item) ?? '').join(', ');
+	if (typeof raw === 'string') return raw;
+	if (typeof raw === 'number' || typeof raw === 'boolean') return raw.toString();
+	return undefined;
+}
+
+function toNumberValue(raw: unknown): number | undefined {
+	return typeof raw === 'number' ? raw : undefined;
 }

@@ -26,20 +26,26 @@ function coverSvg() {
 writeFileSync(join(ROOT, 'attachments', 'cover.svg'), coverSvg());
 
 /**
- * @typedef {{ name: string, links?: string[], frontmatter?: Record<string, string>, ageDays?: number }} Note
+ * @typedef {{ name: string, links?: string[], frontmatter?: Record<string, string | number>, ageDays?: number }} Note
  * @type {Note[]}
  */
 const notes = [
 	// Main connected cluster, radiating from a hub - exercises hub-avoidance
 	// path finding (a direct-ish route via Bridge Note should beat the naive
 	// route straight through Hub) and hub-based node sizing/label LOD.
+	// Also carries "status" (categorical) and "priority" (numeric)
+	// frontmatter - exercises visual encoding (GitHub issue #1): "Visual
+	// encoding..." -> color by "status" should group Topic A/its details as
+	// one color and Topic B/its details as another; size by "priority"
+	// should make Topic A - Detail 2 visibly the largest node, Topic C the
+	// smallest, everything else in between.
 	{ name: 'Hub', links: ['Topic A', 'Topic B', 'Topic C', 'With Cover'] },
-	{ name: 'Topic A', links: ['Hub', 'Topic A - Detail 1', 'Topic A - Detail 2'] },
-	{ name: 'Topic A - Detail 1', links: ['Topic A'] },
-	{ name: 'Topic A - Detail 2', links: ['Topic A', 'Bridge Note'] },
-	{ name: 'Topic B', links: ['Hub', 'Topic B - Detail 1'] },
-	{ name: 'Topic B - Detail 1', links: ['Topic B', 'Bridge Note'] },
-	{ name: 'Topic C', links: ['Hub'] },
+	{ name: 'Topic A', links: ['Hub', 'Topic A - Detail 1', 'Topic A - Detail 2'], frontmatter: { status: 'active', priority: 3 } },
+	{ name: 'Topic A - Detail 1', links: ['Topic A'], frontmatter: { status: 'active', priority: 2 } },
+	{ name: 'Topic A - Detail 2', links: ['Topic A', 'Bridge Note'], frontmatter: { status: 'active', priority: 5 } },
+	{ name: 'Topic B', links: ['Hub', 'Topic B - Detail 1'], frontmatter: { status: 'draft', priority: 1 } },
+	{ name: 'Topic B - Detail 1', links: ['Topic B', 'Bridge Note'], frontmatter: { status: 'draft', priority: 1 } },
+	{ name: 'Topic C', links: ['Hub'], frontmatter: { status: 'archived' } },
 	// Direct-ish shortcut between the two topic clusters, bypassing Hub -
 	// findPaths (k=5) should surface this as an alternative to the
 	// Hub-routed path, and it should rank ahead of the naive route once
@@ -105,3 +111,4 @@ console.log('  - Find path: "Topic A - Detail 1" -> "Topic B - Detail 1" should 
 console.log('  - Find path: anything -> "Island X"/"Island Y" should report no path found');
 console.log('  - Stagnation heatmap: "Old Cluster A/B/C" should be the stalest (red), "Medium Age A/B" a middling color, everything else fresh (blue)');
 console.log('  - "With Cover" should render its cover image as the node');
+console.log('  - "Visual encoding...": color by "status" groups Topic A/its details vs. Topic B/its details vs. Topic C; size by "priority" makes Topic A - Detail 2 the largest, notes without a priority (Isolated, Island X/Y, etc.) keep the default size');

@@ -262,6 +262,18 @@ open `test-vault` in Obsidian, then check:
   them on Obsidian's `'css-change'` workspace event. Also check "Find
   path…" and "Stagnation heatmap" still look reasonable in a light theme -
   never verified there before this.
+- **Visual encoding**: click "Visual encoding…" - the "Color by property"
+  and "Size by property" dropdowns should list `status`, `priority`, and
+  `cover` (discovered from the current file set, not hardcoded). Pick
+  `status` for color: `Topic A`/`Topic A - Detail 1`/`Topic A - Detail 2`
+  should share one color, `Topic B`/`Topic B - Detail 1` another, `Topic C`
+  a third - notes without a `status` (`Isolated`, `Island X`/`Y`, etc.)
+  keep the default color. Pick `priority` for size: `Topic A - Detail 2`
+  (priority 5) should be visibly the largest of that group, notes without
+  a `priority` keep the default (link-count-based) size. Switching either
+  dropdown back to "Default" should restore the original coloring/sizing
+  exactly - not a stale value left over from the property that was
+  selected before.
 
 ## Performance testing at scale (rendering)
 

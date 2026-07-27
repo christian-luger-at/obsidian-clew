@@ -31,6 +31,7 @@ export default defineConfig({
 				'src/graph/canvasExport.ts',
 				'src/graph/generateGraph.ts',
 				'src/graph/hierarchicalLayout.ts',
+				'src/graph/visualEncoding.ts',
 			],
 			reporter: ['text', 'json-summary'],
 			// Mirrors obsidian-focus-first's thresholds: per-file so no single

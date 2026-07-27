@@ -114,8 +114,12 @@ export function resetToDeterministicPositions(graph: Graph): void {
  * and sigma's label-density threshold (see renderer.ts) naturally shows hub
  * labels first when zoomed out - without this, a vault-scale graph is an
  * undifferentiated blob of same-sized dots with every label overlapping.
+ *
+ * Exported so GraphPane can re-apply it when a user-chosen size-by-property
+ * encoding (visualEncoding.ts, doc section 3.1) is cleared back to default -
+ * this is the actual default it's reverting to, not a duplicate formula.
  */
-function sizeNodesByDegree(graph: Graph): void {
+export function sizeNodesByDegree(graph: Graph): void {
 	graph.forEachNode((node, attr) => {
 		const base = attr.type === 'image' ? 6 : 3;
 		const size = base + Math.log(1 + graph.degree(node)) * 1.5;
