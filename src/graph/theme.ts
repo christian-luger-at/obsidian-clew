@@ -1,6 +1,7 @@
 export interface ThemeColors {
 	graphColor: string;
 	imageNodeColor: string;
+	labelColor: string;
 	defaultEdgeColor: string;
 	primaryPathColor: string;
 	altPathColor: string;
@@ -50,7 +51,20 @@ export function readThemeColors(referenceEl: HTMLElement): ThemeColors {
 	return {
 		graphColor: cssVar(computed, '--color-purple', '#7c3aed'),
 		imageNodeColor: cssVar(computed, '--color-orange', '#f59e0b'),
-		defaultEdgeColor: cssVar(computed, '--text-faint', '#888888'),
+		// sigma.js's own default labelColor is a hardcoded '#000' (see
+		// settings.ts in the sigma package) - never overridden before this,
+		// so every node label rendered as plain black text regardless of
+		// theme. Unreadable in dark mode, most visibly on hover (GitHub
+		// issue #9's forceLabel on neighbor nodes, which shows labels that
+		// otherwise wouldn't render at that zoom level at all).
+		labelColor: cssVar(computed, '--text-normal', '#dcddde'),
+		// NOT --text-faint - that's dimEdgeColor's variable too (deliberately
+		// low-contrast for dimmed/inactive edges), and reusing it here left
+		// "normal" edges exactly as faint as ones explicitly being dimmed.
+		// --text-muted is Obsidian's own middle step (text-normal >
+		// text-muted > text-faint), reported hard to see especially in dark
+		// themes with --text-faint.
+		defaultEdgeColor: cssVar(computed, '--text-muted', '#888888'),
 		primaryPathColor: cssVar(computed, '--color-green', '#22c55e'),
 		altPathColor: cssVar(computed, '--color-yellow', '#eab308'),
 		dimNodeColor: cssVar(computed, '--text-faint', '#4b5563'),

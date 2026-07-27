@@ -31,7 +31,7 @@ export function buildGraph(data: GeneratedGraph, imageUrlForNode: (nodeId: strin
 	return graph;
 }
 
-export function createRenderer(graph: Graph, container: HTMLElement, defaultEdgeColor = '#888888'): Sigma {
+export function createRenderer(graph: Graph, container: HTMLElement, defaultEdgeColor = '#888888', labelColor = '#dcddde'): Sigma {
 	return new Sigma(graph, container, {
 		nodeProgramClasses: { image: NodeImageProgram },
 		renderEdgeLabels: false,
@@ -42,6 +42,11 @@ export function createRenderer(graph: Graph, container: HTMLElement, defaultEdge
 		// color (see theme.ts); the default here only matters for the spike
 		// harness, which has no Obsidian theme to read.
 		defaultEdgeColor,
+		// sigma's own default is a hardcoded black ('#000') - unreadable
+		// against a dark theme's canvas. Caller passes a theme-derived color
+		// (see theme.ts's labelColor); the default here only matters for the
+		// spike harness.
+		labelColor: { color: labelColor },
 		hideEdgesOnMove: true,
 		// Level-of-detail: without this, sigma renders a label for nearly
 		// every node regardless of zoom, which is unreadable at vault scale

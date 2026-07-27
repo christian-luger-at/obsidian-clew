@@ -169,7 +169,7 @@ export class GraphPane {
 			pinnedPositions: this.plugin.settings.pinnedPositions,
 		});
 		this.paintVisualEncoding();
-		this.renderer = createRenderer(this.graph, this.graphContainerEl, this.theme.defaultEdgeColor);
+		this.renderer = createRenderer(this.graph, this.graphContainerEl, this.theme.defaultEdgeColor, this.theme.labelColor);
 		this.setupNodeDragging();
 		this.setupNodeClick();
 		this.setupNodeHover();
@@ -439,6 +439,7 @@ export class GraphPane {
 		if (!this.graph) return;
 		this.theme = readThemeColors(this.containerEl);
 		this.renderer?.setSetting('defaultEdgeColor', this.theme.defaultEdgeColor);
+		this.renderer?.setSetting('labelColor', { color: this.theme.labelColor });
 
 		this.stagnationActive = false;
 		this.stagnationButton.removeClass('is-active');
