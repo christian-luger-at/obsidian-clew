@@ -34,5 +34,10 @@ spike/dist/
 spike-vault/
 spike-vault.zip
 
+# Generated manual-QA test vault (scripts/gen-test-vault.mjs) - regenerated
+# on demand, and mtimes are baked in at generation time, so it couldn't be
+# meaningfully committed anyway.
+test-vault/
+
 # Test coverage (vitest --coverage)
 coverage/

@@ -51,7 +51,9 @@ export function pathToCanvas(path: string[]): CanvasData {
 }
 
 function basename(filePath: string): string {
-	return filePath.split('/').pop()?.replace(/\.md$/, '') ?? filePath;
+	// split('/').pop() always returns a string, never undefined, for any
+	// string input - no fallback needed.
+	return filePath.split('/').pop()!.replace(/\.md$/, '');
 }
 
 async function uniqueCanvasPath(app: App, baseName: string): Promise<string> {

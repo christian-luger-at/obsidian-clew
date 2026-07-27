@@ -11,13 +11,15 @@
 		"lint": "eslint . && npm run test",
 		"test": "vitest run",
 		"test:watch": "vitest",
-		"test:coverage": "vitest --coverage",
+		"test:coverage": "vitest run --coverage",
+		"test:perf": "vitest run --config vitest.perf.config.ts",
 		"release": "bash release.sh",
 		"release:publish": "bash release.sh --publish",
 		"release:patch": "bash release.sh --bump patch --publish",
 		"release:minor": "bash release.sh --bump minor --publish",
 		"release:major": "bash release.sh --bump major --publish",
-		"spike:build": "node spike/esbuild.mjs"
+		"spike:build": "node spike/esbuild.mjs",
+		"gen-test-vault": "node scripts/gen-test-vault.mjs"
 	},
 	"keywords": [],
 	"license": "0-BSD",

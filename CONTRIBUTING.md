@@ -49,14 +49,21 @@ Run both checks locally - CI runs the same ones and a red build will block
 the merge:
 
 ```bash
-npm run lint     # eslint (incl. eslint-plugin-obsidianmd rules)
-npm run build    # type-check + production bundle
+npm run lint     # eslint (incl. eslint-plugin-obsidianmd rules) + unit tests
+npm run build    # unit tests + type-check + production bundle
 ```
 
-There is no automated test suite yet. If you add one, wire it into
-`package.json` and mention it here and in [DEVELOPMENT.md](DEVELOPMENT.md).
-Until then, please describe in the PR **how you verified the change** in a real
-vault.
+Both `lint` and `build` already run the unit test suite (`npm run test`), so a
+red test is a red build either way. If you touch anything perf-sensitive
+(graph construction, community detection, pathfinding, layout), also run
+`npm run test:perf` - it's not part of the default gate (see
+[DEVELOPMENT.md](DEVELOPMENT.md#testing) for why), so it won't be caught
+otherwise. For a change to `src/graph/`, adding or updating a test there is
+expected, not optional - see DEVELOPMENT.md's Testing section for the
+patterns (`test/fakeApp.ts` for anything touching Obsidian's API). Please
+still describe in the PR **how you verified the change** in a real vault
+(the generated `test-vault/` - see DEVELOPMENT.md - covers most functional
+edge cases) for anything a unit test can't reach, like actual rendering.
 
 ## Coding guidelines
 

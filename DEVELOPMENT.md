@@ -132,21 +132,103 @@ and the example layout in [AGENTS.md](AGENTS.md).
 | `npm run release:publish` | Same, then tag, push, and publish the GitHub release |
 | `npm run release:patch` \| `:minor` \| `:major` | Bump the version, build, and publish in one command |
 | `npm run spike:build` | Build the standalone graph-rendering spike harness (`spike/`) - see below |
+| `npm run gen-test-vault` | Generate the manual-QA vault (`test-vault/`) - see "Manual QA vault" below |
 
 ## Testing
 
-There is no automated test suite yet. Verify changes manually in a test vault
-(see the setup above), and run `npm run lint` and `npm run build` before pushing -
-CI runs both on every branch.
+Three layers, each catching a different kind of regression:
 
-If you add tests, [Vitest](https://vitest.dev) is the natural fit: Obsidian is not
-available in a Node environment, so it needs a minimal stub module aliased in the
-Vitest config. Wire the new script into `package.json`, add it to `release.sh`
-before the build step, and update this section plus [CONTRIBUTING.md](CONTRIBUTING.md).
+### 1. Unit tests (functional correctness)
 
-## Performance testing at scale
+```bash
+npm run test        # single run - also runs as part of `npm run lint` and `npm run build`
+npm run test:watch  # interactive, re-runs on change
+npm run test:coverage
+```
 
-The stack (Graphology + sigma.js/WebGL + a Web Worker for layout) was validated against a 10,000-node graph before path finding was built on top of it. Two tools from that exercise remain as standing perf-regression checks - useful whenever a rendering or layout change might affect how the graph behaves at vault scale.
+[Vitest](https://vitest.dev). Covers the pure graph-algorithm modules directly
+(`pathfinding.ts`, `stagnation.ts`, `canvasExport.ts`'s `pathToCanvas`), plus
+`vaultGraph.ts` - the actual node/edge-construction pipeline, exercised
+against realistic fixtures (hub notes, isolated notes, cross-cluster links
+outside the given file set, cover images, directed vs. undirected).
+
+The real `obsidian` npm package is types-only at runtime (`"main": ""` in its
+`package.json` - the implementation is injected by the Obsidian app itself),
+so any code doing `import { TFile } from 'obsidian'` and using it as a value
+(`instanceof TFile`) has nothing to run against in plain Node. `vitest.config.ts`
+aliases `'obsidian'` to `test/obsidian-mock.ts`, a deliberately minimal stand-in
+(just `TFile`/`TFolder`/`normalizePath` - only what the graph-building code
+actually touches). `test/fakeApp.ts` builds a fake `App` on top of it
+(`metadataCache.resolvedLinks`, `getFileCache`, `vault.getAbstractFileByPath`,
+etc.) from a plain list of `{ path, links, frontmatter, mtime }` fixtures - see
+its existing usages in `src/graph/vaultGraph.test.ts` for the pattern.
+
+UI classes (`Modal`, `ItemView`, `Setting`, `Plugin`, ...) are not mocked -
+faking enough of Obsidian's UI layer to test those isn't worth it relative to
+manual verification in a real vault; the value is in the graph-building logic,
+not the chrome around it.
+
+### 2. Performance tests (10,000-node regressions)
+
+```bash
+npm run test:perf
+```
+
+Deliberately **not** part of `npm run test` (separate `vitest.perf.config.ts`,
+separate script) - these assert on wall-clock time, which is inherently
+noisier on a shared/loaded CI runner than a correctness assertion, so folding
+them into the `lint`/`build` gate would risk making every commit's CI flaky.
+Run it explicitly when touching anything perf-sensitive (graph construction,
+community detection, pathfinding, layout).
+
+Builds a synthetic 10,000-node graph with the same generator the browser
+spike/test-vault scripts use (`generateGraph.ts`, Barabási–Albert
+preferential attachment) and asserts generous time budgets around graph
+construction, Louvain community detection, a fixed ForceAtlas2 iteration
+budget (via the library's plain synchronous API - the Worker-based supervisor
+`layoutRunner.ts` uses needs a browser), and k-shortest-paths. All run in
+plain Node - no WebGL/rendering involved, since that can't be measured
+without a real browser; rendering performance at this scale was validated
+manually via the browser harness below and is not covered by an automated
+test.
+
+### 3. Manual QA vault
+
+```bash
+npm run gen-test-vault   # writes ./test-vault
+```
+
+A small (~19-note), hand-designed vault for manually checking each graph
+feature actually behaves as expected in real Obsidian - distinct from the
+10,000-note performance vault below, and regenerated on demand rather than
+committed (mtime is filesystem metadata, not file content, so git can't
+preserve "this note is 6 months old" across a clone; the script backdates
+specific notes with `fs.utimesSync` instead).
+
+Symlink the plugin into it the same way as [step 2](#2-link-the-plugin-to-obsidian-symlink),
+open `test-vault` in Obsidian, then check:
+
+- **Find path**, `Topic A - Detail 1` → `Topic B - Detail 1`: should offer a
+  route through `Bridge Note` as an alternative to the naive route through
+  `Hub` - the hub-avoidance cost model should make the Bridge Note route rank
+  competitively despite `Hub` being the shorter hop count.
+- **Find path**, anything → `Island X` or `Island Y`: should report "no path
+  found" (a first-class result, not an error) - `Island X`/`Island Y` are a
+  deliberately disconnected two-note component.
+- **Stagnation heatmap**: `Old Cluster A/B/C` (backdated ~200 days) should be
+  the stalest (deep red), `Medium Age A/B` (~45 days) a visibly different
+  middling color, everything else fresh (blue) - confirms the color scale
+  interpolates rather than being effectively binary.
+- **`With Cover`** should render its frontmatter `cover` image as the node,
+  not a plain dot.
+- **`Isolated`** (no links at all) should render with degree 0 and should
+  *not* appear in the stagnation panel's ranked list (communities smaller
+  than 2 notes are filtered out there, see `MIN_COMMUNITY_SIZE_SHOWN` in
+  `graphPane.ts`) even though it's still colored in the graph itself.
+
+## Performance testing at scale (rendering)
+
+The stack (Graphology + sigma.js/WebGL + a Web Worker for layout) was validated against a 10,000-node graph before path finding was built on top of it. Two tools from that exercise remain as standing perf-regression checks - useful whenever a rendering or layout change might affect how the graph behaves at vault scale. For the automated, non-rendering side of performance (graph construction, community detection, pathfinding), see "Performance tests" under Testing above.
 
 ### 1. Browser harness (no Obsidian needed)
 

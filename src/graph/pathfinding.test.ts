@@ -125,6 +125,44 @@ describe('pathfinding', () => {
 			}
 		});
 
+		it('picks the cheapest of several same-round alternatives, discarding the rest', () => {
+			// Shaped so two different spur points in the same k-round each
+			// still have a valid, equal-cost detour after their root-path
+			// nodes are dropped: exercises both the seen/B.some() de-dup
+			// check and the B.sort() cost ordering (a graph with only ever
+			// one alternative per round never reaches those - sort/some
+			// don't invoke their callback for fewer than 2/0 elements).
+			// Yen's algorithm keeps only the single cheapest candidate per
+			// round, so of the two equal-cost detours found here (via F,
+			// via G), only the first-found (via F) survives into the
+			// result - the other is legitimately discarded, not a bug.
+			//
+			// Primary route: A-B-C-D-E. Detours: B-F-D (bypasses C), C-G-E
+			// (bypasses D).
+			const g = new Graph({ type: 'undirected' });
+			for (const n of ['A', 'B', 'C', 'D', 'E', 'F', 'G']) g.addNode(n);
+			const edges: [string, string][] = [
+				['A', 'B'],
+				['B', 'C'],
+				['C', 'D'],
+				['D', 'E'],
+				['B', 'F'],
+				['F', 'D'],
+				['C', 'G'],
+				['G', 'E'],
+			];
+			for (const [a, b] of edges) g.addEdge(a, b, { pathCost: 1 });
+
+			const result = findPaths(g, 'A', 'E', 2);
+
+			expect(result.found).toBe(true);
+			if (result.found) {
+				expect(result.paths[0]).toEqual(['A', 'B', 'C', 'D', 'E']);
+				expect(result.paths[1]).toEqual(['A', 'B', 'F', 'D', 'E']);
+				expect(result.paths).not.toContainEqual(['A', 'B', 'C', 'G', 'E']);
+			}
+		});
+
 		it('handles directed graphs', () => {
 			const g = new Graph({ type: 'directed' });
 			for (const n of ['A', 'B', 'C', 'D']) g.addNode(n);

@@ -13,7 +13,12 @@
 export interface GeneratedNode {
 	id: string;
 	label: string;
-	/** Marks the ~1% of nodes used to exercise custom (image) node rendering. */
+	/**
+	 * Marks nodes used to exercise custom (image) node rendering - a fixed
+	 * ~100 nodes (nodeCount / 100, floored, minimum 1), which works out to
+	 * ~1% at the 10,000-node scale this is actually used at, but isn't a
+	 * nodeCount-independent 1% in general.
+	 */
 	hasImage: boolean;
 }
 

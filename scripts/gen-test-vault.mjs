@@ -1,0 +1,107 @@
+#!/usr/bin/env node
+// Small, hand-designed functional test vault - not for perf testing (see
+// gen-graph-vault.mjs for the 10k-note stress vault), for manually verifying
+// each graph feature actually behaves as expected in real Obsidian.
+//
+// Deliberately generated rather than committed: mtime is filesystem
+// metadata, not file content, so git can't preserve "this note is 6 months
+// old" across a clone - a static committed vault would silently fail to
+// demonstrate the stagnation heatmap on every fresh checkout. Generating it
+// locally lets this script backdate specific notes with fs.utimesSync.
+import { mkdirSync, writeFileSync, rmSync, utimesSync } from 'node:fs';
+import { join } from 'node:path';
+
+const ROOT = process.argv[2] || 'test-vault';
+const NOTES_FOLDER = 'Notes';
+const DAY = 24 * 60 * 60 * 1000;
+const now = Date.now();
+
+rmSync(ROOT, { recursive: true, force: true });
+mkdirSync(join(ROOT, NOTES_FOLDER), { recursive: true });
+mkdirSync(join(ROOT, 'attachments'), { recursive: true });
+
+function coverSvg() {
+	return `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"><circle cx="32" cy="32" r="32" fill="hsl(280,70%,55%)"/></svg>\n`;
+}
+writeFileSync(join(ROOT, 'attachments', 'cover.svg'), coverSvg());
+
+/**
+ * @typedef {{ name: string, links?: string[], frontmatter?: Record<string, string>, ageDays?: number }} Note
+ * @type {Note[]}
+ */
+const notes = [
+	// Main connected cluster, radiating from a hub - exercises hub-avoidance
+	// path finding (a direct-ish route via Bridge Note should beat the naive
+	// route straight through Hub) and hub-based node sizing/label LOD.
+	{ name: 'Hub', links: ['Topic A', 'Topic B', 'Topic C', 'With Cover'] },
+	{ name: 'Topic A', links: ['Hub', 'Topic A - Detail 1', 'Topic A - Detail 2'] },
+	{ name: 'Topic A - Detail 1', links: ['Topic A'] },
+	{ name: 'Topic A - Detail 2', links: ['Topic A', 'Bridge Note'] },
+	{ name: 'Topic B', links: ['Hub', 'Topic B - Detail 1'] },
+	{ name: 'Topic B - Detail 1', links: ['Topic B', 'Bridge Note'] },
+	{ name: 'Topic C', links: ['Hub'] },
+	// Direct-ish shortcut between the two topic clusters, bypassing Hub -
+	// findPaths (k=5) should surface this as an alternative to the
+	// Hub-routed path, and it should rank ahead of the naive route once
+	// hub-avoidance cost is applied.
+	{ name: 'Bridge Note', links: ['Topic A - Detail 2', 'Topic B - Detail 1'] },
+
+	// No links at all - graph shows it with degree 0, path finding from/to
+	// it should still work fine (it just has no neighbors), and it should
+	// not appear in the stagnation panel's community list (min community
+	// size is 2 notes, see MIN_COMMUNITY_SIZE_SHOWN in graphPane.ts).
+	{ name: 'Isolated' },
+
+	// Fully separate component - "Find path" between anything here and the
+	// main cluster must report "no path found" (a first-class result, not
+	// an error - see pathfinding.ts).
+	{ name: 'Island X', links: ['Island Y'] },
+	{ name: 'Island Y', links: ['Island X'] },
+
+	// Backdated 200 days - should render as the stalest cluster in the
+	// stagnation heatmap (deep red), clearly distinct from everything else
+	// (edited "now").
+	{ name: 'Old Cluster A', links: ['Old Cluster B'], ageDays: 200 },
+	{ name: 'Old Cluster B', links: ['Old Cluster A', 'Old Cluster C'], ageDays: 200 },
+	{ name: 'Old Cluster C', links: ['Old Cluster B'], ageDays: 195 },
+
+	// Backdated ~45 days - a middling staleness value, useful for checking
+	// the heatmap's color scale actually interpolates instead of being
+	// binary fresh/stale.
+	{ name: 'Medium Age A', links: ['Medium Age B'], ageDays: 45 },
+	{ name: 'Medium Age B', links: ['Medium Age A'], ageDays: 40 },
+
+	// Fresh (age 0), contrasts against the Old/Medium clusters above.
+	{ name: 'Recently Edited', links: ['Hub'] },
+	{ name: 'Recently Edited - Detail', links: ['Recently Edited'] },
+
+	// Cover-image node - exercises app.vault.getResourcePath() feeding a
+	// WebGL texture (the same real risk the original spike tested, just at
+	// vault scale of 1 instead of ~100).
+	{ name: 'With Cover', links: ['Hub'], frontmatter: { cover: 'attachments/cover.svg' } },
+];
+
+for (const note of notes) {
+	const body = [
+		note.frontmatter ? `---\n${Object.entries(note.frontmatter).map(([k, v]) => `${k}: ${v}`).join('\n')}\n---\n\n` : '',
+		`# ${note.name}\n\n`,
+		note.links?.length ? `## Links\n\n${note.links.map((l) => `[[${l}]]`).join(' ')}\n` : '',
+	].join('');
+
+	const filePath = join(ROOT, NOTES_FOLDER, `${note.name}.md`);
+	writeFileSync(filePath, body);
+
+	if (note.ageDays) {
+		const mtime = new Date(now - note.ageDays * DAY);
+		utimesSync(filePath, mtime, mtime);
+	}
+}
+
+console.log(`Wrote ${notes.length} notes to ${ROOT}/${NOTES_FOLDER}/`);
+console.log(`Open ${ROOT} as an Obsidian vault, symlink the plugin (see DEVELOPMENT.md), then use the ribbon icon or "Open graph" command.`);
+console.log('');
+console.log('What to check (see DEVELOPMENT.md "Manual QA vault" for the full list):');
+console.log('  - Find path: "Topic A - Detail 1" -> "Topic B - Detail 1" should offer a Bridge Note route as an alternative to the Hub route');
+console.log('  - Find path: anything -> "Island X"/"Island Y" should report no path found');
+console.log('  - Stagnation heatmap: "Old Cluster A/B/C" should be the stalest (red), "Medium Age A/B" a middling color, everything else fresh (blue)');
+console.log('  - "With Cover" should render its cover image as the node');
