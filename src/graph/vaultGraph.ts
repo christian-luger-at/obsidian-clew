@@ -91,6 +91,21 @@ function fnv1a(str: string): number {
 }
 
 /**
+ * Restores every node's deterministic seed position without touching
+ * anything else (edges, size, color) - used when switching back from the
+ * hierarchical layout (hierarchicalLayout.ts) to the force layout, so
+ * ForceAtlas2 relaxes from the same stable starting scatter it always does,
+ * rather than continuing from wherever the hierarchical layout left nodes.
+ */
+export function resetToDeterministicPositions(graph: Graph): void {
+	graph.forEachNode((node) => {
+		const position = deterministicPosition(node);
+		graph.setNodeAttribute(node, 'x', position.x);
+		graph.setNodeAttribute(node, 'y', position.y);
+	});
+}
+
+/**
  * Sized by degree (not a flat default) so hub notes stand out at a glance
  * and sigma's label-density threshold (see renderer.ts) naturally shows hub
  * labels first when zoomed out - without this, a vault-scale graph is an

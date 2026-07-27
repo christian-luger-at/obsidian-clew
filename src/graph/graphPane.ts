@@ -3,7 +3,8 @@ import Graph from 'graphology';
 import type Sigma from 'sigma';
 import { createRenderer } from './renderer';
 import { runLayout, LayoutRun } from './layoutRunner';
-import { buildVaultGraph } from './vaultGraph';
+import { buildVaultGraph, resetToDeterministicPositions } from './vaultGraph';
+import { runHierarchicalLayout, HIERARCHICAL_LAYOUT_NODE_LIMIT } from './hierarchicalLayout';
 import { findPaths, PathResult } from './pathfinding';
 import { PathfindingModal } from './pathfindingModal';
 import { exportPathToCanvas } from './canvasExport';
@@ -39,6 +40,7 @@ export class GraphPane {
 	private readonly panelEl: HTMLElement;
 	private readonly stagnationButton: HTMLElement;
 	private readonly searchInputEl: HTMLInputElement;
+	private readonly hierarchicalButton: HTMLButtonElement;
 	private renderer: Sigma | null = null;
 	private layout: LayoutRun | null = null;
 	private graph: Graph | null = null;
@@ -46,6 +48,7 @@ export class GraphPane {
 	private mtimeByPath = new Map<string, number>();
 	private stagnationActive = false;
 	private searchQuery = '';
+	private hierarchicalActive = false;
 
 	constructor(
 		private readonly app: App,
@@ -65,6 +68,12 @@ export class GraphPane {
 
 		this.stagnationButton = toolbarEl.createEl('button', { text: 'Stagnation heatmap' });
 		this.stagnationButton.addEventListener('click', () => this.toggleStagnationHeatmap());
+
+		// Disabled/re-enabled per graph size in setFiles() - hierarchical
+		// layout's crossing-minimization step doesn't scale to vault-sized
+		// graphs (see hierarchicalLayout.ts).
+		this.hierarchicalButton = toolbarEl.createEl('button', { text: 'Hierarchical layout' });
+		this.hierarchicalButton.addEventListener('click', () => this.toggleHierarchicalLayout());
 
 		// Focus mode: highlights matches, dims the rest - doesn't filter/hide
 		// anything, so the surrounding structure stays visible for context
@@ -97,12 +106,24 @@ export class GraphPane {
 		this.stagnationActive = false;
 		this.stagnationButton.removeClass('is-active');
 		this.clearSearch();
+		this.hierarchicalActive = false;
+		this.hierarchicalButton.removeClass('is-active');
+		this.hierarchicalButton.setText('Hierarchical layout');
 
 		this.files = files;
 		this.mtimeByPath = new Map(files.map((file) => [file.path, file.stat.mtime]));
 		this.graph = buildVaultGraph(this.app, files, { directed: false });
 		this.renderer = createRenderer(this.graph, this.graphContainerEl);
 		this.layout = runLayout(this.graph, { durationMs: 6000 });
+
+		// Proactively disable rather than let the user click and get
+		// rejected - see HIERARCHICAL_LAYOUT_NODE_LIMIT's docstring for why
+		// this exists at all.
+		const tooLarge = this.graph.order > HIERARCHICAL_LAYOUT_NODE_LIMIT;
+		this.hierarchicalButton.disabled = tooLarge;
+		this.hierarchicalButton.title = tooLarge
+			? `Too many notes (${this.graph.order}) for hierarchical layout - it doesn't scale past ~${HIERARCHICAL_LAYOUT_NODE_LIMIT}.`
+			: '';
 
 		GraphPane.active = this;
 	}
@@ -195,6 +216,53 @@ export class GraphPane {
 	private clearHighlight(): void {
 		this.renderer?.setSetting('nodeReducer', null);
 		this.renderer?.setSetting('edgeReducer', null);
+	}
+
+	private toggleHierarchicalLayout(): void {
+		if (this.hierarchicalButton.disabled) return;
+		if (this.hierarchicalActive) {
+			this.setForceLayout();
+		} else {
+			this.setHierarchicalLayout();
+		}
+	}
+
+	private setHierarchicalLayout(): void {
+		if (!this.graph) return;
+		this.layout?.stop();
+
+		// dagre.layout() is synchronous and, at the sizes this is allowed to
+		// run at, can still take a few seconds (see hierarchicalLayout.ts) -
+		// disable the button and show that something is happening, then
+		// yield one tick so that actually paints before the blocking call
+		// starts, rather than the UI just looking frozen for that long.
+		this.hierarchicalButton.disabled = true;
+		this.hierarchicalButton.setText('Computing…');
+
+		window.setTimeout(() => {
+			if (!this.graph) return;
+			runHierarchicalLayout(this.graph);
+			void this.renderer?.getCamera().animatedReset();
+
+			this.hierarchicalActive = true;
+			this.hierarchicalButton.disabled = false;
+			this.hierarchicalButton.setText('Hierarchical layout');
+			this.hierarchicalButton.addClass('is-active');
+		}, 0);
+	}
+
+	private setForceLayout(): void {
+		if (!this.graph) return;
+		this.hierarchicalActive = false;
+		this.hierarchicalButton.removeClass('is-active');
+
+		// Restores the deterministic seed rather than letting FA2 relax from
+		// wherever the hierarchical layout left nodes - otherwise the "same
+		// graph looks the same on reopen" guarantee (see vaultGraph.ts)
+		// would depend on layout-switch history, not just the graph itself.
+		resetToDeterministicPositions(this.graph);
+		this.layout = runLayout(this.graph, { durationMs: 6000 });
+		void this.renderer?.getCamera().animatedReset();
 	}
 
 	private toggleStagnationHeatmap(): void {

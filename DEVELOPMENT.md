@@ -242,6 +242,17 @@ open `test-vault` in Obsidian, then check:
   starting positions, not the physics run itself, are seeded), but the
   overall arrangement and which notes end up near each other should be
   stable.
+- **Hierarchical layout**: click "Hierarchical layout" - `Hub` and its
+  linked notes should arrange top-to-bottom by link direction instead of
+  the force-directed scatter (button briefly shows "Computing…" first,
+  see `hierarchicalLayout.ts` for why this is synchronous rather than
+  instant). Clicking it again should return to the force layout, restarting
+  from the same deterministic starting positions as before (not wherever
+  the hierarchical layout left the nodes). On a vault with more than
+  `HIERARCHICAL_LAYOUT_NODE_LIMIT` (1,000) notes - e.g. `spike-vault` - the
+  button should be disabled with a tooltip explaining why: dagre's
+  layout algorithm doesn't scale to vault-sized graphs (confirmed
+  empirically: still incomplete after 60s at 10,000 nodes).
 
 ## Performance testing at scale (rendering)
 

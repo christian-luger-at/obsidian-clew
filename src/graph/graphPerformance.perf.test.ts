@@ -4,6 +4,7 @@ import forceAtlas2 from 'graphology-layout-forceatlas2';
 import { generateGraph } from './generateGraph';
 import { detectCommunities, computeCommunityStats } from './stagnation';
 import { findPaths } from './pathfinding';
+import { runHierarchicalLayout, HIERARCHICAL_LAYOUT_NODE_LIMIT } from './hierarchicalLayout';
 
 /**
  * Automated performance regression tests at vault scale (10,000 notes / ~3
@@ -130,5 +131,34 @@ describe('performance @ 10,000 nodes', () => {
 
 		expect(result.found).toBe(false);
 		expect(elapsed).toBeLessThan(2000);
+	});
+});
+
+describe('performance @ hierarchical layout node limit', () => {
+	// Deliberately NOT run against the 10,000-node fixture above: dagre's
+	// crossing-minimization step is super-linear enough that it took over a
+	// minute (still incomplete) at 10k nodes in manual testing - the whole
+	// reason GraphPane disables the hierarchical-layout toggle above
+	// HIERARCHICAL_LAYOUT_NODE_LIMIT in the first place. This test instead
+	// guards the boundary that's actually allowed to run: right at the
+	// limit itself, generously bounded well above the ~5-8s observed
+	// locally, to catch a regression without becoming a 10-minute test run.
+	it('completes at the node-count limit in reasonable time', () => {
+		const data = generateGraph({ nodeCount: HIERARCHICAL_LAYOUT_NODE_LIMIT, edgesPerNode: 3, seed: 1 });
+		const graph = new Graph({ type: 'undirected' });
+		for (const node of data.nodes) graph.addNode(node.id, { size: 3 });
+		for (const edge of data.edges) {
+			if (!graph.hasEdge(edge.source, edge.target)) graph.addEdge(edge.source, edge.target);
+		}
+
+		const start = performance.now();
+		runHierarchicalLayout(graph);
+		const elapsed = performance.now() - start;
+
+		graph.forEachNode((node) => {
+			expect(Number.isFinite(graph.getNodeAttribute(node, 'x'))).toBe(true);
+			expect(Number.isFinite(graph.getNodeAttribute(node, 'y'))).toBe(true);
+		});
+		expect(elapsed).toBeLessThan(30_000);
 	});
 });

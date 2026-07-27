@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildVaultGraph } from './vaultGraph';
+import { buildVaultGraph, resetToDeterministicPositions } from './vaultGraph';
 import { createFakeApp } from '../../test/fakeApp';
 
 describe('buildVaultGraph', () => {
@@ -193,6 +193,24 @@ describe('buildVaultGraph', () => {
 			expect(graphAfter.getNodeAttribute('A.md', 'y')).toBe(graphBefore.getNodeAttribute('A.md', 'y'));
 			expect(graphAfter.getNodeAttribute('B.md', 'x')).toBe(graphBefore.getNodeAttribute('B.md', 'x'));
 			expect(graphAfter.getNodeAttribute('B.md', 'y')).toBe(graphBefore.getNodeAttribute('B.md', 'y'));
+		});
+
+		it('resetToDeterministicPositions restores the original seed position after it was moved', () => {
+			const { app, files } = createFakeApp([{ path: 'A.md' }, { path: 'B.md' }]);
+			const graph = buildVaultGraph(app, files);
+
+			const originalX = Number(graph.getNodeAttribute('A.md', 'x'));
+			const originalY = Number(graph.getNodeAttribute('A.md', 'y'));
+
+			// Simulate a different layout (e.g. the hierarchical one) having
+			// moved the node away from its deterministic starting position.
+			graph.setNodeAttribute('A.md', 'x', 999);
+			graph.setNodeAttribute('A.md', 'y', 999);
+
+			resetToDeterministicPositions(graph);
+
+			expect(graph.getNodeAttribute('A.md', 'x')).toBe(originalX);
+			expect(graph.getNodeAttribute('A.md', 'y')).toBe(originalY);
 		});
 	});
 });
