@@ -55,8 +55,11 @@ export function computeCommunityStats(
 	return stats;
 }
 
-const FRESH_COLOR: [number, number, number] = [59, 130, 246]; // blue-500
-const STALE_COLOR: [number, number, number] = [239, 68, 68]; // red-500
+// Defaults only - GraphPane passes theme-derived colors (see theme.ts) so
+// the heatmap's gradient endpoints stay theme-aware; these keep this module
+// usable (and its existing tests valid) without any Obsidian/DOM context.
+const DEFAULT_FRESH_COLOR: [number, number, number] = [59, 130, 246]; // blue-500
+const DEFAULT_STALE_COLOR: [number, number, number] = [239, 68, 68]; // red-500
 
 /**
  * 0 (freshest community present) to 1 (stalest community present) - relative
@@ -68,9 +71,13 @@ export function staleness(newestMtime: number, minNewest: number, maxNewest: num
 	return 1 - (newestMtime - minNewest) / (maxNewest - minNewest);
 }
 
-export function stalenessColor(t: number): string {
+export function stalenessColor(
+	t: number,
+	freshRgb: [number, number, number] = DEFAULT_FRESH_COLOR,
+	staleRgb: [number, number, number] = DEFAULT_STALE_COLOR,
+): string {
 	const clamped = Math.max(0, Math.min(1, t));
-	const [r, g, b] = FRESH_COLOR.map((from, i) => Math.round(from + (STALE_COLOR[i]! - from) * clamped));
+	const [r, g, b] = freshRgb.map((from, i) => Math.round(from + (staleRgb[i]! - from) * clamped));
 	return `rgb(${r}, ${g}, ${b})`;
 }
 

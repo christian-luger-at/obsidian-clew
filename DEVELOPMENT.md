@@ -253,6 +253,15 @@ open `test-vault` in Obsidian, then check:
   button should be disabled with a tooltip explaining why: dagre's
   layout algorithm doesn't scale to vault-sized graphs (confirmed
   empirically: still incomplete after 60s at 10,000 nodes).
+- **Theme-aware colors**: switch Settings → Appearance between light and
+  dark, and (if available) a community theme - the graph's colors
+  (default node, cover-image node, edges) should follow the switch without
+  reloading the plugin, since `theme.ts` reads Obsidian's own documented
+  CSS variables (`--color-purple`, `--color-orange`, `--text-faint`, etc.)
+  rather than fixed hex values, and `GraphPane.refreshTheme()` re-reads
+  them on Obsidian's `'css-change'` workspace event. Also check "Find
+  path…" and "Stagnation heatmap" still look reasonable in a light theme -
+  never verified there before this.
 
 ## Performance testing at scale (rendering)
 

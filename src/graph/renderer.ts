@@ -31,15 +31,17 @@ export function buildGraph(data: GeneratedGraph, imageUrlForNode: (nodeId: strin
 	return graph;
 }
 
-export function createRenderer(graph: Graph, container: HTMLElement): Sigma {
+export function createRenderer(graph: Graph, container: HTMLElement, defaultEdgeColor = '#888888'): Sigma {
 	return new Sigma(graph, container, {
 		nodeProgramClasses: { image: NodeImageProgram },
 		renderEdgeLabels: false,
 		// At vault scale (tens of thousands of edges) even a fairly
 		// transparent edge color saturates into a solid mass once enough
 		// lines overlap - low alpha here matters more than it looks like it
-		// should in isolation.
-		defaultEdgeColor: '#888888',
+		// should in isolation. Caller (GraphPane) passes a theme-derived
+		// color (see theme.ts); the default here only matters for the spike
+		// harness, which has no Obsidian theme to read.
+		defaultEdgeColor,
 		hideEdgesOnMove: true,
 		// Level-of-detail: without this, sigma renders a label for nearly
 		// every node regardless of zoom, which is unreadable at vault scale

@@ -9,15 +9,8 @@ import { findPaths, PathResult } from './pathfinding';
 import { PathfindingModal } from './pathfindingModal';
 import { exportPathToCanvas } from './canvasExport';
 import { CommunityStats, computeCommunityStats, detectCommunities, formatRelativeTime, staleness, stalenessColor } from './stagnation';
+import { readThemeColors, ThemeColors } from './theme';
 
-const PRIMARY_PATH_COLOR = '#22c55e';
-const ALT_PATH_COLOR = '#eab308';
-const DIM_NODE_COLOR = '#4b5563';
-const DIM_EDGE_COLOR = '#37415155';
-// Shared "this is what you're looking for" accent - community-focus clicks
-// and search-match highlighting are different triggers for the same idea,
-// so they share one color rather than each getting their own.
-const MATCH_COLOR = '#22c55e';
 const MIN_COMMUNITY_SIZE_SHOWN = 2;
 
 /**
@@ -49,12 +42,14 @@ export class GraphPane {
 	private stagnationActive = false;
 	private searchQuery = '';
 	private hierarchicalActive = false;
+	private theme: ThemeColors;
 
 	constructor(
 		private readonly app: App,
 		private readonly containerEl: HTMLElement,
 	) {
 		this.containerEl.classList.add('clew-graph-view');
+		this.theme = readThemeColors(this.containerEl);
 
 		// Sigma's kill() clears every child of the element it's given, so it
 		// gets its own sub-container - otherwise re-rendering would wipe the
@@ -113,7 +108,8 @@ export class GraphPane {
 		this.files = files;
 		this.mtimeByPath = new Map(files.map((file) => [file.path, file.stat.mtime]));
 		this.graph = buildVaultGraph(this.app, files, { directed: false });
-		this.renderer = createRenderer(this.graph, this.graphContainerEl);
+		this.renderer = createRenderer(this.graph, this.graphContainerEl, this.theme.defaultEdgeColor);
+		this.applyDefaultColoring();
 		this.layout = runLayout(this.graph, { durationMs: 6000 });
 
 		// Proactively disable rather than let the user click and get
@@ -201,21 +197,65 @@ export class GraphPane {
 		const altEdges = new Set(paths.slice(1).flatMap((path) => edgeKeysAlongPath(this.graph!, path)));
 
 		this.renderer.setSetting('nodeReducer', (node, attr) => {
-			if (primaryNodes.has(node)) return { ...attr, color: PRIMARY_PATH_COLOR, zIndex: 2, forceLabel: true };
-			if (allNodes.has(node)) return { ...attr, color: ALT_PATH_COLOR, zIndex: 1 };
-			return { ...attr, color: DIM_NODE_COLOR };
+			if (primaryNodes.has(node)) return { ...attr, color: this.theme.primaryPathColor, zIndex: 2, forceLabel: true };
+			if (allNodes.has(node)) return { ...attr, color: this.theme.altPathColor, zIndex: 1 };
+			return { ...attr, color: this.theme.dimNodeColor };
 		});
 
 		this.renderer.setSetting('edgeReducer', (edge, attr) => {
-			if (primaryEdges.has(edge)) return { ...attr, color: PRIMARY_PATH_COLOR, size: 3, zIndex: 2 };
-			if (altEdges.has(edge)) return { ...attr, color: ALT_PATH_COLOR, zIndex: 1 };
-			return { ...attr, color: DIM_EDGE_COLOR };
+			if (primaryEdges.has(edge)) return { ...attr, color: this.theme.primaryPathColor, size: 3, zIndex: 2 };
+			if (altEdges.has(edge)) return { ...attr, color: this.theme.altPathColor, zIndex: 1 };
+			return { ...attr, color: this.theme.dimEdgeColor };
 		});
 	}
 
 	private clearHighlight(): void {
 		this.renderer?.setSetting('nodeReducer', null);
 		this.renderer?.setSetting('edgeReducer', null);
+	}
+
+	/**
+	 * The "nothing else active" coloring - a node's color depends only on
+	 * its `type` (plain vs. cover-image), read from `this.theme` rather than
+	 * baked into the graph's own node attributes at build time (see
+	 * vaultGraph.ts's docstring on why it no longer sets `color`), so
+	 * refreshTheme() can update colors without rebuilding the graph.
+	 */
+	private applyDefaultColoring(): void {
+		this.renderer?.setSetting('nodeReducer', (node, attr) => {
+			const color = attr.type === 'image' ? this.theme.imageNodeColor : this.theme.graphColor;
+			return { ...attr, color };
+		});
+		this.renderer?.setSetting('edgeReducer', null);
+	}
+
+	/**
+	 * Called by StandaloneGraphView on Obsidian's 'css-change' workspace
+	 * event (theme switches don't reload the plugin, so nothing else would
+	 * trigger a re-read of the CSS variables theme.ts resolves colors from).
+	 *
+	 * Simplest correct behavior, not the most clever one: drops back to the
+	 * neutral default coloring rather than trying to detect which mode
+	 * (path result / stagnation / search) was active and replay it with
+	 * fresh colors - matches the existing precedent that every mode already
+	 * resets on a vault refresh (setFiles()), and a user-initiated theme
+	 * switch is rare enough that this isn't worth the added complexity of
+	 * remembering and reapplying arbitrary mode state. Layout mode (force
+	 * vs. hierarchical) is a position concern, not a color one, so it's left
+	 * untouched here.
+	 */
+	refreshTheme(): void {
+		if (!this.graph) return;
+		this.theme = readThemeColors(this.containerEl);
+		this.renderer?.setSetting('defaultEdgeColor', this.theme.defaultEdgeColor);
+
+		this.stagnationActive = false;
+		this.stagnationButton.removeClass('is-active');
+		this.clearSearch();
+		this.panelEl.empty();
+		this.panelEl.hide();
+		this.applyDefaultColoring();
+		this.renderer?.refresh();
 	}
 
 	private toggleHierarchicalLayout(): void {
@@ -301,7 +341,10 @@ export class GraphPane {
 		const minNewest = Math.min(...newestValues);
 		const maxNewest = Math.max(...newestValues);
 		const colorByCommunity = new Map(
-			stats.map((s) => [s.communityId, stalenessColor(staleness(s.newestMtime, minNewest, maxNewest))]),
+			stats.map((s) => [
+				s.communityId,
+				stalenessColor(staleness(s.newestMtime, minNewest, maxNewest), this.theme.freshColorRgb, this.theme.staleColorRgb),
+			]),
 		);
 
 		this.renderer?.setSetting('nodeReducer', (node, attr) => {
@@ -346,10 +389,10 @@ export class GraphPane {
 
 		this.renderer.setSetting('nodeReducer', (node, attr) => {
 			const label = typeof attr.label === 'string' ? attr.label.toLowerCase() : '';
-			if (label.includes(q)) return { ...attr, color: MATCH_COLOR, zIndex: 2, forceLabel: true };
-			return { ...attr, color: DIM_NODE_COLOR };
+			if (label.includes(q)) return { ...attr, color: this.theme.matchColor, zIndex: 2, forceLabel: true };
+			return { ...attr, color: this.theme.dimNodeColor };
 		});
-		this.renderer.setSetting('edgeReducer', (edge, attr) => ({ ...attr, color: DIM_EDGE_COLOR }));
+		this.renderer.setSetting('edgeReducer', (edge, attr) => ({ ...attr, color: this.theme.dimEdgeColor }));
 	}
 
 	/** Resets search state - called when another mode takes over, not from the search input's own handler (which must never overwrite what the user is actively typing). */
@@ -391,12 +434,12 @@ export class GraphPane {
 		);
 
 		this.renderer.setSetting('nodeReducer', (node, attr) => {
-			if (nodeSet.has(node)) return { ...attr, color: MATCH_COLOR, zIndex: 2, forceLabel: true };
-			return { ...attr, color: DIM_NODE_COLOR };
+			if (nodeSet.has(node)) return { ...attr, color: this.theme.matchColor, zIndex: 2, forceLabel: true };
+			return { ...attr, color: this.theme.dimNodeColor };
 		});
 		this.renderer.setSetting('edgeReducer', (edge, attr) => {
-			if (edgeSet.has(edge)) return { ...attr, color: MATCH_COLOR, size: 2, zIndex: 2 };
-			return { ...attr, color: DIM_EDGE_COLOR };
+			if (edgeSet.has(edge)) return { ...attr, color: this.theme.matchColor, size: 2, zIndex: 2 };
+			return { ...attr, color: this.theme.dimEdgeColor };
 		});
 	}
 

@@ -1,9 +1,6 @@
 import { App, TFile } from 'obsidian';
 import Graph from 'graphology';
 
-const GRAPH_COLOR = '#7c3aed';
-const IMAGE_NODE_COLOR = '#f59e0b';
-
 export interface BuildVaultGraphOptions {
 	/** "Undirected by default, with a toggle" (doc section 3.2). */
 	directed?: boolean;
@@ -19,6 +16,14 @@ export interface BuildVaultGraphOptions {
  * graphology-layout-forceatlas2 defaults to reading an edge attribute
  * literally named `weight` for its own physics (see layoutRunner.ts), and
  * reusing that name here would silently corrupt the force layout.
+ *
+ * Deliberately does NOT set a `color` attribute: colors need to be
+ * theme-aware (see theme.ts) and reactive to Obsidian's 'css-change' event,
+ * which this module - kept DOM/Obsidian-App-free enough to unit test
+ * without a real Obsidian instance - has no business knowing about.
+ * GraphPane applies color via a default nodeReducer instead (see
+ * applyDefaultColoring in graphPane.ts); `type` (image vs. plain) is still
+ * set here since it's structural, not a style choice.
  */
 export function buildVaultGraph(app: App, files: TFile[], options: BuildVaultGraphOptions = {}): Graph {
 	const { directed = false } = options;
@@ -33,7 +38,6 @@ export function buildVaultGraph(app: App, files: TFile[], options: BuildVaultGra
 			label: file.basename,
 			x: position.x,
 			y: position.y,
-			color: image ? IMAGE_NODE_COLOR : GRAPH_COLOR,
 			type: image ? 'image' : undefined,
 			image,
 		});

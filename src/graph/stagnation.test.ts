@@ -174,6 +174,17 @@ describe('stagnation', () => {
 			expect(low).toBe('rgb(59, 130, 246)'); // blue
 			expect(high).toBe('rgb(239, 68, 68)'); // red
 		});
+
+		it('uses explicitly passed fresh/stale colors instead of the defaults', () => {
+			// GraphPane passes theme-derived colors (see theme.ts) rather than
+			// relying on these hardcoded fallbacks - verifies the values
+			// actually get used, not just that passing extra args doesn't error.
+			const green: [number, number, number] = [0, 255, 0];
+			const purple: [number, number, number] = [128, 0, 128];
+
+			expect(stalenessColor(0, green, purple)).toBe('rgb(0, 255, 0)');
+			expect(stalenessColor(1, green, purple)).toBe('rgb(128, 0, 128)');
+		});
 	});
 
 	describe('formatRelativeTime', () => {

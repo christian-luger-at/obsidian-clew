@@ -51,6 +51,14 @@ export class StandaloneGraphView extends ItemView {
 		// map, and unless some other file happens to change afterward,
 		// nothing ever triggers a re-check.
 		this.registerEvent(this.app.metadataCache.on('resolved', () => this.scheduleRefresh()));
+
+		// Theme switches don't reload the plugin, so without this, colors
+		// baked in at whatever theme was active when the view first opened
+		// would just stay stale until the graph is rebuilt some other way.
+		// A lightweight color-only refresh (GraphPane.refreshTheme), not the
+		// full scheduleRefresh() - a theme switch shouldn't reset positions
+		// or the current layout mode the way a vault-content change should.
+		this.registerEvent(this.app.workspace.on('css-change', () => this.pane?.refreshTheme()));
 	}
 
 	onClose(): Promise<void> {
