@@ -39,7 +39,7 @@ export function createRenderer(graph: Graph, container: HTMLElement): Sigma {
 		// transparent edge color saturates into a solid mass once enough
 		// lines overlap - low alpha here matters more than it looks like it
 		// should in isolation.
-		defaultEdgeColor: '#8888881a',
+		defaultEdgeColor: '#888888',
 		hideEdgesOnMove: true,
 		// Level-of-detail: without this, sigma renders a label for nearly
 		// every node regardless of zoom, which is unreadable at vault scale
