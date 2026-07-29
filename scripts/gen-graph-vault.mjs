@@ -75,7 +75,11 @@ function placeholderSvg(seed) {
 	return `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"><circle cx="32" cy="32" r="32" fill="hsl(${hue},70%,55%)"/><text x="32" y="41" font-size="26" text-anchor="middle" fill="white" font-family="sans-serif">${seed % 100}</text></svg>\n`;
 }
 
-rmSync(ROOT, { recursive: true, force: true });
+// Only the generated content, not the whole vault - see gen-test-vault.mjs's
+// identical comment for why `.obsidian/` (plugin symlinks etc.) must survive
+// a regeneration.
+rmSync(join(ROOT, NOTES_FOLDER), { recursive: true, force: true });
+rmSync(join(ROOT, 'attachments'), { recursive: true, force: true });
 mkdirSync(join(ROOT, NOTES_FOLDER), { recursive: true });
 mkdirSync(join(ROOT, 'attachments'), { recursive: true });
 

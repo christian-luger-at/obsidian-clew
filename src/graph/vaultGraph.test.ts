@@ -129,8 +129,8 @@ describe('buildVaultGraph', () => {
 
 		const graph = buildVaultGraph(app, files);
 
-		// base size (3) + log(1 + 0) * 1.5 === 3
-		expect(graph.getNodeAttribute('Isolated.md', 'size')).toBe(3);
+		// base size (1.2) + log(1 + 0) * 0.6 === 1.2
+		expect(graph.getNodeAttribute('Isolated.md', 'size')).toBe(1.2);
 	});
 
 	describe('deterministic layout positions', () => {

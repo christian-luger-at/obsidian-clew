@@ -1,7 +1,7 @@
-import { App, TFile } from 'obsidian';
+import { App, Setting, TFile } from 'obsidian';
 import Graph from 'graphology';
 import type Sigma from 'sigma';
-import { createRenderer } from './renderer';
+import { createRenderer, createNodeHoverDrawer } from './renderer';
 import { runLayout, LayoutRun } from './layoutRunner';
 import { buildVaultGraph, resetToDeterministicPositions, sizeNodesByDegree } from './vaultGraph';
 import { runHierarchicalLayout, HIERARCHICAL_LAYOUT_NODE_LIMIT } from './hierarchicalLayout';
@@ -15,9 +15,13 @@ import { CommunityStats, computeCommunityStats, detectCommunities, formatRelativ
 import { readThemeColors, ThemeColors } from './theme';
 import { assignCategoryColors, colorByCategory, sizeByNumericValue } from './visualEncoding';
 import { VisualEncodingModal, VisualEncodingRequest } from './visualEncodingModal';
+import { ClewAppearanceSettings, DEFAULT_APPEARANCE_SETTINGS } from '../settings';
 import type ClewPlugin from '../main';
 
-/** How long ForceAtlas2 briefly re-runs after a drag ends, so neighbors visibly adapt to the dropped node's new (now fixed) position - much shorter than the initial 6s settle, since this is just a local readjustment, not settling the whole graph from scratch. */
+/** Wall-clock budget for the initial force-layout settle when a graph is (re)built - not user-tunable (unlike gravity/scalingRatio), since a longer settle mostly just delays interactivity rather than visibly improving the result. */
+const SETTLE_DURATION_MS = 2000;
+
+/** How long ForceAtlas2 briefly re-runs after a drag ends, so neighbors visibly adapt to the dropped node's new (now fixed) position - shorter than the initial settle, since this is just a local readjustment, not settling the whole graph from scratch. */
 const DRAG_SETTLE_DURATION_MS = 1500;
 
 const MIN_COMMUNITY_SIZE_SHOWN = 2;
@@ -32,6 +36,168 @@ const MAX_LEGEND_CATEGORIES = 8;
  * with no per-node "leave this one alone" concept.
  */
 type LayoutMode = 'force' | 'hierarchical' | 'radial' | 'circular';
+
+/** Debounces the expensive part of an appearance slider's onChange (disk write + live re-render/re-layout) - a slider fires on every 'input' tick while dragging, and persisting + restarting ForceAtlas2 on every single tick would both spam disk writes and make the graph flicker instead of tuning smoothly. */
+function debounce(fn: () => void, delayMs: number): () => void {
+	let timer: number | null = null;
+	return () => {
+		if (timer !== null) window.clearTimeout(timer);
+		timer = window.setTimeout(fn, delayMs);
+	};
+}
+
+interface AppearanceSliderSpec {
+	// Excludes edgeColorOverride - the one non-numeric (string | null)
+	// appearance setting, which has its own color-picker UI instead of a
+	// slider (see renderAppearancePanel()'s "Colors" section).
+	key: Exclude<keyof ClewAppearanceSettings, 'edgeColorOverride'>;
+	name: string;
+	desc: string;
+	min: number;
+	max: number;
+	step: number;
+	/**
+	 * Which live-reapply category this setting needs after a change - node
+	 * size and label LOD are cheap (repaint/refresh only), a layout restart
+	 * is inherently disruptive (repositions every node), so these are kept
+	 * separate rather than one "reapply everything" call that would restart
+	 * physics on every slider, including ones that don't need it.
+	 */
+	apply: 'size' | 'label' | 'layout';
+}
+
+/**
+ * Every number here was previously a hardcoded constant scattered across
+ * vaultGraph.ts/layoutRunner.ts/renderer.ts/radialLayout.ts/circularLayout.ts/
+ * hierarchicalLayout.ts - user feedback comparing Clew's graph against
+ * Obsidian's own core Graph View led to three rounds of manually re-tuning
+ * node size alone in one session, which is exactly the friction a live
+ * setting removes. Lives in the graph view itself (GraphPane's
+ * "Appearance…" panel), not the plugin Settings tab - tuning these only
+ * makes sense while watching the graph react, which a separate Settings
+ * screen can't offer.
+ */
+const APPEARANCE_SLIDER_GROUPS: { heading: string; sliders: AppearanceSliderSpec[] }[] = [
+	{
+		heading: 'Node size',
+		sliders: [
+			{
+				key: 'nodeBaseSize',
+				name: 'Base node size',
+				desc: 'Size of a plain note with no links (degree 0).',
+				min: 0.5,
+				max: 12,
+				step: 0.1,
+				apply: 'size',
+			},
+			{
+				key: 'nodeImageBaseSize',
+				name: 'Cover-image node size',
+				desc: 'Size of a note with a cover image, at degree 0 - kept larger than a plain note so the image inside stays recognizable.',
+				min: 1,
+				max: 6,
+				step: 0.1,
+				apply: 'size',
+			},
+			{
+				key: 'nodeDegreeGrowth',
+				name: 'Hub growth',
+				desc: 'How much bigger a highly-linked note gets than one with few links.',
+				min: 0,
+				max: 2,
+				step: 0.1,
+				apply: 'size',
+			},
+		],
+	},
+	{
+		heading: 'Physics (force layout)',
+		sliders: [
+			{
+				key: 'gravity',
+				name: 'Gravity',
+				desc: 'Pull toward the center - higher keeps the graph more compact.',
+				min: 0.01,
+				max: 0.5,
+				step: 0.01,
+				apply: 'layout',
+			},
+			{
+				key: 'scalingRatio',
+				name: 'Scaling ratio',
+				desc: 'Overall repulsion between notes - higher spreads the graph out more.',
+				min: 1,
+				max: 50,
+				step: 1,
+				apply: 'layout',
+			},
+		],
+	},
+	{
+		heading: 'Labels',
+		sliders: [
+			{
+				key: 'labelSizeThreshold',
+				name: 'Label size threshold',
+				desc: 'How large a note has to appear on screen before its name is shown - higher hides more labels when zoomed out.',
+				min: 2,
+				max: 30,
+				step: 1,
+				apply: 'label',
+			},
+			{
+				key: 'labelDensity',
+				name: 'Label density',
+				desc: 'How many labels are allowed to show at once in a given area.',
+				min: 0,
+				max: 2,
+				step: 0.1,
+				apply: 'label',
+			},
+		],
+	},
+	{
+		heading: 'Alternative layout spacing',
+		sliders: [
+			{
+				key: 'radialRingSpacing',
+				name: 'Radial ring spacing',
+				desc: 'Distance between successive rings in the radial layout.',
+				min: 40,
+				max: 300,
+				step: 10,
+				apply: 'layout',
+			},
+			{
+				key: 'circularRadius',
+				name: 'Circular layout radius',
+				desc: 'Size of the single ring every note is placed on in the circular layout.',
+				min: 100,
+				max: 800,
+				step: 20,
+				apply: 'layout',
+			},
+			{
+				key: 'hierarchicalNodeSpacing',
+				name: 'Hierarchical node spacing',
+				desc: 'Space between notes on the same level in the hierarchical layout.',
+				min: 10,
+				max: 100,
+				step: 5,
+				apply: 'layout',
+			},
+			{
+				key: 'hierarchicalRankSpacing',
+				name: 'Hierarchical level spacing',
+				desc: 'Space between levels in the hierarchical layout.',
+				min: 20,
+				max: 200,
+				step: 10,
+				apply: 'layout',
+			},
+		],
+	},
+];
 
 /**
  * Graph-rendering + path-finding UI, composed into StandaloneGraphView
@@ -52,6 +218,7 @@ export class GraphPane {
 	private readonly graphContainerEl: HTMLElement;
 	private readonly panelEl: HTMLElement;
 	private readonly legendEl: HTMLElement;
+	private readonly appearancePanelEl: HTMLElement;
 	private readonly stagnationButton: HTMLElement;
 	private readonly searchInputEl: HTMLInputElement;
 	private readonly hierarchicalButton: HTMLButtonElement;
@@ -59,6 +226,7 @@ export class GraphPane {
 	private readonly circularButton: HTMLButtonElement;
 	private readonly layoutButtons: HTMLButtonElement[];
 	private readonly visualEncodingButton: HTMLButtonElement;
+	private readonly appearanceButton: HTMLButtonElement;
 	private renderer: Sigma | null = null;
 	private layout: LayoutRun | null = null;
 	private graph: Graph | null = null;
@@ -71,8 +239,20 @@ export class GraphPane {
 	private colorProperty: string | null = null;
 	private sizeProperty: string | null = null;
 	private draggedNode: string | null = null;
+	/**
+	 * Whether the mouse actually moved between downNode and mouseup - a
+	 * plain click (mousedown+mouseup, no movement) must NOT pin the node
+	 * where it already was, only a real drag should, and setupNodeClick()
+	 * must NOT open the note after a real drag. An instance field (not a
+	 * closure-local variable inside setupNodeDragging()) specifically so
+	 * setupNodeClick()'s separate 'clickNode' handler can read it too - see
+	 * that method's docstring for why this is necessary at all.
+	 */
+	private dragMoved = false;
 	/** Whether a found path result is the reason nodes/edges are currently colored - see renderLegend()'s precedence over this vs. stagnation/search, which visually override a path's reducer when active. */
 	private pathResultActive = false;
+	/** Remembers the radial layout's chosen focus note so an appearance-panel change can re-apply it (reapplyActiveLayout()) without re-prompting for a note. */
+	private radialFocusNode: string | null = null;
 
 	constructor(
 		private readonly app: App,
@@ -119,6 +299,12 @@ export class GraphPane {
 		this.visualEncodingButton = toolbarEl.createEl('button', { text: 'Visual encoding…' });
 		this.visualEncodingButton.addEventListener('click', () => this.openVisualEncodingModal());
 
+		// Node size / physics / label / layout-spacing tuning - lives here
+		// (not the plugin's Settings tab) since the user adjusts these while
+		// watching the graph react, not on a separate settings screen.
+		this.appearanceButton = toolbarEl.createEl('button', { text: 'Appearance…' });
+		this.appearanceButton.addEventListener('click', () => this.toggleAppearancePanel());
+
 		// Focus mode: highlights matches, dims the rest - doesn't filter/hide
 		// anything, so the surrounding structure stays visible for context
 		// (doc's "Fokusmodus", matching an open Obsidian forum request rather
@@ -136,6 +322,10 @@ export class GraphPane {
 		// Bottom-left - opposite the top-left toolbar and top-right path
 		// panel, so it doesn't compete with either for space.
 		this.legendEl = this.containerEl.createDiv({ cls: 'clew-legend' });
+
+		// Bottom-right - the one remaining free corner.
+		this.appearancePanelEl = this.containerEl.createDiv({ cls: 'clew-appearance-panel' });
+		this.appearancePanelEl.hide();
 
 		this.containerEl.addEventListener('click', () => {
 			GraphPane.active = this;
@@ -169,11 +359,18 @@ export class GraphPane {
 			pinnedPositions: this.plugin.settings.pinnedPositions,
 		});
 		this.paintVisualEncoding();
-		this.renderer = createRenderer(this.graph, this.graphContainerEl, this.theme.defaultEdgeColor, this.theme.labelColor);
+		const appearance = this.plugin.settings.appearance;
+		this.renderer = createRenderer(this.graph, this.graphContainerEl, {
+			defaultEdgeColor: this.resolvedEdgeColor(),
+			labelColor: this.theme.labelColor,
+			hoverBackgroundColor: this.theme.backgroundColor,
+			labelRenderedSizeThreshold: appearance.labelSizeThreshold,
+			labelDensity: appearance.labelDensity,
+		});
 		this.setupNodeDragging();
 		this.setupNodeClick();
 		this.setupNodeHover();
-		this.layout = runLayout(this.graph, { durationMs: 6000 });
+		this.layout = runLayout(this.graph, this.layoutOptions(SETTLE_DURATION_MS));
 
 		// Proactively disable rather than let the user click and get
 		// rejected - see HIERARCHICAL_LAYOUT_NODE_LIMIT's docstring for why
@@ -186,6 +383,154 @@ export class GraphPane {
 
 		this.renderLegend();
 		GraphPane.active = this;
+	}
+
+	/**
+	 * Live-reapply hooks for the Appearance panel (renderAppearancePanel()
+	 * below), called right after a slider changes so tuning gives immediate
+	 * feedback on the graph instead of only taking effect on the next vault
+	 * refresh/layout switch. Split into three instead of one "reapply
+	 * everything" method: node size and label LOD are cheap (repaint +
+	 * refresh, no physics), while a layout restart is inherently disruptive
+	 * (repositions every node) - a user nudging the node-size slider
+	 * shouldn't also restart ForceAtlas2 on every tick.
+	 */
+	private applyNodeSizeSettings(): void {
+		if (!this.graph) return;
+		this.paintVisualEncoding();
+		this.renderer?.refresh();
+	}
+
+	private applyLabelSettings(): void {
+		if (!this.renderer) return;
+		const appearance = this.plugin.settings.appearance;
+		this.renderer.setSetting('labelRenderedSizeThreshold', appearance.labelSizeThreshold);
+		this.renderer.setSetting('labelDensity', appearance.labelDensity);
+		this.renderer.refresh();
+	}
+
+	/** The theme's edge color (with theme.ts's contrast-safety fallback already applied), unless the user picked an explicit override - see ClewAppearanceSettings.edgeColorOverride. */
+	private resolvedEdgeColor(): string {
+		return this.plugin.settings.appearance.edgeColorOverride ?? this.theme.defaultEdgeColor;
+	}
+
+	private applyEdgeColorSetting(): void {
+		this.renderer?.setSetting('defaultEdgeColor', this.resolvedEdgeColor());
+		this.renderer?.refresh();
+	}
+
+	/** Re-runs whichever layout is currently active with the latest physics/spacing settings - a no-op for radial if no focus note has been chosen yet this session (nothing to re-center on). */
+	private reapplyActiveLayout(): void {
+		if (!this.graph) return;
+		switch (this.layoutMode) {
+			case 'force':
+				this.setForceLayout();
+				break;
+			case 'hierarchical':
+				this.setHierarchicalLayout();
+				break;
+			case 'radial':
+				if (this.radialFocusNode) this.setRadialLayout(this.radialFocusNode);
+				break;
+			case 'circular':
+				this.setCircularLayout();
+				break;
+		}
+	}
+
+	private toggleAppearancePanel(): void {
+		if (this.appearancePanelEl.isShown()) {
+			this.appearancePanelEl.hide();
+			this.appearanceButton.removeClass('is-active');
+		} else {
+			this.renderAppearancePanel();
+			this.appearancePanelEl.show();
+			this.appearanceButton.addClass('is-active');
+		}
+	}
+
+	/**
+	 * Rebuilt from scratch each time the panel opens (not built once and
+	 * left standing) so it always reflects the current settings - notably
+	 * after "Reset to defaults", where every slider needs to visibly jump
+	 * back rather than silently disagree with the values it just wrote.
+	 */
+	private renderAppearancePanel(): void {
+		this.appearancePanelEl.empty();
+		this.appearancePanelEl.createEl('h4', { text: 'Graph appearance' });
+
+		new Setting(this.appearancePanelEl).setName('Colors').setHeading();
+		new Setting(this.appearancePanelEl)
+			.setName('Edge color')
+			.setDesc(
+				'Uses the current theme\'s color by default (with an automatic fallback if that color is too hard to see against the background). Pick a color to override it.',
+			)
+			.addColorPicker((picker) =>
+				picker.setValue(toHexColor(this.resolvedEdgeColor())).onChange((value) => {
+					this.plugin.settings.appearance.edgeColorOverride = value;
+					void this.plugin.saveSettings();
+					this.applyEdgeColorSetting();
+				}),
+			)
+			.addExtraButton((button) =>
+				button
+					.setIcon('rotate-ccw')
+					.setTooltip('Reset to theme color')
+					.onClick(() => {
+						this.plugin.settings.appearance.edgeColorOverride = null;
+						void this.plugin.saveSettings();
+						this.applyEdgeColorSetting();
+						this.renderAppearancePanel();
+					}),
+			);
+
+		for (const group of APPEARANCE_SLIDER_GROUPS) {
+			new Setting(this.appearancePanelEl).setName(group.heading).setHeading();
+
+			for (const spec of group.sliders) {
+				// A fresh debouncer per slider (not shared) - each one only
+				// ever needs to coalesce that single slider's own rapid
+				// 'input' events, not compete with other sliders' timers.
+				const debouncedApply = debounce(() => {
+					void this.plugin.saveSettings();
+					this.applyAppearanceCategory(spec.apply);
+				}, 250);
+
+				new Setting(this.appearancePanelEl)
+					.setName(spec.name)
+					.setDesc(spec.desc)
+					.addSlider((slider) =>
+						slider
+							.setLimits(spec.min, spec.max, spec.step)
+							.setValue(this.plugin.settings.appearance[spec.key])
+							.setDynamicTooltip()
+							.onChange((value) => {
+								this.plugin.settings.appearance[spec.key] = value;
+								debouncedApply();
+							}),
+					);
+			}
+		}
+
+		new Setting(this.appearancePanelEl)
+			.setName('Reset to defaults')
+			.addButton((button) =>
+				button.setButtonText('Reset').onClick(async () => {
+					this.plugin.settings.appearance = { ...DEFAULT_APPEARANCE_SETTINGS };
+					await this.plugin.saveSettings();
+					this.applyEdgeColorSetting();
+					this.applyNodeSizeSettings();
+					this.applyLabelSettings();
+					this.reapplyActiveLayout();
+					this.renderAppearancePanel();
+				}),
+			);
+	}
+
+	private applyAppearanceCategory(category: AppearanceSliderSpec['apply']): void {
+		if (category === 'size') this.applyNodeSizeSettings();
+		else if (category === 'label') this.applyLabelSettings();
+		else this.reapplyActiveLayout();
 	}
 
 	destroy(): void {
@@ -309,8 +654,13 @@ export class GraphPane {
 	private paintVisualEncoding(): void {
 		if (!this.graph) return;
 		const graph = this.graph;
+		const appearance = this.plugin.settings.appearance;
 
-		sizeNodesByDegree(graph);
+		sizeNodesByDegree(graph, {
+			baseSize: appearance.nodeBaseSize,
+			imageBaseSize: appearance.nodeImageBaseSize,
+			degreeGrowth: appearance.nodeDegreeGrowth,
+		});
 		if (this.sizeProperty) {
 			const sizeByNode = sizeByNumericValue(this.propertyValues(this.sizeProperty, toNumberValue));
 			graph.forEachNode((node) => {
@@ -438,8 +788,9 @@ export class GraphPane {
 	refreshTheme(): void {
 		if (!this.graph) return;
 		this.theme = readThemeColors(this.containerEl);
-		this.renderer?.setSetting('defaultEdgeColor', this.theme.defaultEdgeColor);
+		this.renderer?.setSetting('defaultEdgeColor', this.resolvedEdgeColor());
 		this.renderer?.setSetting('labelColor', { color: this.theme.labelColor });
+		this.renderer?.setSetting('defaultDrawNodeHover', createNodeHoverDrawer(this.theme.backgroundColor));
 
 		this.stagnationActive = false;
 		this.stagnationButton.removeClass('is-active');
@@ -482,7 +833,11 @@ export class GraphPane {
 
 		window.setTimeout(() => {
 			if (!this.graph) return;
-			runHierarchicalLayout(this.graph);
+			const appearance = this.plugin.settings.appearance;
+			runHierarchicalLayout(this.graph, {
+				nodesep: appearance.hierarchicalNodeSpacing,
+				ranksep: appearance.hierarchicalRankSpacing,
+			});
 			void this.resetCameraAndRefresh();
 
 			this.activateLayoutMode('hierarchical', this.hierarchicalButton);
@@ -502,7 +857,7 @@ export class GraphPane {
 	private setCircularLayout(): void {
 		if (!this.graph) return;
 		this.layout?.stop();
-		computeCircularLayout(this.graph);
+		computeCircularLayout(this.graph, this.plugin.settings.appearance.circularRadius);
 		this.activateLayoutMode('circular', this.circularButton);
 		void this.resetCameraAndRefresh();
 	}
@@ -525,7 +880,8 @@ export class GraphPane {
 	private setRadialLayout(focusPath: string): void {
 		if (!this.graph) return;
 		this.layout?.stop();
-		computeRadialLayout(this.graph, focusPath);
+		this.radialFocusNode = focusPath;
+		computeRadialLayout(this.graph, focusPath, this.plugin.settings.appearance.radialRingSpacing);
 		this.activateLayoutMode('radial', this.radialButton);
 		void this.resetCameraAndRefresh();
 	}
@@ -542,8 +898,14 @@ export class GraphPane {
 		// and kept fixed - none of the other layouts respect pins, so this
 		// is what makes a pin survive a round trip through any of them.
 		resetToDeterministicPositions(this.graph, this.plugin.settings.pinnedPositions);
-		this.layout = runLayout(this.graph, { durationMs: 6000 });
+		this.layout = runLayout(this.graph, this.layoutOptions(SETTLE_DURATION_MS));
 		void this.resetCameraAndRefresh();
+	}
+
+	/** ForceAtlas2 options shared by every runLayout() call site - gravity/scalingRatio are user-tunable (Settings tab), only the duration differs per call site (initial settle vs. the short post-drag re-settle). */
+	private layoutOptions(durationMs: number): { durationMs: number; gravity: number; scalingRatio: number } {
+		const appearance = this.plugin.settings.appearance;
+		return { durationMs, gravity: appearance.gravity, scalingRatio: appearance.scalingRatio };
 	}
 
 	/**
@@ -578,21 +940,22 @@ export class GraphPane {
 	private setupNodeDragging(): void {
 		if (!this.renderer) return;
 		const renderer = this.renderer;
-		// Tracks whether the mouse actually moved between downNode and
-		// mouseup - a plain click (mousedown+mouseup, no movement) must NOT
-		// pin the node where it already was; only a real drag should.
-		let dragMoved = false;
 
 		renderer.on('downNode', (payload) => {
+			// Reset unconditionally, even in a layout mode where dragging
+			// itself is disabled below - otherwise this.dragMoved could be
+			// left stale from an earlier force-mode drag and incorrectly
+			// suppress setupNodeClick()'s open-note handling after a later
+			// plain click made in a different layout mode.
+			this.dragMoved = false;
 			if (this.layoutMode !== 'force') return;
 			this.draggedNode = payload.node;
-			dragMoved = false;
 			renderer.getCamera().disable();
 		});
 
 		renderer.getMouseCaptor().on('mousemovebody', (coordinates) => {
 			if (!this.draggedNode || !this.graph) return;
-			dragMoved = true;
+			this.dragMoved = true;
 			const position = renderer.viewportToGraph(coordinates);
 			this.graph.setNodeAttribute(this.draggedNode, 'x', position.x);
 			this.graph.setNodeAttribute(this.draggedNode, 'y', position.y);
@@ -605,7 +968,7 @@ export class GraphPane {
 
 		const endDrag = (): void => {
 			if (!this.draggedNode) return;
-			if (dragMoved) this.finishDrag(this.draggedNode);
+			if (this.dragMoved) this.finishDrag(this.draggedNode);
 			this.draggedNode = null;
 			renderer.getCamera().enable();
 		};
@@ -636,38 +999,59 @@ export class GraphPane {
 		void this.plugin.saveSettings();
 
 		this.layout?.stop();
-		this.layout = runLayout(this.graph, { durationMs: DRAG_SETTLE_DURATION_MS });
+		this.layout = runLayout(this.graph, this.layoutOptions(DRAG_SETTLE_DURATION_MS));
 	}
 
 	/**
 	 * GitHub issue #10: click a node to open its note - matches Obsidian's
 	 * own core Graph View convention (single click opens), rather than
 	 * introducing a different interaction Clew users would have to relearn.
-	 * sigma's own click/drag differentiation (its `draggedEventsTolerance`
-	 * setting) means `clickNode` only fires for a genuine click, not after a
-	 * real drag - confirmed by reading sigma's mouse captor settings, not
-	 * assumed - so this coexists with setupNodeDragging() without a
-	 * conflict, no extra bookkeeping needed here.
+	 *
+	 * sigma's own `clickNode` does NOT reliably skip firing after a real
+	 * drag here - user-reported: dropping a dragged node also opened its
+	 * note. sigma's built-in click/drag differentiation apparently doesn't
+	 * account for setupNodeDragging()'s own manual position updates (driven
+	 * off the mouse captor's 'mousemovebody', not sigma's default drag
+	 * handling), so `clickNode` still fires on mouseup purely based on
+	 * "released over the same node," regardless of movement in between.
+	 * Explicitly checked against this.dragMoved instead - set by
+	 * setupNodeDragging() on the very first 'mousemovebody' tick, so it's
+	 * already correct by the time this fires no matter which of the two
+	 * mouseup-triggered handlers runs first.
 	 */
 	private setupNodeClick(): void {
 		if (!this.renderer) return;
 		this.renderer.on('clickNode', (payload) => {
+			if (this.dragMoved) return;
 			void this.openNote(payload.node);
 		});
 	}
 
 	/**
-	 * GitHub issue #9: hovering a node highlights it and its neighbors,
-	 * dimming the rest - deliberately hover, not click, so it doesn't
-	 * compete with click-to-open (setupNodeClick) for the same gesture.
+	 * GitHub issue #9: hovering a node highlights it, dimming everything
+	 * that isn't it or a direct neighbor - deliberately hover, not click, so
+	 * it doesn't compete with click-to-open (setupNodeClick) for the same
+	 * gesture.
+	 *
+	 * Only the hovered node itself gets the "prominent" treatment (accent
+	 * color, raised above everything else) - user feedback: an earlier
+	 * version also recolored every neighbor, which read as "everything is
+	 * highlighted" rather than clearly marking one node as selected.
+	 * Neighbors instead keep their exact current color (`base` below -
+	 * whatever a stagnation heatmap/search/path mode already painted them,
+	 * or their normal baked-in color otherwise) - they're exempted from
+	 * dimming, not recolored. Their label *is* forced on though (reversing
+	 * an even earlier attempt at hiding it) - user feedback: being able to
+	 * read which notes a hovered note connects to, without also opening a
+	 * path-finding query, is the actual point of this feature.
 	 *
 	 * Composes with whatever mode is currently active (default coloring,
 	 * stagnation heatmap, search, a shown path result) rather than
 	 * replacing it: saves the current nodeReducer/edgeReducer via
 	 * renderer.getSetting() before overlaying the hover highlight, and
 	 * restores exactly those saved reducers on mouse-leave - so hovering
-	 * while, say, the stagnation heatmap is active shows neighbor-highlight
-	 * on top of the heatmap's colors, and un-hovering returns to the
+	 * while, say, the stagnation heatmap is active leaves neighbors showing
+	 * their heatmap colors untouched, and un-hovering returns to the
 	 * heatmap exactly as it was, not a reset to plain default coloring.
 	 */
 	private setupNodeHover(): void {
@@ -688,16 +1072,16 @@ export class GraphPane {
 			hoveredNode = payload.node;
 
 			const neighbors = new Set(graph.neighbors(hoveredNode));
-			neighbors.add(hoveredNode);
 			const incidentEdges = new Set(graph.edges(hoveredNode));
 
 			previousNodeReducer = renderer.getSetting('nodeReducer');
 			previousEdgeReducer = renderer.getSetting('edgeReducer');
 
 			renderer.setSetting('nodeReducer', (n, attr) => {
-				if (!neighbors.has(n)) return { ...attr, color: this.theme.dimNodeColor };
 				const base = previousNodeReducer ? previousNodeReducer(n, attr) : attr;
-				return { ...base, color: this.theme.matchColor, zIndex: 2, forceLabel: true };
+				if (n === hoveredNode) return { ...base, color: this.theme.matchColor, zIndex: 2, forceLabel: true };
+				if (neighbors.has(n)) return { ...base, forceLabel: true };
+				return { ...attr, color: this.theme.dimNodeColor };
 			});
 			renderer.setSetting('edgeReducer', (e, attr) => {
 				if (!incidentEdges.has(e)) return { ...attr, color: this.theme.dimEdgeColor };
@@ -859,6 +1243,14 @@ function edgeKeysAlongPath(graph: Graph, path: string[]): string[] {
 
 function rgbToCss(rgb: [number, number, number]): string {
 	return `rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]})`;
+}
+
+/** Obsidian's ColorComponent (the Appearance panel's edge-color picker) only accepts hex - theme.ts's resolved colors are `rgb()` strings, so this converts for display. Already-hex input (a saved override) passes through unchanged. */
+function toHexColor(color: string): string {
+	const match = color.match(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/);
+	if (!match) return color;
+	const toHexPart = (value: string): string => Number(value).toString(16).padStart(2, '0');
+	return `#${toHexPart(match[1]!)}${toHexPart(match[2]!)}${toHexPart(match[3]!)}`;
 }
 
 function basename(vaultPath: string): string {

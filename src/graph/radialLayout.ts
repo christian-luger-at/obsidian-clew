@@ -1,14 +1,15 @@
 import Graph from 'graphology';
 
 /**
- * Distance between successive rings. Arbitrary but consistent in scale with
- * hierarchicalLayout.ts's rank spacing (its `ranksep: 80`), not
- * vaultGraph.ts's [0, 1) deterministic-seed unit square - like hierarchical
- * layout, sigma's camera re-fits to content after a layout switch (see
- * GraphPane.resetCameraAndRefresh), so the absolute unit doesn't need to
- * match other layouts, only be internally consistent.
+ * Default distance between successive rings - user-tunable (Settings tab,
+ * see settings.ts's ClewAppearanceSettings.radialRingSpacing). Arbitrary but
+ * consistent in scale with hierarchicalLayout.ts's rank spacing (its
+ * `ranksep: 80`), not vaultGraph.ts's [0, 1) deterministic-seed unit square -
+ * like hierarchical layout, sigma's camera re-fits to content after a layout
+ * switch (see GraphPane.resetCameraAndRefresh), so the absolute unit doesn't
+ * need to match other layouts, only be internally consistent.
  */
-const RING_SPACING = 120;
+const DEFAULT_RING_SPACING = 120;
 
 /**
  * A third layout alongside force + hierarchical: rings the graph out from
@@ -27,7 +28,7 @@ const RING_SPACING = 120;
  * currently in the graph as candidates (see RadialLayoutModal), so this is
  * a defensive fallback, not an expected path.
  */
-export function computeRadialLayout(graph: Graph, focusNode: string): void {
+export function computeRadialLayout(graph: Graph, focusNode: string, ringSpacing: number = DEFAULT_RING_SPACING): void {
 	if (!graph.hasNode(focusNode)) return;
 
 	const distanceByNode = bfsDistances(graph, focusNode);
@@ -54,7 +55,7 @@ export function computeRadialLayout(graph: Graph, focusNode: string): void {
 		// always produces the same arrangement, matching this project's other
 		// determinism guarantees (see vaultGraph.ts's deterministicPosition).
 		nodes.sort();
-		const radius = distance * RING_SPACING;
+		const radius = distance * ringSpacing;
 		nodes.forEach((node, i) => {
 			const angle = (i / nodes.length) * 2 * Math.PI;
 			graph.setNodeAttribute(node, 'x', radius * Math.cos(angle));

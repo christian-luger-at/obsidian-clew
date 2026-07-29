@@ -16,7 +16,13 @@ const NOTES_FOLDER = 'Notes';
 const DAY = 24 * 60 * 60 * 1000;
 const now = Date.now();
 
-rmSync(ROOT, { recursive: true, force: true });
+// Only the generated content, not the whole vault: `.obsidian/` (plugin
+// symlinks, community-plugins.json, workspace layout) lives at ROOT too and
+// used to get wiped along with everything else, forcing a manual re-symlink
+// + re-enable after every regeneration - the exact friction the plugin
+// symlinks (see DEVELOPMENT.md) are meant to eliminate.
+rmSync(join(ROOT, NOTES_FOLDER), { recursive: true, force: true });
+rmSync(join(ROOT, 'attachments'), { recursive: true, force: true });
 mkdirSync(join(ROOT, NOTES_FOLDER), { recursive: true });
 mkdirSync(join(ROOT, 'attachments'), { recursive: true });
 

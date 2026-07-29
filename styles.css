@@ -81,3 +81,22 @@
 	height: 10px;
 	border-radius: 50%;
 }
+
+.clew-appearance-panel {
+	position: absolute;
+	bottom: var(--size-4-2);
+	right: var(--size-4-2);
+	z-index: 10;
+	width: 280px;
+	max-height: calc(100% - var(--size-4-4));
+	overflow-y: auto;
+	padding: var(--size-4-3);
+	background: var(--background-primary);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-m);
+	box-shadow: var(--shadow-s);
+}
+
+.clew-appearance-panel h4 {
+	margin-top: 0;
+}

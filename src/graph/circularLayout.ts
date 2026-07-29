@@ -1,7 +1,7 @@
 import Graph from 'graphology';
 
-/** Arbitrary but consistent in scale with radialLayout.ts's RING_SPACING - sigma's camera re-fits to content after a layout switch, so the absolute unit doesn't need to match other layouts. */
-const CIRCLE_RADIUS = 400;
+/** Default ring radius - user-tunable (Settings tab, see settings.ts's ClewAppearanceSettings.circularRadius). Arbitrary but consistent in scale with radialLayout.ts's ring spacing - sigma's camera re-fits to content after a layout switch, so the absolute unit doesn't need to match other layouts. */
+const DEFAULT_CIRCLE_RADIUS = 400;
 
 /**
  * A fourth layout: every node on a single ring - the simplest arrangement
@@ -17,14 +17,14 @@ const CIRCLE_RADIUS = 400;
  * hierarchicalLayout.ts's HIERARCHICAL_LAYOUT_NODE_LIMIT for what happens
  * when a project actually needs one of those).
  */
-export function computeCircularLayout(graph: Graph): void {
+export function computeCircularLayout(graph: Graph, radius: number = DEFAULT_CIRCLE_RADIUS): void {
 	const order = breadthFirstOrder(graph);
 	const total = order.length;
 
 	order.forEach((node, i) => {
 		const angle = (i / total) * 2 * Math.PI;
-		graph.setNodeAttribute(node, 'x', CIRCLE_RADIUS * Math.cos(angle));
-		graph.setNodeAttribute(node, 'y', CIRCLE_RADIUS * Math.sin(angle));
+		graph.setNodeAttribute(node, 'x', radius * Math.cos(angle));
+		graph.setNodeAttribute(node, 'y', radius * Math.sin(angle));
 	});
 }
 

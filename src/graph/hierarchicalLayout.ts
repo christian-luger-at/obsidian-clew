@@ -44,9 +44,17 @@ interface DagreNodePosition {
  */
 export const HIERARCHICAL_LAYOUT_NODE_LIMIT = 1000;
 
-export function runHierarchicalLayout(graph: Graph): void {
+export interface HierarchicalLayoutOptions {
+	/** Spacing between nodes on the same rank - user-tunable (Settings tab), see settings.ts's ClewAppearanceSettings.hierarchicalNodeSpacing. */
+	nodesep?: number;
+	/** Spacing between ranks - user-tunable, see settings.ts's ClewAppearanceSettings.hierarchicalRankSpacing. */
+	ranksep?: number;
+}
+
+export function runHierarchicalLayout(graph: Graph, options: HierarchicalLayoutOptions = {}): void {
+	const { nodesep = 40, ranksep = 80 } = options;
 	const dagreGraph = new dagre.graphlib.Graph();
-	dagreGraph.setGraph({ rankdir: 'TB', nodesep: 40, ranksep: 80, ranker: 'longest-path' });
+	dagreGraph.setGraph({ rankdir: 'TB', nodesep, ranksep, ranker: 'longest-path' });
 	dagreGraph.setDefaultEdgeLabel(() => ({}));
 
 	graph.forEachNode((node, attr) => {

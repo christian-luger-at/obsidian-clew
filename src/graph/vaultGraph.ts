@@ -137,6 +137,22 @@ export function resetToDeterministicPositions(graph: Graph, pinnedPositions: Rec
 	});
 }
 
+export interface SizeByDegreeOptions {
+	/** Plain-note size at degree 0. */
+	baseSize: number;
+	/** Cover-image node size at degree 0 - kept separately tunable since NodeImageProgram needs a minimum footprint to stay recognizable. */
+	imageBaseSize: number;
+	/** Multiplier on log(1 + degree) - how much bigger a hub node gets than a leaf. */
+	degreeGrowth: number;
+}
+
+/** Matches settings.ts's DEFAULT_APPEARANCE_SETTINGS - kept as this module's own standalone default (same established pattern as e.g. renderer.ts's createRenderer) so callers that don't care about user-tunable appearance (tests, the spike harness) don't need to know about ClewSettings at all. */
+export const DEFAULT_SIZE_OPTIONS: SizeByDegreeOptions = {
+	baseSize: 1.2,
+	imageBaseSize: 2.5,
+	degreeGrowth: 0.6,
+};
+
 /**
  * Sized by degree (not a flat default) so hub notes stand out at a glance
  * and sigma's label-density threshold (see renderer.ts) naturally shows hub
@@ -146,11 +162,18 @@ export function resetToDeterministicPositions(graph: Graph, pinnedPositions: Rec
  * Exported so GraphPane can re-apply it when a user-chosen size-by-property
  * encoding (visualEncoding.ts, doc section 3.1) is cleared back to default -
  * this is the actual default it's reverting to, not a duplicate formula.
+ *
+ * Options are user-tunable (Settings tab) - GitHub follow-up to user
+ * feedback comparing Clew's graph against Obsidian's own core Graph View
+ * ("nodes read as too large"), after three rounds of manually re-tuning
+ * the same constants in one session made clear this needed to be a live
+ * setting, not another hardcoded guess.
  */
-export function sizeNodesByDegree(graph: Graph): void {
+export function sizeNodesByDegree(graph: Graph, options: SizeByDegreeOptions = DEFAULT_SIZE_OPTIONS): void {
+	const { baseSize, imageBaseSize, degreeGrowth } = options;
 	graph.forEachNode((node, attr) => {
-		const base = attr.type === 'image' ? 6 : 3;
-		const size = base + Math.log(1 + graph.degree(node)) * 1.5;
+		const base = attr.type === 'image' ? imageBaseSize : baseSize;
+		const size = base + Math.log(1 + graph.degree(node)) * degreeGrowth;
 		graph.setNodeAttribute(node, 'size', size);
 	});
 }

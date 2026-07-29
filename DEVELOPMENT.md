@@ -133,6 +133,7 @@ and the example layout in [AGENTS.md](AGENTS.md).
 | `npm run release:patch` \| `:minor` \| `:major` | Bump the version, build, and publish in one command |
 | `npm run spike:build` | Build the standalone graph-rendering spike harness (`spike/`) - see below |
 | `npm run gen-test-vault` | Generate the manual-QA vault (`test-vault/`) - see "Manual QA vault" below |
+| `npm run sync-private-vault` | Build, then copy `main.js`/`manifest.json`/`styles.css` into the maintainer's personal vault (`scripts/sync-private-vault.sh`) - a real copy, not a symlink, so that vault only picks up a new build when explicitly re-synced, not mid-edit. Pass a path to target a different vault: `npm run sync-private-vault -- ~/some/other/vault`. |
 
 ## Testing
 
@@ -205,8 +206,20 @@ committed (mtime is filesystem metadata, not file content, so git can't
 preserve "this note is 6 months old" across a clone; the script backdates
 specific notes with `fs.utimesSync` instead).
 
-Symlink the plugin into it the same way as [step 2](#2-link-the-plugin-to-obsidian-symlink),
-open `test-vault` in Obsidian, then check:
+Symlink the plugin's build output into it **file by file**, not the whole
+repo the way [step 2](#2-link-the-plugin-to-obsidian-symlink) does for a
+personal dev vault - `test-vault` and `spike-vault` both need their own
+`data.json` (pinned positions, appearance settings), and a whole-directory
+symlink would point both at the exact same file, silently sharing state
+between two supposedly-independent QA vaults:
+
+```bash
+mkdir -p test-vault/.obsidian/plugins/clew
+ln -s "$PWD/main.js" "$PWD/manifest.json" "$PWD/styles.css" test-vault/.obsidian/plugins/clew/
+```
+
+Every `npm run build` after that updates both vaults automatically - no
+manual copy step. Then open `test-vault` in Obsidian and check:
 
 - **Find path**, `Topic A - Detail 1` → `Topic B - Detail 1`: should offer a
   route through `Bridge Note` as an alternative to the naive route through
@@ -291,13 +304,18 @@ open `test-vault` in Obsidian, then check:
 - **Click a node** (GitHub issue #10): should open that note in the editor,
   same as clicking a node in Obsidian's own core Graph View. Should still
   work after dragging some other node around.
-- **Hover a node** (GitHub issue #9): should highlight it and its direct
-  neighbors, dimming everything else, without opening the note (that's the
-  click, not the hover). Un-hovering should restore the view exactly as it
-  was before - try hovering while "Stagnation heatmap" or "Find path" is
-  active: the heatmap/path colors should still show through on the
-  highlighted nodes, and un-hovering should return to the heatmap/path view
-  unchanged, not reset to plain default coloring.
+- **Hover a node** (GitHub issue #9): should highlight only the hovered node
+  itself with the accent color - direct neighbors should keep their exact
+  current color (not recolored) but *do* show their label, and everything
+  else (non-neighbors) should visibly fade toward the background - clearly
+  de-emphasized, but still recognizable as actual notes/edges, not faded to
+  the point of disappearing. Should not open the note (that's the click,
+  not the hover). Un-hovering should restore the view exactly as it was
+  before - try hovering while "Stagnation heatmap" or "Find path" is
+  active: neighbors should keep showing their heatmap/path colors
+  untouched (just with their label now forced on too), and un-hovering
+  should return to the heatmap/path view unchanged, not reset to plain
+  default coloring.
 - **Radial layout**: click "Radial layout…", pick `Hub` in the picker, click
   Apply - `Hub` should land dead center, its direct link neighbors on one
   ring around it, their neighbors on a ring further out, and `Island X`/
@@ -324,6 +342,33 @@ open `test-vault` in Obsidian, then check:
   in Visual encoding. Toggling the heatmap or search on top of a shown path
   result should switch the legend to the heatmap's/search's own labels,
   not leave it describing the path.
+- **Appearance panel**: click "Appearance…" in the toolbar - a panel opens
+  bottom-right with a "Colors" section, grouped sliders (Node size / Physics
+  / Labels / Alternative layout spacing), and a "Reset to defaults" button;
+  clicking "Appearance…" again closes it. Drag the "Base node size" slider -
+  nodes should visibly resize within a fraction of a second, no camera
+  jump/re-settle (cheap repaint, not a layout restart). Drag "Gravity" or
+  "Scaling ratio" - the force layout should visibly restart and re-settle
+  with the new spread. Switch to "Circular layout", then drag "Circular
+  layout radius" - the ring should resize live; switch to "Radial layout"
+  (pick a focus note first) and drag "Radial ring spacing" - same live
+  effect, centered on the same focus note without re-prompting. Drag
+  "Label size threshold" - labels should appear/disappear at the current
+  zoom level without a camera reset. Click "Reset to defaults" - every
+  slider should jump back to its original position and the graph should
+  visibly update to match. Close and reopen the graph view (or reload the
+  plugin) - the last-saved values should still be in effect, not reset to
+  defaults (they're persisted the same way as pinned positions, just
+  edited from the graph view instead of the Settings tab).
+- **Hovering a node shouldn't break rendering**: hover several different
+  notes (including ones with long names) at various zoom levels - the
+  hovered node's label box must render every time, in a box that's readable
+  in both light and dark themes (not sigma's own hardcoded white box - see
+  `createNodeHoverDrawer` in `renderer.ts`). A prior attempt at removing the
+  zoom-based label threshold entirely (`Infinity`) made the *entire* graph
+  disappear while hovering - if labels or the whole canvas ever go blank on
+  hover again, suspect the same class of bug (an extreme/non-finite value
+  feeding into a sigma setting).
 
 ## Performance testing at scale (rendering)
 
@@ -352,7 +397,12 @@ The page logs (prefixed `CLEW_SPIKE`) node/edge counts, layout settle time, and 
 node scripts/gen-graph-vault.mjs   # writes ./spike-vault: 10,000 notes with a hub-heavy link structure
 ```
 
-1. Symlink the plugin into the generated vault the same way as [step 2](#2-link-the-plugin-to-obsidian-symlink) above, e.g. `ln -s ~/dev/obsidian-clew spike-vault/.obsidian/plugins/clew`, then open `spike-vault` in Obsidian and enable the plugin.
+1. Symlink the build output in file by file, same as the [manual QA vault](#3-manual-qa-vault) above (not a whole-directory symlink - see that section for why):
+   ```bash
+   mkdir -p spike-vault/.obsidian/plugins/clew
+   ln -s "$PWD/main.js" "$PWD/manifest.json" "$PWD/styles.css" spike-vault/.obsidian/plugins/clew/
+   ```
+   Then open `spike-vault` in Obsidian and enable the plugin.
 2. Use the ribbon icon or the **"Open graph"** command.
 3. Check: pan, zoom, click a node (should select without noticeable lag), and confirm the ~100 image nodes render their cover image - this exercises `app.vault.getResourcePath()` feeding a WebGL texture (the browser harness only proves sigma *can* render images at all, not that a real vault image loads cleanly).
 
