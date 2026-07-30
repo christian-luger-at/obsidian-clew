@@ -1,5 +1,6 @@
 import { App, PluginSettingTab, Setting } from 'obsidian';
 import ClewPlugin from './main';
+import { GraphPane } from './graph/graphPane';
 
 export interface PinnedPosition {
 	x: number;
@@ -53,6 +54,19 @@ export interface ClewAppearanceSettings {
 	 * even the corrected color still doesn't look right to a given user.
 	 */
 	edgeColorOverride: string | null;
+	/**
+	 * How much of the theme's edge color survives theme.ts's
+	 * softenTowardBackground() blend - 1 = unsoftened theme color, lower =
+	 * more muted (search for its most-softened result that still clears
+	 * softenTowardBackground()'s own separate, much lower contrast floor -
+	 * see EDGE_SOFTEN_MIN_CONTRAST's docstring - so this is a ceiling on the
+	 * softening, not a guaranteed exact result). User feedback: 0.6
+	 * (theme.ts's own original default) still read as too prominent, 0.45
+	 * better but asked to be user-tunable rather than another guessed
+	 * constant - ignored entirely when edgeColorOverride is set, same as
+	 * every other edge-color computation in theme.ts.
+	 */
+	edgeIntensity: number;
 }
 
 export const DEFAULT_APPEARANCE_SETTINGS: ClewAppearanceSettings = {
@@ -68,6 +82,7 @@ export const DEFAULT_APPEARANCE_SETTINGS: ClewAppearanceSettings = {
 	hierarchicalNodeSpacing: 40,
 	hierarchicalRankSpacing: 80,
 	edgeColorOverride: null,
+	edgeIntensity: 0.45,
 };
 
 export interface ClewSettings {
@@ -111,6 +126,12 @@ export class ClewSettingTab extends PluginSettingTab {
 					.onClick(async () => {
 						this.plugin.settings.pinnedPositions = {};
 						await this.plugin.saveSettings();
+						// Without this, a previously-pinned node stayed frozen in
+						// place in the already-open graph view until it was
+						// closed and reopened - clearing the setting alone
+						// doesn't retroactively un-fix a node already `fixed:
+						// true` in the currently-rendered graph.
+						GraphPane.getActive()?.clearPinnedPositions();
 						this.display();
 					}),
 			);

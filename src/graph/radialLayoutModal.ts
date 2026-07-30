@@ -1,4 +1,4 @@
-import { App, Modal, Notice, Setting, TFile } from 'obsidian';
+import { App, Modal, Setting, TFile } from 'obsidian';
 import { NoteSuggest } from './noteSuggest';
 
 /**
@@ -9,6 +9,7 @@ import { NoteSuggest } from './noteSuggest';
  */
 export class RadialLayoutModal extends Modal {
 	private focusFile: TFile | null = null;
+	private errorEl!: HTMLElement;
 
 	constructor(
 		app: App,
@@ -22,16 +23,27 @@ export class RadialLayoutModal extends Modal {
 		const { contentEl } = this;
 		contentEl.empty();
 		contentEl.createEl('h2', { text: 'Radial layout' });
+		contentEl.createEl('p', {
+			text: 'Rings the graph out from the note you pick below, by link distance: its direct links land on the first ring, their links on the next ring out, and so on. Notes not reachable from it at all land on one further ring, past the rest.',
+			cls: 'clew-modal-description',
+		});
 
 		new Setting(contentEl).setName('Center on').addText((text) => {
 			text.setPlaceholder('Note…');
+			text.inputEl.addClass('clew-note-picker-input');
 			const suggest = new NoteSuggest(this.app, text.inputEl, this.candidates);
 			suggest.onSelect((file) => {
 				this.focusFile = file;
 				suggest.setValue(file.basename);
 				suggest.close();
+				this.errorEl.setText('');
 			});
 		});
+
+		// In-dialog, not a Notice (top-right toast) - the modal is still
+		// open right in front of the user, so the error belongs right next
+		// to the field it's about, not somewhere else on screen.
+		this.errorEl = contentEl.createEl('p', { cls: 'clew-modal-error' });
 
 		new Setting(contentEl).addButton((button) =>
 			button
@@ -39,7 +51,7 @@ export class RadialLayoutModal extends Modal {
 				.setCta()
 				.onClick(() => {
 					if (!this.focusFile) {
-						new Notice('Pick a note to center the layout on.');
+						this.errorEl.setText('Pick a note to center the layout on.');
 						return;
 					}
 					const focusFile = this.focusFile;

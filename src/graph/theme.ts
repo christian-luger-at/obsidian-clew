@@ -23,11 +23,32 @@ function cssVarRgb(computed: CSSStyleDeclaration, name: string, fallback: [numbe
 	return fallback;
 }
 
-/** Parses an `rgb()`/`rgba()` string (what cssVar's probe-based resolution always produces) into a [r, g, b] triple - null if it isn't one (e.g. a raw hex string, which callers here don't pass through this path). */
+/**
+ * Parses an `rgb()`/`rgba()` string (what cssVar's probe-based resolution
+ * always produces) or a `#rgb`/`#rrggbb` hex string into a [r, g, b] triple -
+ * null if it's neither.
+ *
+ * Hex support was added after blendToward() (which this backs) started
+ * silently no-oping on the graph's edge color: ensureEdgeContrast() below
+ * falls back to a hardcoded hex string ('#4b5563'/'#9ca3af') for a
+ * low-contrast theme, and ClewAppearanceSettings.edgeColorOverride comes
+ * straight from Obsidian's native `Setting.addColorPicker()`
+ * (`<input type="color">`), which is always hex too - both are real values
+ * `this.resolvedEdgeColor()` (graphPane.ts) can hand to blendToward for the
+ * hover-dim fade, and neither ever went through cssVar's rgb()-normalizing
+ * probe element. Node colors never hit this gap (always cssVar-resolved
+ * rgb()), which is why only edges silently failed to dim.
+ */
 function parseRgbString(value: string): [number, number, number] | null {
-	const match = value.match(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/);
-	if (!match) return null;
-	return [Number(match[1]), Number(match[2]), Number(match[3])];
+	const rgbMatch = value.match(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/);
+	if (rgbMatch) return [Number(rgbMatch[1]), Number(rgbMatch[2]), Number(rgbMatch[3])];
+	const hexMatch = value.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
+	if (hexMatch) {
+		const hex = hexMatch[1]!;
+		const full = hex.length === 3 ? hex.replace(/(.)/g, '$1$1') : hex;
+		return [parseInt(full.slice(0, 2), 16), parseInt(full.slice(2, 4), 16), parseInt(full.slice(4, 6), 16)];
+	}
+	return null;
 }
 
 /**
@@ -53,8 +74,41 @@ function parseRgbString(value: string): [number, number, number] | null {
  */
 const DIM_FACTOR = 0.35;
 
-/** Blends `color` toward `backgroundColor` - `factor` is how much of the original color remains (0 = fully the background, 1 = fully the original color). Produces an opaque rgb() triple, not an alpha-transparent one - see DIM_FACTOR's docstring for why. */
-function blendToward(color: string, backgroundColor: string, factor: number): string {
+/**
+ * Default for readThemeColors()'s `edgeIntensity` param (see
+ * ClewAppearanceSettings.edgeIntensity, settings.ts, which is what
+ * GraphPane actually passes - this only matters for a caller that doesn't).
+ *
+ * User feedback: edges at the theme's raw `--graph-line` intensity read as
+ * too prominent/heavy against the rest of the graph, so `defaultEdgeColor`
+ * below blends `--graph-line` toward the background by this much (see
+ * blendToward() - 1 = unblended, 0 = fully the background). Deliberately a
+ * *literal* blend, not clamped to any minimum-contrast floor the way
+ * ensureEdgeContrast() protects the raw theme color: an earlier version
+ * did clamp this, meant to protect a hardcoded constant from being *too*
+ * washed out on an unlucky theme - once it became a user-facing 0-1
+ * slider, that same clamp fought the user's own explicit choice instead
+ * (reported: edges still visible at the slider's 0 end, since the clamp
+ * silently pulled it back up to whatever the floor demanded). A setting
+ * the user is dialing on purpose, all the way to "off" if they want, isn't
+ * the accidental-invisibility risk ensureEdgeContrast() exists for.
+ */
+const EDGE_INTENSITY_FACTOR = 0.45;
+
+/**
+ * Blends `color` toward `backgroundColor` - `factor` is how much of the
+ * original color remains (0 = fully the background, 1 = fully the original
+ * color). Produces an opaque rgb() triple, not an alpha-transparent one -
+ * see DIM_FACTOR's docstring for why.
+ *
+ * Exported (not just used internally for dimNodeColor/dimEdgeColor) so
+ * GraphPane's hover reducer can blend a node/edge's *own* color toward the
+ * dim floor by a hop-distance-graded factor instead of only ever producing
+ * the single flat dimNodeColor/dimEdgeColor this file computes at factor
+ * DIM_FACTOR - "backgroundColor" here just means "the color being blended
+ * toward", not necessarily the canvas background specifically.
+ */
+export function blendToward(color: string, backgroundColor: string, factor: number): string {
 	const colorRgb = parseRgbString(color);
 	const backgroundRgb = parseRgbString(backgroundColor);
 	if (!colorRgb || !backgroundRgb) return color;
@@ -167,12 +221,18 @@ function ensureEdgeContrast(edgeColor: string, backgroundColor: string): string 
  * `defaultEdgeColor` additionally goes through ensureEdgeContrast() below -
  * unlike the "Foundation" colors every theme has to get right to be usable
  * at all, `--graph-line` is easy for a theme to leave under-tuned, and a
- * low-contrast edge color is a real (reported) failure mode. GraphPane
- * layers a user-settable override on top of this (see
- * ClewAppearanceSettings.edgeColorOverride) for the rare case even the
- * contrast-corrected color still doesn't look right to a given user.
+ * low-contrast edge color is a real (reported) failure mode - then blended
+ * toward the background by `edgeIntensity` (user-tunable - see
+ * ClewAppearanceSettings.edgeIntensity, the caller-supplied value GraphPane
+ * always passes; EDGE_INTENSITY_FACTOR only backs the parameter default for
+ * a caller that doesn't), toning down a raw `--graph-line` that reads as
+ * too prominent/heavy without undoing ensureEdgeContrast()'s guarantee on
+ * the *unblended* color. GraphPane layers a user-settable override on top
+ * of both (see ClewAppearanceSettings.edgeColorOverride)
+ * for the rare case even the corrected/softened color still doesn't look
+ * right to a given user.
  */
-export function readThemeColors(referenceEl: HTMLElement): ThemeColors {
+export function readThemeColors(referenceEl: HTMLElement, edgeIntensity: number = EDGE_INTENSITY_FACTOR): ThemeColors {
 	const computed = getComputedStyle(referenceEl);
 	const probe = referenceEl.ownerDocument.createElement('span');
 	referenceEl.appendChild(probe);
@@ -203,11 +263,19 @@ export function readThemeColors(referenceEl: HTMLElement): ThemeColors {
 		// issue #9's forceLabel on neighbor nodes, which shows labels that
 		// otherwise wouldn't render at that zoom level at all).
 		labelColor: cssVar('--graph-text', '#dcddde'),
-		defaultEdgeColor: ensureEdgeContrast(cssVar('--graph-line', '#888888'), backgroundColor),
+		defaultEdgeColor: blendToward(ensureEdgeContrast(cssVar('--graph-line', '#888888'), backgroundColor), backgroundColor, edgeIntensity),
 		primaryPathColor: cssVar('--color-green', '#22c55e'),
 		altPathColor: cssVar('--color-yellow', '#eab308'),
 		dimNodeColor: blendToward(cssVar('--text-faint', '#4b5563'), backgroundColor, DIM_FACTOR),
-		dimEdgeColor: blendToward(cssVar('--text-faint', '#374151'), backgroundColor, DIM_FACTOR),
+		// min(DIM_FACTOR, edgeIntensity), not DIM_FACTOR alone: a low
+		// edgeIntensity setting can already put the *resting* edge color
+		// fainter than DIM_FACTOR's usual dim floor would be on its own -
+		// without this, hovering (which blends toward dimEdgeColor) would
+		// make an edge *more* prominent than it already was at rest, which
+		// reads as backwards for a "dim the rest" interaction. Whichever is
+		// smaller wins, so the dim floor is never above the edge's own
+		// configured intensity.
+		dimEdgeColor: blendToward(cssVar('--text-faint', '#374151'), backgroundColor, Math.min(DIM_FACTOR, edgeIntensity)),
 		// --graph-node-focused: the color Obsidian's own graph uses for
 		// "this is the node currently being interacted with" - the same
 		// concept as Clew's hover-highlight (#9), search match, and

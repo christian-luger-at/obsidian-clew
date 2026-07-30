@@ -63,12 +63,33 @@ export class StandaloneGraphView extends ItemView {
 		// full scheduleRefresh() - a theme switch shouldn't reset positions
 		// or the current layout mode the way a vault-content change should.
 		this.registerEvent(this.app.workspace.on('css-change', () => this.pane?.refreshTheme()));
+
+		// User-reported: switching away to Obsidian's own core Graph View
+		// (or any other tab) and back, or just opening a note, left this
+		// view's graph blank until manually hitting "Center" - neither of
+		// those changes this leaf's own pixel size, so ItemView's onResize()
+		// below never fires for them. 'active-leaf-change' covers tab
+		// switches directly; 'resize' is workspace's broader "a
+		// WorkspaceItem resized or the layout changed" signal (its own doc
+		// comment), which also catches opening a note. See
+		// GraphPane.handleResize()'s docstring for why a resize+refresh is
+		// needed at all here, not just a redundant safety net.
+		this.registerEvent(this.app.workspace.on('active-leaf-change', () => this.pane?.handleResize()));
+		this.registerEvent(this.app.workspace.on('resize', () => this.pane?.handleResize()));
 	}
 
 	onClose(): Promise<void> {
 		if (this.refreshTimer !== null) window.clearTimeout(this.refreshTimer);
 		this.pane?.destroy();
 		return Promise.resolve();
+	}
+
+	// Fires whenever this leaf's size changes, including a background tab
+	// becoming active again - see GraphPane.handleResize()'s docstring for
+	// why this matters (Sigma doesn't track its container's size on its
+	// own).
+	onResize(): void {
+		this.pane?.handleResize();
 	}
 
 	private scheduleRefresh(): void {

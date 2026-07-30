@@ -113,6 +113,21 @@ export function createRenderer(graph: Graph, container: HTMLElement, options: Cr
 	return new Sigma(graph, container, {
 		nodeProgramClasses: { image: NodeImageProgram },
 		renderEdgeLabels: false,
+		// A vault-change refresh (StandaloneGraphView's create/changed/resolved
+		// listeners -> GraphPane.setFiles()) tears down and recreates the
+		// Sigma instance on the graph's *current* container element, whatever
+		// its size happens to be right now - and Obsidian gives a background
+		// (not currently active) tab's view a 0x0 container, since it's
+		// display:none. Without this, Sigma throws synchronously the moment
+		// that happens ("Container has no width"), and since nothing in
+		// setFiles() catches it, the rebuild aborts right there: no renderer
+		// ever gets assigned, so the view is just left empty - reported as
+		// "the graph is empty after a new node/edge is added" (only visible
+		// once you switch back to the tab, at which point nothing triggered a
+		// refresh to fix it). GraphPane.handleResize() (wired to Obsidian's
+		// onResize() lifecycle hook) is the other half of this fix - it makes
+		// the renderer catch up once the container's real size comes back.
+		allowInvalidContainer: true,
 		// At vault scale (tens of thousands of edges) even a fairly
 		// transparent edge color saturates into a solid mass once enough
 		// lines overlap - low alpha here matters more than it looks like it

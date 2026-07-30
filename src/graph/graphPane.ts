@@ -1,5 +1,6 @@
-import { App, Setting, TFile } from 'obsidian';
+import { App, Menu, Setting, TFile } from 'obsidian';
 import Graph from 'graphology';
+import type { Attributes } from 'graphology-types';
 import type Sigma from 'sigma';
 import { createRenderer, createNodeHoverDrawer } from './renderer';
 import { runLayout, LayoutRun } from './layoutRunner';
@@ -12,7 +13,7 @@ import { PathfindingModal } from './pathfindingModal';
 import { RadialLayoutModal } from './radialLayoutModal';
 import { exportPathToCanvas } from './canvasExport';
 import { CommunityStats, computeCommunityStats, detectCommunities, formatRelativeTime, staleness, stalenessColor } from './stagnation';
-import { readThemeColors, ThemeColors } from './theme';
+import { readThemeColors, ThemeColors, blendToward } from './theme';
 import { assignCategoryColors, colorByCategory, sizeByNumericValue } from './visualEncoding';
 import { VisualEncodingModal, VisualEncodingRequest } from './visualEncodingModal';
 import { ClewAppearanceSettings, DEFAULT_APPEARANCE_SETTINGS } from '../settings';
@@ -23,6 +24,15 @@ const SETTLE_DURATION_MS = 2000;
 
 /** How long ForceAtlas2 briefly re-runs after a drag ends, so neighbors visibly adapt to the dropped node's new (now fixed) position - shorter than the initial settle, since this is just a local readjustment, not settling the whole graph from scratch. */
 const DRAG_SETTLE_DURATION_MS = 1500;
+
+/**
+ * How long the hover-dim (everything but the hovered node/its neighbors)
+ * takes to fade fully in or out - user feedback: jumping straight to the
+ * dim color the instant a node is entered (and straight back on leave) read
+ * as an abrupt cut, not a highlight settling in. See setupNodeHover()'s
+ * dimProgress for the animation this drives.
+ */
+const HOVER_DIM_TRANSITION_MS = 200;
 
 const MIN_COMMUNITY_SIZE_SHOWN = 2;
 
@@ -36,6 +46,13 @@ const MAX_LEGEND_CATEGORIES = 8;
  * with no per-node "leave this one alone" concept.
  */
 type LayoutMode = 'force' | 'hierarchical' | 'radial' | 'circular';
+
+const LAYOUT_MODE_LABELS: Record<LayoutMode, string> = {
+	force: 'Force',
+	hierarchical: 'Hierarchical',
+	radial: 'Radial',
+	circular: 'Circular',
+};
 
 /** Debounces the expensive part of an appearance slider's onChange (disk write + live re-render/re-layout) - a slider fires on every 'input' tick while dragging, and persisting + restarting ForceAtlas2 on every single tick would both spam disk writes and make the graph flicker instead of tuning smoothly. */
 function debounce(fn: () => void, delayMs: number): () => void {
@@ -219,12 +236,9 @@ export class GraphPane {
 	private readonly panelEl: HTMLElement;
 	private readonly legendEl: HTMLElement;
 	private readonly appearancePanelEl: HTMLElement;
-	private readonly stagnationButton: HTMLElement;
+	private readonly stagnationButton: HTMLButtonElement;
 	private readonly searchInputEl: HTMLInputElement;
-	private readonly hierarchicalButton: HTMLButtonElement;
-	private readonly radialButton: HTMLButtonElement;
-	private readonly circularButton: HTMLButtonElement;
-	private readonly layoutButtons: HTMLButtonElement[];
+	private readonly layoutButton: HTMLButtonElement;
 	private readonly visualEncodingButton: HTMLButtonElement;
 	private readonly appearanceButton: HTMLButtonElement;
 	private renderer: Sigma | null = null;
@@ -260,7 +274,7 @@ export class GraphPane {
 		private readonly plugin: ClewPlugin,
 	) {
 		this.containerEl.classList.add('clew-graph-view');
-		this.theme = readThemeColors(this.containerEl);
+		this.theme = readThemeColors(this.containerEl, this.plugin.settings.appearance.edgeIntensity);
 
 		// Sigma's kill() clears every child of the element it's given, so it
 		// gets its own sub-container - otherwise re-rendering would wipe the
@@ -269,39 +283,49 @@ export class GraphPane {
 
 		const toolbarEl = this.containerEl.createDiv({ cls: 'clew-toolbar' });
 
+		// A single button opening a dropdown menu (Obsidian's own Menu API,
+		// same as its native dropdowns) rather than 4 separate toolbar
+		// buttons or a segmented control - user feedback: the segmented
+		// control (an earlier version of this) took up too much toolbar
+		// width for something picked infrequently. The button's own label
+		// always shows the current mode (updated by activateLayoutMode()),
+		// so the active layout is visible without opening the menu - but
+		// per later feedback, without the accent-highlight treatment other
+		// active toolbar toggles get, since this button's label already
+		// says which mode is active.
+		this.layoutButton = toolbarEl.createEl('button', { text: `Layout: ${LAYOUT_MODE_LABELS.force}` });
+		this.layoutButton.addEventListener('click', (evt) => this.openLayoutMenu(evt));
+
 		const findPathButton = toolbarEl.createEl('button', { text: 'Find path…' });
 		findPathButton.addEventListener('click', () => this.openPathfindingModal());
 
+		// Panning/zooming away with no way back was a real gap - the camera
+		// only got reset automatically as a side effect of switching layouts
+		// (resetCameraAndRefresh(), used by every setXLayout() method below),
+		// never on its own.
+		const centerButton = toolbarEl.createEl('button', { text: 'Reset view' });
+		centerButton.addEventListener('click', () => void this.resetCameraAndRefresh());
+
+		// TEMP: disabled while the toolbar reorder above (Layout, Find path)
+		// is being tried out - re-enable once that's settled.
 		this.stagnationButton = toolbarEl.createEl('button', { text: 'Stagnation heatmap' });
+		this.stagnationButton.disabled = true;
 		this.stagnationButton.addEventListener('click', () => this.toggleStagnationHeatmap());
-
-		// Disabled/re-enabled per graph size in setFiles() - hierarchical
-		// layout's crossing-minimization step doesn't scale to vault-sized
-		// graphs (see hierarchicalLayout.ts).
-		this.hierarchicalButton = toolbarEl.createEl('button', { text: 'Hierarchical layout' });
-		this.hierarchicalButton.addEventListener('click', () => this.toggleHierarchicalLayout());
-
-		// Rings the graph out from one chosen note by link distance (see
-		// radialLayout.ts) - needs a focus note, so this opens a picker
-		// rather than toggling straight on like the other layout buttons.
-		this.radialButton = toolbarEl.createEl('button', { text: 'Radial layout…' });
-		this.radialButton.addEventListener('click', () => this.openRadialLayoutModal());
-
-		// All notes on a single ring (see circularLayout.ts) - no
-		// configuration needed, so this toggles directly like hierarchical.
-		this.circularButton = toolbarEl.createEl('button', { text: 'Circular layout' });
-		this.circularButton.addEventListener('click', () => this.toggleCircularLayout());
-
-		this.layoutButtons = [this.hierarchicalButton, this.radialButton, this.circularButton];
 
 		// Doc section 3.1 / GitHub issue #1: color/size driven by a chosen
 		// frontmatter property instead of the fixed image/degree defaults.
 		this.visualEncodingButton = toolbarEl.createEl('button', { text: 'Visual encoding…' });
+		this.visualEncodingButton.disabled = true;
 		this.visualEncodingButton.addEventListener('click', () => this.openVisualEncodingModal());
 
 		// Node size / physics / label / layout-spacing tuning - lives here
 		// (not the plugin's Settings tab) since the user adjusts these while
 		// watching the graph react, not on a separate settings screen.
+		// Re-enabled (the other TEMP-disabled buttons below stay disabled) -
+		// needed to check/reset ClewAppearanceSettings.edgeColorOverride,
+		// which silently overrides every defaultEdgeColor computation in
+		// theme.ts and had no other way to reach while this button was
+		// disabled.
 		this.appearanceButton = toolbarEl.createEl('button', { text: 'Appearance…' });
 		this.appearanceButton.addEventListener('click', () => this.toggleAppearancePanel());
 
@@ -314,6 +338,7 @@ export class GraphPane {
 			placeholder: 'Search notes…',
 			cls: 'clew-search-input',
 		});
+		this.searchInputEl.disabled = true;
 		this.searchInputEl.addEventListener('input', () => this.onSearchInput(this.searchInputEl.value));
 
 		this.panelEl = this.containerEl.createDiv({ cls: 'clew-path-panel' });
@@ -344,9 +369,7 @@ export class GraphPane {
 		this.stagnationActive = false;
 		this.stagnationButton.removeClass('is-active');
 		this.clearSearch();
-		this.layoutMode = 'force';
-		for (const button of this.layoutButtons) button.removeClass('is-active');
-		this.hierarchicalButton.setText('Hierarchical layout');
+		this.activateLayoutMode('force');
 		this.colorProperty = null;
 		this.sizeProperty = null;
 		this.visualEncodingButton.removeClass('is-active');
@@ -371,15 +394,6 @@ export class GraphPane {
 		this.setupNodeClick();
 		this.setupNodeHover();
 		this.layout = runLayout(this.graph, this.layoutOptions(SETTLE_DURATION_MS));
-
-		// Proactively disable rather than let the user click and get
-		// rejected - see HIERARCHICAL_LAYOUT_NODE_LIMIT's docstring for why
-		// this exists at all.
-		const tooLarge = this.graph.order > HIERARCHICAL_LAYOUT_NODE_LIMIT;
-		this.hierarchicalButton.disabled = tooLarge;
-		this.hierarchicalButton.title = tooLarge
-			? `Too many notes (${this.graph.order}) for hierarchical layout - it doesn't scale past ~${HIERARCHICAL_LAYOUT_NODE_LIMIT}.`
-			: '';
 
 		this.renderLegend();
 		GraphPane.active = this;
@@ -415,6 +429,11 @@ export class GraphPane {
 	}
 
 	private applyEdgeColorSetting(): void {
+		// Re-reads theme.defaultEdgeColor (not just the override) - needed so
+		// an edgeIntensity slider change actually takes effect, since that
+		// only affects theme.ts's softenTowardBackground() computation, not
+		// resolvedEdgeColor()'s own edgeColorOverride ?? branch.
+		this.theme = readThemeColors(this.containerEl, this.plugin.settings.appearance.edgeIntensity);
 		this.renderer?.setSetting('defaultEdgeColor', this.resolvedEdgeColor());
 		this.renderer?.refresh();
 	}
@@ -483,6 +502,31 @@ export class GraphPane {
 						this.renderAppearancePanel();
 					}),
 			);
+
+		// Not part of APPEARANCE_SLIDER_GROUPS below - that loop's
+		// AppearanceSliderSpec['apply'] categories (size/label/layout) don't
+		// cover "re-read the theme's edge color", and this belongs next to
+		// the edge-color picker it directly affects anyway, not in a later
+		// separately-headed group.
+		{
+			const debouncedApplyEdgeIntensity = debounce(() => {
+				void this.plugin.saveSettings();
+				this.applyEdgeColorSetting();
+			}, 250);
+			new Setting(this.appearancePanelEl)
+				.setName('Edge intensity')
+				.setDesc('How strongly edges stand out - lower is more muted. Ignored while a custom edge color above is set.')
+				.addSlider((slider) =>
+					slider
+						.setLimits(0, 1, 0.05)
+						.setValue(this.plugin.settings.appearance.edgeIntensity)
+						.setDynamicTooltip()
+						.onChange((value) => {
+							this.plugin.settings.appearance.edgeIntensity = value;
+							debouncedApplyEdgeIntensity();
+						}),
+				);
+		}
 
 		for (const group of APPEARANCE_SLIDER_GROUPS) {
 			new Setting(this.appearancePanelEl).setName(group.heading).setHeading();
@@ -734,8 +778,12 @@ export class GraphPane {
 			return;
 		}
 
-		this.addLegendItem(this.theme.graphColor, 'Note');
-		this.addLegendItem(this.theme.imageNodeColor, 'Note with cover image');
+		// Plain Force layout with nothing else active: no legend. A "Note"
+		// vs. "Note with cover image" legend would be misleading anyway -
+		// @sigma/node-image's default drawing mode keeps the image's own
+		// pixel colors once it loads (see node_modules/@sigma/node-image),
+		// so an image node ends up looking like its thumbnail, never like a
+		// plain color swatch the legend could represent.
 	}
 
 	private addLegendItem(color: string, label: string): void {
@@ -787,7 +835,7 @@ export class GraphPane {
 	 */
 	refreshTheme(): void {
 		if (!this.graph) return;
-		this.theme = readThemeColors(this.containerEl);
+		this.theme = readThemeColors(this.containerEl, this.plugin.settings.appearance.edgeIntensity);
 		this.renderer?.setSetting('defaultEdgeColor', this.resolvedEdgeColor());
 		this.renderer?.setSetting('labelColor', { color: this.theme.labelColor });
 		this.renderer?.setSetting('defaultDrawNodeHover', createNodeHoverDrawer(this.theme.backgroundColor));
@@ -803,20 +851,70 @@ export class GraphPane {
 		this.renderLegend();
 	}
 
-	/** Clears every layout button's `is-active` class and activates only the given one (none, for 'force') - kept in one place so the buttons can never end up disagreeing with `layoutMode` or each other. */
-	private activateLayoutMode(mode: LayoutMode, activeButton: HTMLButtonElement | null): void {
-		this.layoutMode = mode;
-		for (const button of this.layoutButtons) button.removeClass('is-active');
-		activeButton?.addClass('is-active');
+	/**
+	 * Builds and opens the "Layout" dropdown (Obsidian's own Menu API) fresh
+	 * each time, rather than a persistent DOM structure - it's only a few
+	 * items and this way "is hierarchical too large for this graph" is
+	 * always read straight from the current graph, not tracked as separate
+	 * instance state that could drift out of sync with it.
+	 */
+	private openLayoutMenu(evt: MouseEvent): void {
+		const menu = new Menu();
+		const tooLargeForHierarchical = (this.graph?.order ?? 0) > HIERARCHICAL_LAYOUT_NODE_LIMIT;
+
+		menu.addItem((item) =>
+			item
+				.setTitle(LAYOUT_MODE_LABELS.force)
+				.setChecked(this.layoutMode === 'force')
+				.onClick(() => {
+					if (this.layoutMode !== 'force') this.setForceLayout();
+				}),
+		);
+		menu.addItem((item) =>
+			item
+				.setTitle(
+					tooLargeForHierarchical
+						? `${LAYOUT_MODE_LABELS.hierarchical} (too many notes)`
+						: LAYOUT_MODE_LABELS.hierarchical,
+				)
+				.setChecked(this.layoutMode === 'hierarchical')
+				.setDisabled(tooLargeForHierarchical)
+				.onClick(() => {
+					if (this.layoutMode !== 'hierarchical') this.setHierarchicalLayout();
+				}),
+		);
+		// Always opens the picker, even while already active - that's how
+		// you re-center on a different focus note (radialLayout.ts rings
+		// the graph out from one chosen note, so picking a layout alone
+		// isn't enough information to actually run it).
+		menu.addItem((item) =>
+			item
+				.setTitle(`${LAYOUT_MODE_LABELS.radial}…`)
+				.setChecked(this.layoutMode === 'radial')
+				.onClick(() => this.openRadialLayoutModal()),
+		);
+		menu.addItem((item) =>
+			item
+				.setTitle(LAYOUT_MODE_LABELS.circular)
+				.setChecked(this.layoutMode === 'circular')
+				.onClick(() => {
+					if (this.layoutMode !== 'circular') this.setCircularLayout();
+				}),
+		);
+
+		menu.showAtMouseEvent(evt);
 	}
 
-	private toggleHierarchicalLayout(): void {
-		if (this.hierarchicalButton.disabled) return;
-		if (this.layoutMode === 'hierarchical') {
-			this.setForceLayout();
-		} else {
-			this.setHierarchicalLayout();
-		}
+	/**
+	 * Updates layoutMode and the toolbar button's own label to match - kept
+	 * in one place so they can never disagree. Deliberately no `is-active`
+	 * accent highlight here (unlike the other toolbar toggles) - user
+	 * feedback: the button's label already says which layout is active, so
+	 * highlighting it too was redundant.
+	 */
+	private activateLayoutMode(mode: LayoutMode): void {
+		this.layoutMode = mode;
+		this.layoutButton.setText(`Layout: ${LAYOUT_MODE_LABELS[mode]}`);
 	}
 
 	private setHierarchicalLayout(): void {
@@ -828,8 +926,8 @@ export class GraphPane {
 		// disable the button and show that something is happening, then
 		// yield one tick so that actually paints before the blocking call
 		// starts, rather than the UI just looking frozen for that long.
-		this.hierarchicalButton.disabled = true;
-		this.hierarchicalButton.setText('Computing…');
+		this.layoutButton.disabled = true;
+		this.layoutButton.setText('Computing…');
 
 		window.setTimeout(() => {
 			if (!this.graph) return;
@@ -840,40 +938,21 @@ export class GraphPane {
 			});
 			void this.resetCameraAndRefresh();
 
-			this.activateLayoutMode('hierarchical', this.hierarchicalButton);
-			this.hierarchicalButton.disabled = false;
-			this.hierarchicalButton.setText('Hierarchical layout');
+			this.layoutButton.disabled = false;
+			this.activateLayoutMode('hierarchical');
 		}, 0);
-	}
-
-	private toggleCircularLayout(): void {
-		if (this.layoutMode === 'circular') {
-			this.setForceLayout();
-		} else {
-			this.setCircularLayout();
-		}
 	}
 
 	private setCircularLayout(): void {
 		if (!this.graph) return;
 		this.layout?.stop();
 		computeCircularLayout(this.graph, this.plugin.settings.appearance.circularRadius);
-		this.activateLayoutMode('circular', this.circularButton);
+		this.activateLayoutMode('circular');
 		void this.resetCameraAndRefresh();
 	}
 
-	/**
-	 * Needs a focus note first (radialLayout.ts rings the graph out from
-	 * one), so unlike the other layout buttons this opens a picker instead
-	 * of toggling straight on - but re-clicking it while radial is already
-	 * active still toggles back to force, matching the others.
-	 */
 	private openRadialLayoutModal(): void {
 		if (!this.graph) return;
-		if (this.layoutMode === 'radial') {
-			this.setForceLayout();
-			return;
-		}
 		new RadialLayoutModal(this.app, this.files, (focusFile) => this.setRadialLayout(focusFile.path)).open();
 	}
 
@@ -882,13 +961,13 @@ export class GraphPane {
 		this.layout?.stop();
 		this.radialFocusNode = focusPath;
 		computeRadialLayout(this.graph, focusPath, this.plugin.settings.appearance.radialRingSpacing);
-		this.activateLayoutMode('radial', this.radialButton);
+		this.activateLayoutMode('radial');
 		void this.resetCameraAndRefresh();
 	}
 
 	private setForceLayout(): void {
 		if (!this.graph) return;
-		this.activateLayoutMode('force', null);
+		this.activateLayoutMode('force');
 
 		// Restores the deterministic seed rather than letting FA2 relax from
 		// wherever the previous layout left nodes - otherwise the "same
@@ -900,6 +979,45 @@ export class GraphPane {
 		resetToDeterministicPositions(this.graph, this.plugin.settings.pinnedPositions);
 		this.layout = runLayout(this.graph, this.layoutOptions(SETTLE_DURATION_MS));
 		void this.resetCameraAndRefresh();
+	}
+
+	/**
+	 * Called from ClewSettingTab's "Clear all pinned positions" button (via
+	 * GraphPane.getActive()) - without this, a previously-pinned node stayed
+	 * frozen in its old spot until the graph view was closed and reopened,
+	 * since clearing the setting alone doesn't retroactively un-fix a node
+	 * already `fixed: true` in the currently-rendered graph. Only
+	 * meaningful in force mode - none of the other layouts respect `fixed`
+	 * either way, so by the time the user switches back to force,
+	 * setForceLayout() already reads the (by-then-already-cleared) setting
+	 * correctly on its own, with nothing extra needed here.
+	 */
+	clearPinnedPositions(): void {
+		if (this.layoutMode === 'force') this.setForceLayout();
+	}
+
+	/**
+	 * Called from StandaloneGraphView's onResize() and its workspace-level
+	 * 'resize'/'active-leaf-change' listeners - covers both a genuine size
+	 * change (see createRenderer()'s allowInvalidContainer docstring in
+	 * renderer.ts: a vault-change refresh that ran while this view's tab was
+	 * in the background creates the renderer against a 0x0 container) and
+	 * plain tab-switching/opening a note, neither of which changes this
+	 * leaf's pixel size at all - user-reported: the graph goes blank
+	 * switching away to Obsidian's own Graph View and back, or just opening
+	 * a note, and only "Center" (resetCameraAndRefresh) brought it back.
+	 * `resize(true)` forces past sigma's own "size didn't actually change,
+	 * skip" guard (harmless no-op otherwise), and refresh() forces an
+	 * immediate repaint rather than only scheduling one - Chromium can
+	 * suspend a WebGL canvas's own render-loop scheduling while its tab
+	 * isn't visible, so without an explicit forced repaint here the canvas
+	 * can stay on its last-rendered (blank, from before becoming hidden)
+	 * frame indefinitely even once the size and camera are both already
+	 * correct again.
+	 */
+	handleResize(): void {
+		this.renderer?.resize(true);
+		this.renderer?.refresh();
 	}
 
 	/** ForceAtlas2 options shared by every runLayout() call site - gravity/scalingRatio are user-tunable (Settings tab), only the duration differs per call site (initial settle vs. the short post-drag re-settle). */
@@ -1063,38 +1181,126 @@ export class GraphPane {
 		// new leaveNode listener - closured over a *fresh* previous-reducer
 		// pair - on every single hover instead of reusing one).
 		let hoveredNode: string | null = null;
+		let neighbors = new Set<string>();
+		let incidentEdges = new Set<string>();
 		let previousNodeReducer = renderer.getSetting('nodeReducer');
 		let previousEdgeReducer = renderer.getSetting('edgeReducer');
 
-		renderer.on('enterNode', (payload) => {
-			if (this.draggedNode || !this.graph) return;
-			const graph = this.graph;
-			hoveredNode = payload.node;
+		// How dimmed everything but the hovered node/its neighbors currently
+		// is: 0 = not dimmed at all, 1 = fully at the dim floor. Animated
+		// (rather than jumping straight to 1 the instant a node is entered,
+		// and straight back to 0 on leave) per user feedback: an instant
+		// flip to the dim color for every other node/edge read as an abrupt,
+		// jarring cut rather than a highlight settling in - "es soll einen
+		// fliessenden Übergang zur inaktiven Farbe geben". A per-node
+		// distance-graded *color* falloff (an earlier attempt at this same
+		// feedback) was the wrong axis entirely - the ask was for the
+		// transition over *time* to be smooth, not the transition over
+		// *graph distance*.
+		let dimProgress = 0;
+		let animationFrame: number | null = null;
 
-			const neighbors = new Set(graph.neighbors(hoveredNode));
-			const incidentEdges = new Set(graph.edges(hoveredNode));
+		const cancelAnimation = (): void => {
+			if (animationFrame !== null) {
+				window.cancelAnimationFrame(animationFrame);
+				animationFrame = null;
+			}
+		};
 
-			previousNodeReducer = renderer.getSetting('nodeReducer');
-			previousEdgeReducer = renderer.getSetting('edgeReducer');
+		const animateDimProgressTo = (target: number, onComplete?: () => void): void => {
+			cancelAnimation();
+			const start = dimProgress;
+			const startTime = performance.now();
+			// Scaled by how far progress actually has to move, so interrupting
+			// a fade partway through (e.g. hovering a new node right as the
+			// previous one's dim is still fading out) redirects smoothly
+			// instead of restarting a full-length animation from wherever it
+			// happened to be.
+			const duration = HOVER_DIM_TRANSITION_MS * Math.abs(target - start);
+			const step = (now: number): void => {
+				const t = duration === 0 ? 1 : Math.min(1, (now - startTime) / duration);
+				dimProgress = start + (target - start) * t;
+				renderer.refresh();
+				if (t < 1) {
+					animationFrame = window.requestAnimationFrame(step);
+				} else {
+					animationFrame = null;
+					onComplete?.();
+				}
+			};
+			animationFrame = window.requestAnimationFrame(step);
+		};
 
-			renderer.setSetting('nodeReducer', (n, attr) => {
-				const base = previousNodeReducer ? previousNodeReducer(n, attr) : attr;
-				if (n === hoveredNode) return { ...base, color: this.theme.matchColor, zIndex: 2, forceLabel: true };
-				if (neighbors.has(n)) return { ...base, forceLabel: true };
-				return { ...attr, color: this.theme.dimNodeColor };
-			});
-			renderer.setSetting('edgeReducer', (e, attr) => {
-				if (!incidentEdges.has(e)) return { ...attr, color: this.theme.dimEdgeColor };
+		const nodeReducer = (n: string, attr: Attributes) => {
+			const base = previousNodeReducer ? previousNodeReducer(n, attr) : attr;
+			if (n === hoveredNode) return { ...base, color: this.theme.matchColor, image: undefined, zIndex: 2, forceLabel: true };
+			if (neighbors.has(n)) return { ...base, forceLabel: true };
+			// A cover-image node (type: 'image', see vaultGraph.ts) ignores
+			// `color` entirely once its texture has loaded - @sigma/node-image's
+			// NodeImageProgram only falls back to the color attribute when it
+			// has no image reference to draw, so `color` alone is a silent
+			// no-op on it. Clearing `image` alongside `color` is what actually
+			// forces the fallback - there's no way to partially fade a loaded
+			// image texture (no per-node opacity support), so it drops to its
+			// blended flat color as soon as any dimming starts, rather than
+			// fading the thumbnail itself.
+			// blendToward's factor is "how much of the original color remains"
+			// (1 = original, 0 = fully the target) - the inverse of dimProgress
+			// (0 = not dimmed, 1 = fully dimmed).
+			const color = blendToward(attr.color as string, this.theme.dimNodeColor, 1 - dimProgress);
+			const image = dimProgress > 0 ? undefined : (attr.image as string | undefined);
+			return { ...attr, color, image };
+		};
+		const edgeReducer = (e: string, attr: Attributes) => {
+			if (incidentEdges.has(e)) {
 				const base = previousEdgeReducer ? previousEdgeReducer(e, attr) : attr;
 				return { ...base, color: this.theme.matchColor, size: 2, zIndex: 2 };
-			});
+			}
+			// Color alone reads as barely-there on an edge: dimEdgeColor
+			// (--text-faint) and the default edge color (--graph-line) are
+			// both already faint, low-saturation grays, so the blend between
+			// them is a much smaller visual jump than a node's vivid accent
+			// color fading to near-black - user feedback ("die Kanten aber
+			// nicht") that the edge dim wasn't registering at all. Thinning
+			// the edge alongside the color blend gives a second, unmistakable
+			// signal that doesn't depend on the two colors being distinguishable.
+			// vaultGraph.ts never sets an edge `size` (sigma defaults it to
+			// 0.5 itself, but only *after* the reducer runs - see sigma's own
+			// applyEdgeDefaults) - attr.size is undefined here for every real
+			// edge, so this must fall back to that same 0.5 itself, or the
+			// multiplication below produces NaN and breaks the edge entirely.
+			const baseSize = typeof attr.size === 'number' ? attr.size : 0.5;
+			const size = baseSize * (1 - 0.5 * dimProgress);
+			return { ...attr, color: blendToward(this.resolvedEdgeColor(), this.theme.dimEdgeColor, 1 - dimProgress), size };
+		};
+
+		renderer.on('enterNode', (payload) => {
+			if (this.draggedNode || !this.graph) return;
+			hoveredNode = payload.node;
+			neighbors = new Set(this.graph.neighbors(hoveredNode));
+			incidentEdges = new Set(this.graph.edges(hoveredNode));
+
+			// Only capture/install once, the first time a hover starts from
+			// fully settled (undimmed) - not on every enterNode, which would
+			// otherwise re-capture *this* reducer as "previous" on a quick
+			// hop between two nodes and lose whatever mode (search/path/
+			// stagnation) was active before hovering began at all.
+			if (animationFrame === null && dimProgress === 0) {
+				previousNodeReducer = renderer.getSetting('nodeReducer');
+				previousEdgeReducer = renderer.getSetting('edgeReducer');
+				renderer.setSetting('nodeReducer', nodeReducer);
+				renderer.setSetting('edgeReducer', edgeReducer);
+			}
+			animateDimProgressTo(1);
 		});
 
 		renderer.on('leaveNode', () => {
 			if (!hoveredNode) return;
 			hoveredNode = null;
-			renderer.setSetting('nodeReducer', previousNodeReducer);
-			renderer.setSetting('edgeReducer', previousEdgeReducer);
+			animateDimProgressTo(0, () => {
+				renderer.setSetting('nodeReducer', previousNodeReducer);
+				renderer.setSetting('edgeReducer', previousEdgeReducer);
+			});
 		});
 	}
 

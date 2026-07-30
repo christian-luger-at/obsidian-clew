@@ -69,6 +69,10 @@
 	font-size: var(--font-ui-smaller);
 }
 
+.clew-legend:empty {
+	display: none;
+}
+
 .clew-legend-item {
 	display: flex;
 	align-items: center;
@@ -99,4 +103,31 @@
 
 .clew-appearance-panel h4 {
 	margin-top: 0;
+}
+
+/** Shared by every Clew modal that explains what it does under its title (RadialLayoutModal, PathfindingModal, ...). */
+.clew-modal-description {
+	color: var(--text-muted);
+	margin-top: 0;
+}
+
+/** Shared by every Clew modal's note-picker text input (RadialLayoutModal's "Center on", PathfindingModal's "From"/"To", ...) - Obsidian's default Setting text-input width is too narrow for a note path. */
+.clew-note-picker-input {
+	width: 100%;
+	flex-grow: 1;
+}
+
+/** Fixes the label column to the same width across every note-picker Setting in a dialog (PathfindingModal's "From"/"To") - otherwise Obsidian sizes it to each label's own text, leaving a shorter label's input wider than a longer label's. */
+.clew-note-picker-setting .setting-item-info {
+	flex: 0 0 80px;
+}
+
+/** Shared by every Clew modal with an in-dialog validation error (RadialLayoutModal, PathfindingModal, ...) - never a Notice (top-right toast), since the modal is already open right in front of the user. */
+.clew-modal-error {
+	color: var(--text-error);
+	min-height: 1em;
+}
+
+.clew-modal-error:empty {
+	display: none;
 }

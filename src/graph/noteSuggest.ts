@@ -11,6 +11,12 @@ export class NoteSuggest extends AbstractInputSuggest<TFile> {
 	}
 
 	getSuggestions(query: string): TFile[] {
+		// An empty query matches every candidate's path (`"".includes()` is
+		// always true), which without this would show the full note list
+		// the moment the input gains focus - before the user has typed
+		// anything. No suggestions at all until there's something to
+		// actually filter by.
+		if (!query.trim()) return [];
 		const q = query.toLowerCase();
 		return this.candidates.filter((file) => file.path.toLowerCase().includes(q)).slice(0, 50);
 	}

@@ -255,17 +255,24 @@ manual copy step. Then open `test-vault` in Obsidian and check:
   starting positions, not the physics run itself, are seeded), but the
   overall arrangement and which notes end up near each other should be
   stable.
-- **Hierarchical layout**: click "Hierarchical layout" - `Hub` and its
-  linked notes should arrange top-to-bottom by link direction instead of
-  the force-directed scatter (button briefly shows "Computing…" first,
-  see `hierarchicalLayout.ts` for why this is synchronous rather than
-  instant). Clicking it again should return to the force layout, restarting
-  from the same deterministic starting positions as before (not wherever
-  the hierarchical layout left the nodes). On a vault with more than
-  `HIERARCHICAL_LAYOUT_NODE_LIMIT` (1,000) notes - e.g. `spike-vault` - the
-  button should be disabled with a tooltip explaining why: dagre's
-  layout algorithm doesn't scale to vault-sized graphs (confirmed
-  empirically: still incomplete after 60s at 10,000 nodes).
+- **Layout selection**: a single "Layout: Force" toolbar button (its own
+  label always shows the current mode) opens a dropdown menu (Obsidian's
+  own Menu API) with Force / Hierarchical / Radial… / Circular - exactly
+  one should show as checked, matching the button's label. Click
+  "Hierarchical" - `Hub` and its linked notes should arrange top-to-bottom
+  by link direction instead of the force-directed scatter (button briefly
+  shows "Computing…" first, see `hierarchicalLayout.ts` for why this is
+  synchronous rather than instant). Click "Force" - should return to the
+  force layout, restarting from the same deterministic starting positions
+  as before (not wherever the hierarchical layout left the nodes), and is
+  the only way back to force now (picking an already-active layout from
+  the menu should do nothing, not toggle it off - matches ordinary
+  radio-button behavior). On a vault with more than
+  `HIERARCHICAL_LAYOUT_NODE_LIMIT` (1,000) notes - e.g. `spike-vault` -
+  "Hierarchical" should show as disabled in the menu with "(too many
+  notes)" appended to its label: dagre's layout algorithm doesn't scale to
+  vault-sized graphs (confirmed empirically: still incomplete after 60s at
+  10,000 nodes).
 - **Theme-aware colors**: switch Settings → Appearance between light and
   dark, and (if available) a community theme - the graph's colors
   (default node, cover-image node, edges) should follow the switch without
@@ -295,7 +302,7 @@ manual copy step. Then open `test-vault` in Obsidian and check:
   reopen the graph view (or reload the plugin) - the dragged note should
   reappear exactly where you dropped it, not back at its deterministic
   starting position. A plain click (no movement) must NOT pin the note
-  where it already was. Try dragging while "Hierarchical layout" is
+  where it already was. Try dragging while "Hierarchical" layout is
   active - dragging should do nothing there (by design, see
   `setupNodeDragging`'s docstring). Check Settings → Clew: it should show
   how many notes have a pinned position, with a "Clear all pinned
@@ -316,21 +323,22 @@ manual copy step. Then open `test-vault` in Obsidian and check:
   untouched (just with their label now forced on too), and un-hovering
   should return to the heatmap/path view unchanged, not reset to plain
   default coloring.
-- **Radial layout**: click "Radial layout…", pick `Hub` in the picker, click
+- **Radial layout**: click "Radial…", pick `Hub` in the picker, click
   Apply - `Hub` should land dead center, its direct link neighbors on one
   ring around it, their neighbors on a ring further out, and `Island X`/
   `Island Y` (disconnected from `Hub`) on one additional outer ring beyond
   the farthest reachable ring. Re-picking a different note (e.g. `Topic A`)
-  should re-center around that note instead. Clicking "Radial layout…"
-  again while it's already active should return to the force layout.
-  Dragging a node should do nothing while radial layout is active (same
-  reasoning as hierarchical - see `setupNodeDragging`'s docstring).
-- **Circular layout**: click "Circular layout" - every note should land on
+  should re-center around that note instead - picking "Radial…" from the
+  menu always reopens the picker, even while radial is already active,
+  unlike the other options. Click "Force" to leave it. Dragging a node should
+  do nothing while radial layout is active (same reasoning as hierarchical
+  - see `setupNodeDragging`'s docstring).
+- **Circular layout**: click "Circular" - every note should land on
   a single ring, with directly-linked notes (e.g. `Topic A` and `Topic A -
   Detail 1`) positioned near each other around the ring rather than
   scattered, so short chains of links read as short arcs rather than lines
-  crossing the whole circle. Clicking it again should return to the force
-  layout. Dragging should do nothing while it's active.
+  crossing the whole circle. Click "Force" to leave it. Dragging should do
+  nothing while it's active.
 - **Legend** (GitHub issue #13): a small panel, bottom-left, always visible,
   showing what the current colors mean. Should read "Note" / "Note with
   cover image" by default; switch to "Shortest path" / "Alternative path" /
@@ -349,8 +357,8 @@ manual copy step. Then open `test-vault` in Obsidian and check:
   nodes should visibly resize within a fraction of a second, no camera
   jump/re-settle (cheap repaint, not a layout restart). Drag "Gravity" or
   "Scaling ratio" - the force layout should visibly restart and re-settle
-  with the new spread. Switch to "Circular layout", then drag "Circular
-  layout radius" - the ring should resize live; switch to "Radial layout"
+  with the new spread. Pick "Circular" from the "Layout" menu, then drag
+  "Circular layout radius" - the ring should resize live; pick "Radial…"
   (pick a focus note first) and drag "Radial ring spacing" - same live
   effect, centered on the same focus note without re-prompting. Drag
   "Label size threshold" - labels should appear/disappear at the current
