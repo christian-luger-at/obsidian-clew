@@ -304,17 +304,20 @@ manual copy step. Then open `test-vault` in Obsidian and check:
   starting position. A plain click (no movement) must NOT pin the note
   where it already was. Try dragging while "Hierarchical" layout is
   active - dragging should do nothing there (by design, see
-  `setupNodeDragging`'s docstring). Check Settings → Clew: it should show
-  how many notes have a pinned position, with a "Clear all pinned
-  positions" button that actually clears them (verify a previously
-  dragged note goes back to its normal position after using it).
+  `setupNodeDragging`'s docstring). Open the Appearance panel: its
+  "Pinned node positions" section should show how many notes have a
+  pinned position, with a "Clear all" button that actually clears them
+  (verify a previously dragged note goes back to its normal position
+  after using it).
 - **Click a node** (GitHub issue #10): should open that note in the editor,
   same as clicking a node in Obsidian's own core Graph View. Should still
   work after dragging some other node around.
 - **Hover a node** (GitHub issue #9): should highlight only the hovered node
-  itself with the accent color - direct neighbors should keep their exact
-  current color (not recolored) but *do* show their label, and everything
-  else (non-neighbors) should visibly fade toward the background - clearly
+  itself with the accent color and always show its label - direct
+  neighbors should keep their exact current color (not recolored) and show
+  their label only if it would normally fit (same
+  labelSizeThreshold/labelDensity rule as any other node, not forced), and
+  everything else (non-neighbors) should visibly fade toward the background - clearly
   de-emphasized, but still recognizable as actual notes/edges, not faded to
   the point of disappearing. Should not open the note (that's the click,
   not the hover). Un-hovering should restore the view exactly as it was
@@ -350,19 +353,25 @@ manual copy step. Then open `test-vault` in Obsidian and check:
   in Visual encoding. Toggling the heatmap or search on top of a shown path
   result should switch the legend to the heatmap's/search's own labels,
   not leave it describing the path.
-- **Appearance panel**: click "Appearance…" in the toolbar - a panel opens
-  bottom-right with a "Colors" section, grouped sliders (Node size / Physics
-  / Labels / Alternative layout spacing), and a "Reset to defaults" button;
-  clicking "Appearance…" again closes it. Drag the "Base node size" slider -
-  nodes should visibly resize within a fraction of a second, no camera
-  jump/re-settle (cheap repaint, not a layout restart). Drag "Gravity" or
-  "Scaling ratio" - the force layout should visibly restart and re-settle
-  with the new spread. Pick "Circular" from the "Layout" menu, then drag
-  "Circular layout radius" - the ring should resize live; pick "Radial…"
-  (pick a focus note first) and drag "Radial ring spacing" - same live
-  effect, centered on the same focus note without re-prompting. Drag
-  "Label size threshold" - labels should appear/disappear at the current
-  zoom level without a camera reset. Click "Reset to defaults" - every
+- **Appearance panel**: click the sliders icon in the top-right icon rail -
+  a panel opens bottom-right with "Nodes" and "Edges" sections (each with
+  their own color picker and sliders), then grouped sliders (Physics /
+  Labels / Radial or Circular or Hierarchical layout spacing), and a
+  "Reset to defaults" button; clicking the icon again closes it. The
+  layout-specific groups only show the one matching the currently active
+  layout - Physics only while "Force" is active, "Radial layout spacing"
+  only while "Radial" is active, etc. - and switching layout while the
+  panel is open should swap them immediately, not just on next open. Drag
+  the "Base node size" slider - nodes should visibly resize within a
+  fraction of a second, no camera jump/re-settle (cheap repaint, not a
+  layout restart). Drag "Gravity" or "Scaling ratio" - the force layout
+  should visibly restart and re-settle with the new spread. Pick "Circular"
+  from the "Layout" menu, then drag "Circular layout radius" - the ring
+  should resize live; pick "Radial…" (pick a focus note first) and drag
+  "Radial ring spacing" - same live effect, centered on the same focus note
+  without re-prompting. Drag "Label size threshold" - labels should
+  appear/disappear at the current zoom level without a camera reset. Click
+  "Reset to defaults" - every
   slider should jump back to its original position and the graph should
   visibly update to match. Close and reopen the graph view (or reload the
   plugin) - the last-saved values should still be in effect, not reset to

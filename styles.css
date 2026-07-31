@@ -9,15 +9,36 @@
 	inset: 0;
 }
 
-.clew-toolbar {
+/* Positions the icon rail (.clew-toolbar) and the search input side by
+   side, top-right - a plain flex row, not itself styled as a panel, so
+   the search input isn't forced into the rail's own background/border.
+   row-reverse (not the DOM order itself) puts the rail flush against the
+   right edge with search to its left - toolbarEl is the first child
+   (see graphPane.ts) so a plain row would put it innermost instead. */
+.clew-topbar {
 	position: absolute;
 	top: var(--size-4-2);
-	left: var(--size-4-2);
 	right: var(--size-4-2);
 	z-index: 10;
 	display: flex;
-	flex-wrap: wrap;
+	flex-direction: row-reverse;
+	align-items: flex-start;
 	gap: var(--size-4-2);
+}
+
+/* A vertical icon rail rather than a horizontal row of text buttons - see
+   its construction in graphPane.ts for why. The background/border/shadow
+   match .clew-legend/.clew-appearance-panel, so it reads as a floating
+   panel instead of sitting directly on (and blending into) a busy graph. */
+.clew-toolbar {
+	display: flex;
+	flex-direction: column;
+	gap: var(--size-4-1);
+	padding: var(--size-4-1);
+	background: var(--background-primary);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-m);
+	box-shadow: var(--shadow-s);
 }
 
 .clew-toolbar button.is-active {
@@ -25,14 +46,17 @@
 	color: var(--text-on-accent);
 }
 
-.clew-search-input {
+/* Obsidian's own `.search-input-container input` rule sets width: 100% -
+   more specific than a bare `.clew-search-input` class, so the fixed width
+   has to live on the wrapper (which that rule then fills) instead. */
+.clew-topbar .search-input-container {
 	width: 160px;
 }
 
 .clew-path-panel {
 	position: absolute;
 	top: var(--size-4-2);
-	right: var(--size-4-2);
+	left: var(--size-4-2);
 	z-index: 10;
 	max-width: 280px;
 	max-height: calc(100% - var(--size-4-4));
@@ -91,7 +115,8 @@
 	bottom: var(--size-4-2);
 	right: var(--size-4-2);
 	z-index: 10;
-	width: 280px;
+	width: 340px;
+	max-width: calc(100% - var(--size-4-4));
 	max-height: calc(100% - var(--size-4-4));
 	overflow-y: auto;
 	padding: var(--size-4-3);
@@ -101,8 +126,15 @@
 	box-shadow: var(--shadow-s);
 }
 
-.clew-appearance-panel h4 {
-	margin-top: 0;
+.clew-appearance-panel-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	margin-bottom: var(--size-4-2);
+}
+
+.clew-appearance-panel-header h4 {
+	margin: 0;
 }
 
 /** Shared by every Clew modal that explains what it does under its title (RadialLayoutModal, PathfindingModal, ...). */

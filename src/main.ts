@@ -1,5 +1,5 @@
 import { Plugin, WorkspaceLeaf } from 'obsidian';
-import { DEFAULT_APPEARANCE_SETTINGS, ClewSettings, ClewSettingTab } from './settings';
+import { DEFAULT_APPEARANCE_SETTINGS, ClewSettings } from './settings';
 import { CLEW_STANDALONE_GRAPH_VIEW, StandaloneGraphView } from './graph/standaloneGraphView';
 import { GraphPane } from './graph/graphPane';
 
@@ -8,7 +8,6 @@ export default class ClewPlugin extends Plugin {
 
 	async onload() {
 		await this.loadSettings();
-		this.addSettingTab(new ClewSettingTab(this.app, this));
 
 		this.registerView(CLEW_STANDALONE_GRAPH_VIEW, (leaf) => new StandaloneGraphView(leaf, this));
 
@@ -52,12 +51,12 @@ export default class ClewPlugin extends Plugin {
 		this.settings = {
 			// Merged field-by-field (not a single top-level spread over a
 			// DEFAULT_SETTINGS constant) so every load gets its own fresh
-			// objects - ClewSettingTab's sliders mutate settings.appearance
-			// in place, which would otherwise alias and corrupt a shared
-			// module-level default across plugin reloads. Field-by-field
-			// also means a saved file predating a newly-added appearance
-			// setting still gets that setting's default, rather than a
-			// blanket object-replace silently dropping it.
+			// objects - GraphPane's Appearance panel sliders mutate
+			// settings.appearance in place, which would otherwise alias and
+			// corrupt a shared module-level default across plugin reloads.
+			// Field-by-field also means a saved file predating a newly-added
+			// appearance setting still gets that setting's default, rather
+			// than a blanket object-replace silently dropping it.
 			appearance: { ...DEFAULT_APPEARANCE_SETTINGS, ...loaded?.appearance },
 			pinnedPositions: { ...loaded?.pinnedPositions },
 		};

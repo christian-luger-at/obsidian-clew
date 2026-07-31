@@ -1,7 +1,3 @@
-import { App, PluginSettingTab, Setting } from 'obsidian';
-import ClewPlugin from './main';
-import { GraphPane } from './graph/graphPane';
-
 export interface PinnedPosition {
 	x: number;
 	y: number;
@@ -100,8 +96,8 @@ export interface ClewAppearanceSettings {
 }
 
 export const DEFAULT_APPEARANCE_SETTINGS: ClewAppearanceSettings = {
-	nodeBaseSize: 1.2,
-	nodeImageBaseSize: 2.5,
+	nodeBaseSize: 2.5,
+	nodeImageBaseSize: 4.5,
 	nodeDegreeGrowth: 0.6,
 	gravity: 0.3,
 	scalingRatio: 10,
@@ -129,44 +125,4 @@ export interface ClewSettings {
 	 */
 	pinnedPositions: Record<string, PinnedPosition>;
 	appearance: ClewAppearanceSettings;
-}
-
-export class ClewSettingTab extends PluginSettingTab {
-	plugin: ClewPlugin;
-
-	constructor(app: App, plugin: ClewPlugin) {
-		super(app, plugin);
-		this.plugin = plugin;
-	}
-
-	display(): void {
-		const { containerEl } = this;
-		containerEl.empty();
-
-		const count = Object.keys(this.plugin.settings.pinnedPositions).length;
-
-		new Setting(containerEl)
-			.setName('Pinned node positions')
-			.setDesc(
-				count === 0
-					? 'No notes have a manually pinned position yet - drag a node in the graph view to pin it.'
-					: `${count} note${count === 1 ? '' : 's'} currently ${count === 1 ? 'has' : 'have'} a pinned position.`,
-			)
-			.addButton((button) =>
-				button
-					.setButtonText('Clear all pinned positions')
-					.setDisabled(count === 0)
-					.onClick(async () => {
-						this.plugin.settings.pinnedPositions = {};
-						await this.plugin.saveSettings();
-						// Without this, a previously-pinned node stayed frozen in
-						// place in the already-open graph view until it was
-						// closed and reopened - clearing the setting alone
-						// doesn't retroactively un-fix a node already `fixed:
-						// true` in the currently-rendered graph.
-						GraphPane.getActive()?.clearPinnedPositions();
-						this.display();
-					}),
-			);
-	}
 }

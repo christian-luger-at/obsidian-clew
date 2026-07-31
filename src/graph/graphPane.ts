@@ -1,4 +1,4 @@
-import { App, Menu, Setting, TFile } from 'obsidian';
+import { App, Menu, Setting, setIcon, setTooltip, TFile } from 'obsidian';
 import Graph from 'graphology';
 import type { Attributes } from 'graphology-types';
 import type Sigma from 'sigma';
@@ -116,7 +116,7 @@ const NODE_SIZE_SLIDERS: AppearanceSliderSpec[] = [
 	{
 		key: 'nodeBaseSize',
 		name: 'Base node size',
-		desc: 'Size of a plain note with no links (degree 0).',
+		desc: 'Size of a note with no links.',
 		min: 0.5,
 		max: 12,
 		step: 0.1,
@@ -125,7 +125,7 @@ const NODE_SIZE_SLIDERS: AppearanceSliderSpec[] = [
 	{
 		key: 'nodeImageBaseSize',
 		name: 'Cover-image node size',
-		desc: 'Size of a note with a cover image, at degree 0 - kept larger than a plain note so the image inside stays recognizable.',
+		desc: 'Size of a note with a cover image.',
 		min: 1,
 		max: 12,
 		step: 0.1,
@@ -134,7 +134,7 @@ const NODE_SIZE_SLIDERS: AppearanceSliderSpec[] = [
 	{
 		key: 'nodeDegreeGrowth',
 		name: 'Hub growth',
-		desc: 'How much bigger a highly-linked note gets than one with few links.',
+		desc: 'How much bigger heavily-linked notes get.',
 		min: 0,
 		max: 2,
 		step: 0.1,
@@ -146,7 +146,7 @@ const NODE_SIZE_SLIDERS: AppearanceSliderSpec[] = [
 const EDGE_INTENSITY_SLIDER: AppearanceSliderSpec = {
 	key: 'edgeIntensity',
 	name: 'Edge intensity',
-	desc: 'How strongly edges stand out - lower is more muted. Ignored while a custom edge color above is set.',
+	desc: 'How strongly edges stand out. Ignored with a custom color.',
 	min: 0,
 	max: 1,
 	step: 0.05,
@@ -157,21 +157,38 @@ const EDGE_INTENSITY_SLIDER: AppearanceSliderSpec = {
 const EDGE_ARROW_SIZE_SLIDER: AppearanceSliderSpec = {
 	key: 'edgeArrowSize',
 	name: 'Arrow size',
-	desc: 'Size of the direction arrowhead on edges.',
+	desc: 'Size of the direction arrowhead.',
 	min: 0.5,
 	max: 5,
 	step: 0.5,
 	apply: 'edgeArrow',
 };
 
-const APPEARANCE_SLIDER_GROUPS: { heading: string; sliders: AppearanceSliderSpec[] }[] = [
+interface AppearanceSliderGroup {
+	heading: string;
+	sliders: AppearanceSliderSpec[];
+	/**
+	 * Restricts this group to the layout mode(s) its sliders actually
+	 * affect - omitted for groups relevant regardless of layout (Labels).
+	 * User feedback: with 6 layout-specific sliders (physics + all 3
+	 * alternative layouts' spacing) always shown regardless of which layout
+	 * was even active, the panel was mostly showing controls that did
+	 * nothing in the current mode. Checked against GraphPane.layoutMode in
+	 * renderAppearancePanel() - re-rendered by activateLayoutMode() so
+	 * switching layout while the panel is open updates it immediately.
+	 */
+	showForLayout?: (mode: LayoutMode) => boolean;
+}
+
+const APPEARANCE_SLIDER_GROUPS: AppearanceSliderGroup[] = [
 	{
 		heading: 'Physics (force layout)',
+		showForLayout: (mode) => mode === 'force',
 		sliders: [
 			{
 				key: 'gravity',
 				name: 'Gravity',
-				desc: 'Pull toward the center - higher keeps the graph more compact.',
+				desc: 'Pull toward the center.',
 				min: 0.01,
 				max: 0.5,
 				step: 0.01,
@@ -180,7 +197,7 @@ const APPEARANCE_SLIDER_GROUPS: { heading: string; sliders: AppearanceSliderSpec
 			{
 				key: 'scalingRatio',
 				name: 'Scaling ratio',
-				desc: 'Overall repulsion between notes - higher spreads the graph out more.',
+				desc: 'Repulsion between notes.',
 				min: 1,
 				max: 50,
 				step: 1,
@@ -194,7 +211,7 @@ const APPEARANCE_SLIDER_GROUPS: { heading: string; sliders: AppearanceSliderSpec
 			{
 				key: 'labelSizeThreshold',
 				name: 'Label size threshold',
-				desc: 'How large a note has to appear on screen before its name is shown - higher hides more labels when zoomed out.',
+				desc: 'Note size needed before its name shows.',
 				min: 2,
 				max: 30,
 				step: 1,
@@ -203,7 +220,7 @@ const APPEARANCE_SLIDER_GROUPS: { heading: string; sliders: AppearanceSliderSpec
 			{
 				key: 'labelDensity',
 				name: 'Label density',
-				desc: 'How many labels are allowed to show at once in a given area.',
+				desc: 'How many labels can show at once.',
 				min: 0,
 				max: 2,
 				step: 0.1,
@@ -212,30 +229,43 @@ const APPEARANCE_SLIDER_GROUPS: { heading: string; sliders: AppearanceSliderSpec
 		],
 	},
 	{
-		heading: 'Alternative layout spacing',
+		heading: 'Radial layout spacing',
+		showForLayout: (mode) => mode === 'radial',
 		sliders: [
 			{
 				key: 'radialRingSpacing',
 				name: 'Radial ring spacing',
-				desc: 'Distance between successive rings in the radial layout.',
+				desc: 'Distance between rings.',
 				min: 40,
 				max: 300,
 				step: 10,
 				apply: 'layout',
 			},
+		],
+	},
+	{
+		heading: 'Circular layout spacing',
+		showForLayout: (mode) => mode === 'circular',
+		sliders: [
 			{
 				key: 'circularRadius',
 				name: 'Circular layout radius',
-				desc: 'Size of the single ring every note is placed on in the circular layout.',
+				desc: 'Radius of the ring.',
 				min: 100,
 				max: 800,
 				step: 20,
 				apply: 'layout',
 			},
+		],
+	},
+	{
+		heading: 'Hierarchical layout spacing',
+		showForLayout: (mode) => mode === 'hierarchical',
+		sliders: [
 			{
 				key: 'hierarchicalNodeSpacing',
 				name: 'Hierarchical node spacing',
-				desc: 'Space between notes on the same level in the hierarchical layout.',
+				desc: 'Space between notes on the same level.',
 				min: 10,
 				max: 100,
 				step: 5,
@@ -244,7 +274,7 @@ const APPEARANCE_SLIDER_GROUPS: { heading: string; sliders: AppearanceSliderSpec
 			{
 				key: 'hierarchicalRankSpacing',
 				name: 'Hierarchical level spacing',
-				desc: 'Space between levels in the hierarchical layout.',
+				desc: 'Space between levels.',
 				min: 20,
 				max: 200,
 				step: 10,
@@ -275,6 +305,8 @@ export class GraphPane {
 	private readonly legendEl: HTMLElement;
 	private readonly appearancePanelEl: HTMLElement;
 	private readonly stagnationButton: HTMLButtonElement;
+	private readonly searchButton: HTMLButtonElement;
+	private readonly searchWrapperEl: HTMLElement;
 	private readonly searchInputEl: HTMLInputElement;
 	private readonly layoutButton: HTMLButtonElement;
 	private readonly visualEncodingButton: HTMLButtonElement;
@@ -319,40 +351,68 @@ export class GraphPane {
 		// button/panel below along with the canvases.
 		this.graphContainerEl = this.containerEl.createDiv({ cls: 'clew-graph-canvas' });
 
-		const toolbarEl = this.containerEl.createDiv({ cls: 'clew-toolbar' });
+		// A vertical icon rail (left edge) rather than a horizontal row of
+		// 6 text buttons - user feedback: the text-button row got covered/
+		// blended into a large, busy graph (no backing panel, and it wrapped
+		// onto multiple lines as controls were added). Icon + tooltip keeps
+		// each control recognizable at a glance without the width a label
+		// needs; `.clew-toolbar`'s own background/border/shadow (styles.css)
+		// gives it the same solid "floating panel" look as the legend and
+		// appearance panel already have, instead of sitting directly on the
+		// canvas. Wrapped in `.clew-topbar` (a plain flex row) so the search
+		// input can sit immediately to the rail's right without either one
+		// needing a hardcoded pixel offset.
+		const topbarEl = this.containerEl.createDiv({ cls: 'clew-topbar' });
+		const toolbarEl = topbarEl.createDiv({ cls: 'clew-toolbar' });
+
+		const iconButton = (icon: string, tooltip: string): HTMLButtonElement => {
+			const button = toolbarEl.createEl('button', { cls: 'clickable-icon' });
+			setIcon(button, icon);
+			setTooltip(button, tooltip);
+			return button;
+		};
 
 		// A single button opening a dropdown menu (Obsidian's own Menu API,
 		// same as its native dropdowns) rather than 4 separate toolbar
 		// buttons or a segmented control - user feedback: the segmented
 		// control (an earlier version of this) took up too much toolbar
-		// width for something picked infrequently. The button's own label
+		// width for something picked infrequently. The button's own tooltip
 		// always shows the current mode (updated by activateLayoutMode()),
 		// so the active layout is visible without opening the menu - but
 		// per later feedback, without the accent-highlight treatment other
-		// active toolbar toggles get, since this button's label already
-		// says which mode is active.
-		this.layoutButton = toolbarEl.createEl('button', { text: `Layout: ${LAYOUT_MODE_LABELS.force}` });
+		// active toolbar toggles get, since the tooltip already says which
+		// mode is active.
+		this.layoutButton = iconButton('layout-grid', `Layout: ${LAYOUT_MODE_LABELS.force}`);
 		this.layoutButton.addEventListener('click', (evt) => this.openLayoutMenu(evt));
 
-		const findPathButton = toolbarEl.createEl('button', { text: 'Find path…' });
+		// Tucked behind its own icon (like Find path is behind its icon,
+		// opening a modal) rather than an always-visible input - user
+		// feedback: a persistent search box competed for space in the
+		// toolbar/topbar. Toggles searchWrapperEl's visibility instead of
+		// opening a modal, since search is a live filter you watch the graph
+		// react to while typing, not a one-shot dialog you submit and close.
+		this.searchButton = iconButton('search', 'Search notes…');
+		this.searchButton.addEventListener('click', () => this.toggleSearch());
+
+		const findPathButton = iconButton('route', 'Find path…');
 		findPathButton.addEventListener('click', () => this.openPathfindingModal());
 
 		// Panning/zooming away with no way back was a real gap - the camera
 		// only got reset automatically as a side effect of switching layouts
 		// (resetCameraAndRefresh(), used by every setXLayout() method below),
 		// never on its own.
-		const centerButton = toolbarEl.createEl('button', { text: 'Reset view' });
+		const centerButton = iconButton('maximize', 'Reset view');
 		centerButton.addEventListener('click', () => void this.resetCameraAndRefresh());
 
 		// TEMP: disabled while the toolbar reorder above (Layout, Find path)
 		// is being tried out - re-enable once that's settled.
-		this.stagnationButton = toolbarEl.createEl('button', { text: 'Stagnation heatmap' });
+		this.stagnationButton = iconButton('flame', 'Stagnation heatmap');
 		this.stagnationButton.disabled = true;
 		this.stagnationButton.addEventListener('click', () => this.toggleStagnationHeatmap());
 
 		// Doc section 3.1 / GitHub issue #1: color/size driven by a chosen
 		// frontmatter property instead of the fixed image/degree defaults.
-		this.visualEncodingButton = toolbarEl.createEl('button', { text: 'Visual encoding…' });
+		this.visualEncodingButton = iconButton('palette', 'Visual encoding…');
 		this.visualEncodingButton.disabled = true;
 		this.visualEncodingButton.addEventListener('click', () => this.openVisualEncodingModal());
 
@@ -364,26 +424,39 @@ export class GraphPane {
 		// which silently overrides every defaultEdgeColor computation in
 		// theme.ts and had no other way to reach while this button was
 		// disabled.
-		this.appearanceButton = toolbarEl.createEl('button', { text: 'Appearance…' });
+		this.appearanceButton = iconButton('sliders-horizontal', 'Appearance…');
 		this.appearanceButton.addEventListener('click', () => this.toggleAppearancePanel());
 
 		// Focus mode: highlights matches, dims the rest - doesn't filter/hide
 		// anything, so the surrounding structure stays visible for context
 		// (doc's "Fokusmodus", matching an open Obsidian forum request rather
 		// than the more disruptive "hide non-matches" a naive filter would do).
-		this.searchInputEl = toolbarEl.createEl('input', {
+		// A sibling of the icon rail (not inside it) - a text input doesn't
+		// fit the icon-only rail, and sitting next to it needs no pixel math
+		// (see topbarEl's own docstring above).
+		// `search-input-container` is Obsidian's own class (used by its
+		// Quick Switcher, Settings search, etc.) - it draws the magnifying-
+		// glass icon via a themed `:before` pseudo-element and applies the
+		// matching input padding, so search gets an icon consistent with
+		// the rest of Obsidian's UI for free, no custom icon markup needed.
+		// Hidden until searchButton (above) reveals it - see toggleSearch().
+		this.searchWrapperEl = topbarEl.createDiv({ cls: 'search-input-container' });
+		this.searchWrapperEl.hide();
+		this.searchInputEl = this.searchWrapperEl.createEl('input', {
 			type: 'search',
 			placeholder: 'Search notes…',
 			cls: 'clew-search-input',
 		});
-		this.searchInputEl.disabled = true;
 		this.searchInputEl.addEventListener('input', () => this.onSearchInput(this.searchInputEl.value));
 
+		// Top-left - opposite the top-right icon rail/search, so it doesn't
+		// compete with either for space.
 		this.panelEl = this.containerEl.createDiv({ cls: 'clew-path-panel' });
 		this.panelEl.hide();
 
-		// Bottom-left - opposite the top-left toolbar and top-right path
-		// panel, so it doesn't compete with either for space.
+		// Bottom-left - opposite the bottom-right appearance panel and the
+		// top-right icon rail/search, so it doesn't compete with either for
+		// space.
 		this.legendEl = this.containerEl.createDiv({ cls: 'clew-legend' });
 
 		// Bottom-right - the one remaining free corner.
@@ -563,7 +636,12 @@ export class GraphPane {
 	 */
 	private renderAppearancePanel(): void {
 		this.appearancePanelEl.empty();
-		this.appearancePanelEl.createEl('h4', { text: 'Graph appearance' });
+		const headerEl = this.appearancePanelEl.createDiv({ cls: 'clew-appearance-panel-header' });
+		headerEl.createEl('h4', { text: 'Graph appearance' });
+		const closeButton = headerEl.createEl('button', { cls: 'clickable-icon' });
+		setIcon(closeButton, 'x');
+		setTooltip(closeButton, 'Close');
+		closeButton.addEventListener('click', () => this.toggleAppearancePanel());
 
 		// Grouped by topic (Nodes, then Edges) rather than by control type
 		// (a shared "Colors" section plus a separately-headed "Node size"
@@ -572,9 +650,7 @@ export class GraphPane {
 		new Setting(this.appearancePanelEl).setName('Nodes').setHeading();
 		new Setting(this.appearancePanelEl)
 			.setName('Node color')
-			.setDesc(
-				'Uses the current theme\'s color by default. Pick a color to override it - doesn\'t affect cover-image notes or a chosen visual-encoding color.',
-			)
+			.setDesc('Theme color by default; pick to override. Ignores cover images and visual encoding.')
 			.addColorPicker((picker) =>
 				picker.setValue(toHexColor(this.resolvedNodeColor())).onChange((value) => {
 					this.plugin.settings.appearance.nodeColorOverride = value;
@@ -598,9 +674,7 @@ export class GraphPane {
 		new Setting(this.appearancePanelEl).setName('Edges').setHeading();
 		new Setting(this.appearancePanelEl)
 			.setName('Edge color')
-			.setDesc(
-				'Uses the current theme\'s color by default (with an automatic fallback if that color is too hard to see against the background). Pick a color to override it.',
-			)
+			.setDesc('Theme color by default; pick to override.')
 			.addColorPicker((picker) =>
 				picker.setValue(toHexColor(this.resolvedEdgeColor())).onChange((value) => {
 					this.plugin.settings.appearance.edgeColorOverride = value;
@@ -622,9 +696,7 @@ export class GraphPane {
 		this.renderAppearanceSlider(EDGE_INTENSITY_SLIDER);
 		new Setting(this.appearancePanelEl)
 			.setName('Show edge direction')
-			.setDesc(
-				'Draws an arrowhead on each edge pointing from the linking note to the note it links to. A note that links both ways gets a double-headed arrow instead.',
-			)
+			.setDesc('Arrowhead pointing to the linked note. Mutual links get both.')
 			.addToggle((toggle) =>
 				toggle.setValue(this.plugin.settings.appearance.showEdgeDirection).onChange((value) => {
 					this.plugin.settings.appearance.showEdgeDirection = value;
@@ -639,9 +711,36 @@ export class GraphPane {
 		if (this.plugin.settings.appearance.showEdgeDirection) this.renderAppearanceSlider(EDGE_ARROW_SIZE_SLIDER);
 
 		for (const group of APPEARANCE_SLIDER_GROUPS) {
+			if (group.showForLayout && !group.showForLayout(this.layoutMode)) continue;
 			new Setting(this.appearancePanelEl).setName(group.heading).setHeading();
 			for (const spec of group.sliders) this.renderAppearanceSlider(spec);
 		}
+
+		// Moved here from the plugin's Settings tab - user feedback: a
+		// dragged/pinned node's position is graph-view state you tune while
+		// looking at the graph (same reasoning as every other Appearance
+		// setting), not something that belongs on a separate Settings
+		// screen. This was the plugin Settings tab's only content, so that
+		// tab was removed entirely rather than left empty - see main.ts.
+		const pinnedCount = Object.keys(this.plugin.settings.pinnedPositions).length;
+		new Setting(this.appearancePanelEl)
+			.setName('Pinned node positions')
+			.setDesc(
+				pinnedCount === 0
+					? 'No notes have a manually pinned position yet - drag a node to pin it.'
+					: `${pinnedCount} note${pinnedCount === 1 ? '' : 's'} currently pinned.`,
+			)
+			.addButton((button) =>
+				button
+					.setButtonText('Clear all')
+					.setDisabled(pinnedCount === 0)
+					.onClick(async () => {
+						this.plugin.settings.pinnedPositions = {};
+						await this.plugin.saveSettings();
+						this.clearPinnedPositions();
+						this.renderAppearancePanel();
+					}),
+			);
 
 		new Setting(this.appearancePanelEl)
 			.setName('Reset to defaults')
@@ -1022,15 +1121,20 @@ export class GraphPane {
 	}
 
 	/**
-	 * Updates layoutMode and the toolbar button's own label to match - kept
-	 * in one place so they can never disagree. Deliberately no `is-active`
-	 * accent highlight here (unlike the other toolbar toggles) - user
-	 * feedback: the button's label already says which layout is active, so
+	 * Updates layoutMode and the toolbar button's own tooltip to match -
+	 * kept in one place so they can never disagree. Deliberately no
+	 * `is-active` accent highlight here (unlike the other toolbar toggles) -
+	 * user feedback: the tooltip already says which layout is active, so
 	 * highlighting it too was redundant.
 	 */
 	private activateLayoutMode(mode: LayoutMode): void {
 		this.layoutMode = mode;
-		this.layoutButton.setText(`Layout: ${LAYOUT_MODE_LABELS[mode]}`);
+		setTooltip(this.layoutButton, `Layout: ${LAYOUT_MODE_LABELS[mode]}`);
+		// The Appearance panel's layout-specific slider groups (Physics,
+		// Radial/Circular/Hierarchical spacing) are filtered by this mode -
+		// re-render so switching layout while the panel is already open
+		// swaps them immediately instead of only on next open/close.
+		if (this.appearancePanelEl.isShown()) this.renderAppearancePanel();
 	}
 
 	private setHierarchicalLayout(): void {
@@ -1043,7 +1147,7 @@ export class GraphPane {
 		// yield one tick so that actually paints before the blocking call
 		// starts, rather than the UI just looking frozen for that long.
 		this.layoutButton.disabled = true;
-		this.layoutButton.setText('Computing…');
+		setTooltip(this.layoutButton, 'Computing layout…');
 
 		window.setTimeout(() => {
 			if (!this.graph) return;
@@ -1098,17 +1202,17 @@ export class GraphPane {
 	}
 
 	/**
-	 * Called from ClewSettingTab's "Clear all pinned positions" button (via
-	 * GraphPane.getActive()) - without this, a previously-pinned node stayed
-	 * frozen in its old spot until the graph view was closed and reopened,
-	 * since clearing the setting alone doesn't retroactively un-fix a node
+	 * Called from the Appearance panel's "Pinned node positions" -> "Clear
+	 * all" button - without this, a previously-pinned node stayed frozen in
+	 * its old spot until the graph view was closed and reopened, since
+	 * clearing the setting alone doesn't retroactively un-fix a node
 	 * already `fixed: true` in the currently-rendered graph. Only
 	 * meaningful in force mode - none of the other layouts respect `fixed`
 	 * either way, so by the time the user switches back to force,
 	 * setForceLayout() already reads the (by-then-already-cleared) setting
 	 * correctly on its own, with nothing extra needed here.
 	 */
-	clearPinnedPositions(): void {
+	private clearPinnedPositions(): void {
 		if (this.layoutMode === 'force') this.setForceLayout();
 	}
 
@@ -1393,7 +1497,14 @@ export class GraphPane {
 				const color = this.plugin.settings.appearance.nodeColorOverride ?? this.theme.matchColor;
 				return { ...base, color, image: undefined, zIndex: 2, forceLabel: true };
 			}
-			if (neighbors.has(n)) return { ...base, forceLabel: true };
+			// No forceLabel here (unlike the hovered node above) - user
+			// feedback: neighbor labels should only show when they'd
+			// naturally clear labelRenderedSizeThreshold/labelDensity, same
+			// as any other node, not unconditionally. Staying undimmed
+			// (this branch returns `base` as-is, skipping the dim blend
+			// below) is already the highlight - a neighbor doesn't also
+			// need a forced label to read as "part of the hover".
+			if (neighbors.has(n)) return base;
 			// A cover-image node (type: 'image', see vaultGraph.ts) ignores
 			// `color` entirely once its texture has loaded - @sigma/node-image's
 			// NodeImageProgram only falls back to the color attribute when it
@@ -1552,10 +1663,31 @@ export class GraphPane {
 		this.renderer.setSetting('edgeReducer', (edge, attr) => ({ ...attr, color: this.theme.dimEdgeColor }));
 	}
 
-	/** Resets search state - called when another mode takes over, not from the search input's own handler (which must never overwrite what the user is actively typing). */
+	/**
+	 * Resets search state - called when another mode takes over, not from
+	 * the search input's own handler (which must never overwrite what the
+	 * user is actively typing). Also closes the search box itself (see
+	 * toggleSearch()), so switching to another mode doesn't leave it
+	 * sitting open with stale (or already-cleared) text.
+	 */
 	private clearSearch(): void {
 		this.searchQuery = '';
 		this.searchInputEl.value = '';
+		this.searchWrapperEl.hide();
+		this.searchButton.removeClass('is-active');
+	}
+
+	/** Reveals the search box (behind its own icon, like Find path is behind a modal) or closes and resets it - see clearSearch(). */
+	private toggleSearch(): void {
+		if (this.searchWrapperEl.isShown()) {
+			this.clearSearch();
+			this.clearHighlight();
+			this.renderLegend();
+			return;
+		}
+		this.searchWrapperEl.show();
+		this.searchButton.addClass('is-active');
+		this.searchInputEl.focus();
 	}
 
 	private renderStagnationPanel(stats: CommunityStats[]): void {
