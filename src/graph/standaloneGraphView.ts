@@ -64,6 +64,24 @@ export class StandaloneGraphView extends ItemView {
 		// or the current layout mode the way a vault-content change should.
 		this.registerEvent(this.app.workspace.on('css-change', () => this.pane?.refreshTheme()));
 
+		// User-reported: with Obsidian's "Adapt to system" appearance setting
+		// (automatic light/dark switching driven by the OS, not a manual
+		// toggle in Settings), colors stayed stuck at whatever theme was
+		// active when the view last refreshed - e.g. a note's dark accent
+		// color read as unreadably close to black once the OS switched to
+		// dark mode, since the contrast check above ran against the *light*
+		// background still cached in `this.theme`. 'css-change' above is
+		// presumably tied to Obsidian's own manual appearance toggle, not to
+		// the OS-level media-query change "Adapt to system" reacts to, so it
+		// alone doesn't catch this - listening to the same
+		// prefers-color-scheme query the OS (and Obsidian's "Adapt to
+		// system" mode) itself uses is a signal independent of however
+		// Obsidian's internal event wiring happens to handle that case.
+		const colorSchemeQuery = window.matchMedia('(prefers-color-scheme: dark)');
+		const handleColorSchemeChange = (): void => this.pane?.refreshTheme();
+		colorSchemeQuery.addEventListener('change', handleColorSchemeChange);
+		this.register(() => colorSchemeQuery.removeEventListener('change', handleColorSchemeChange));
+
 		// User-reported: switching away to Obsidian's own core Graph View
 		// (or any other tab) and back, or just opening a note, left this
 		// view's graph blank until manually hitting "Center" - neither of

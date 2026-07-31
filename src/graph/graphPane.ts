@@ -2,7 +2,7 @@ import { App, Menu, Setting, TFile } from 'obsidian';
 import Graph from 'graphology';
 import type { Attributes } from 'graphology-types';
 import type Sigma from 'sigma';
-import { createRenderer, createNodeHoverDrawer } from './renderer';
+import { createRenderer, createNodeHoverDrawer, createArrowEdgePrograms } from './renderer';
 import { runLayout, LayoutRun } from './layoutRunner';
 import { buildVaultGraph, resetToDeterministicPositions, sizeNodesByDegree } from './vaultGraph';
 import { runHierarchicalLayout, HIERARCHICAL_LAYOUT_NODE_LIMIT } from './hierarchicalLayout';
@@ -24,6 +24,9 @@ const SETTLE_DURATION_MS = 2000;
 
 /** How long ForceAtlas2 briefly re-runs after a drag ends, so neighbors visibly adapt to the dropped node's new (now fixed) position - shorter than the initial settle, since this is just a local readjustment, not settling the whole graph from scratch. */
 const DRAG_SETTLE_DURATION_MS = 1500;
+
+/** See fittedBBox()'s docstring - the floor "Reset view" fits to, in the same world units as node x/y. */
+const MIN_FIT_EXTENT = 32;
 
 /**
  * How long the hover-dim (everything but the hovered node/its neighbors)
@@ -64,10 +67,11 @@ function debounce(fn: () => void, delayMs: number): () => void {
 }
 
 interface AppearanceSliderSpec {
-	// Excludes edgeColorOverride - the one non-numeric (string | null)
-	// appearance setting, which has its own color-picker UI instead of a
-	// slider (see renderAppearancePanel()'s "Colors" section).
-	key: Exclude<keyof ClewAppearanceSettings, 'edgeColorOverride'>;
+	// Excludes edgeColorOverride/nodeColorOverride (non-numeric string |
+	// null settings, their own color-picker UI instead of a slider) and
+	// showEdgeDirection (a boolean, its own toggle UI instead) - see
+	// renderAppearancePanel()'s "Nodes"/"Edges" sections.
+	key: Exclude<keyof ClewAppearanceSettings, 'edgeColorOverride' | 'nodeColorOverride' | 'showEdgeDirection'>;
 	name: string;
 	desc: string;
 	min: number;
@@ -78,9 +82,13 @@ interface AppearanceSliderSpec {
 	 * size and label LOD are cheap (repaint/refresh only), a layout restart
 	 * is inherently disruptive (repositions every node), so these are kept
 	 * separate rather than one "reapply everything" call that would restart
-	 * physics on every slider, including ones that don't need it.
+	 * physics on every slider, including ones that don't need it. 'edgeColor'
+	 * is EDGE_INTENSITY_SLIDER's own category (re-reads theme.defaultEdgeColor,
+	 * same as the edge-color picker next to it - see applyEdgeColorSetting()).
+	 * 'edgeArrow' is EDGE_ARROW_SIZE_SLIDER's own (re-registers the sized
+	 * arrow programs - see applyEdgeArrowSize()).
 	 */
-	apply: 'size' | 'label' | 'layout';
+	apply: 'size' | 'label' | 'layout' | 'edgeColor' | 'edgeArrow';
 }
 
 /**
@@ -94,39 +102,69 @@ interface AppearanceSliderSpec {
  * makes sense while watching the graph react, which a separate Settings
  * screen can't offer.
  */
-const APPEARANCE_SLIDER_GROUPS: { heading: string; sliders: AppearanceSliderSpec[] }[] = [
+/**
+ * Node-specific sliders, rendered in renderAppearancePanel()'s "Nodes"
+ * section right alongside the node-color picker - not part of
+ * APPEARANCE_SLIDER_GROUPS below, which is for topics that get their own
+ * separate heading. Grouping every node-related setting (color, all three
+ * size sliders) together, and every edge-related one (color, intensity)
+ * together under "Edges", is what user feedback specifically asked for -
+ * they were previously split across a shared "Colors" section and a
+ * separately-headed "Node size" group with nothing edge-specific at all.
+ */
+const NODE_SIZE_SLIDERS: AppearanceSliderSpec[] = [
 	{
-		heading: 'Node size',
-		sliders: [
-			{
-				key: 'nodeBaseSize',
-				name: 'Base node size',
-				desc: 'Size of a plain note with no links (degree 0).',
-				min: 0.5,
-				max: 12,
-				step: 0.1,
-				apply: 'size',
-			},
-			{
-				key: 'nodeImageBaseSize',
-				name: 'Cover-image node size',
-				desc: 'Size of a note with a cover image, at degree 0 - kept larger than a plain note so the image inside stays recognizable.',
-				min: 1,
-				max: 6,
-				step: 0.1,
-				apply: 'size',
-			},
-			{
-				key: 'nodeDegreeGrowth',
-				name: 'Hub growth',
-				desc: 'How much bigger a highly-linked note gets than one with few links.',
-				min: 0,
-				max: 2,
-				step: 0.1,
-				apply: 'size',
-			},
-		],
+		key: 'nodeBaseSize',
+		name: 'Base node size',
+		desc: 'Size of a plain note with no links (degree 0).',
+		min: 0.5,
+		max: 12,
+		step: 0.1,
+		apply: 'size',
 	},
+	{
+		key: 'nodeImageBaseSize',
+		name: 'Cover-image node size',
+		desc: 'Size of a note with a cover image, at degree 0 - kept larger than a plain note so the image inside stays recognizable.',
+		min: 1,
+		max: 12,
+		step: 0.1,
+		apply: 'size',
+	},
+	{
+		key: 'nodeDegreeGrowth',
+		name: 'Hub growth',
+		desc: 'How much bigger a highly-linked note gets than one with few links.',
+		min: 0,
+		max: 2,
+		step: 0.1,
+		apply: 'size',
+	},
+];
+
+/** Edge-specific slider, rendered in renderAppearancePanel()'s "Edges" section right alongside the edge-color picker - see NODE_SIZE_SLIDERS' docstring for why this isn't part of APPEARANCE_SLIDER_GROUPS below. */
+const EDGE_INTENSITY_SLIDER: AppearanceSliderSpec = {
+	key: 'edgeIntensity',
+	name: 'Edge intensity',
+	desc: 'How strongly edges stand out - lower is more muted. Ignored while a custom edge color above is set.',
+	min: 0,
+	max: 1,
+	step: 0.05,
+	apply: 'edgeColor',
+};
+
+/** Only meaningful (and only rendered in the Appearance panel) while ClewAppearanceSettings.showEdgeDirection is on. */
+const EDGE_ARROW_SIZE_SLIDER: AppearanceSliderSpec = {
+	key: 'edgeArrowSize',
+	name: 'Arrow size',
+	desc: 'Size of the direction arrowhead on edges.',
+	min: 0.5,
+	max: 5,
+	step: 0.5,
+	apply: 'edgeArrow',
+};
+
+const APPEARANCE_SLIDER_GROUPS: { heading: string; sliders: AppearanceSliderSpec[] }[] = [
 	{
 		heading: 'Physics (force layout)',
 		sliders: [
@@ -389,7 +427,9 @@ export class GraphPane {
 			hoverBackgroundColor: this.theme.backgroundColor,
 			labelRenderedSizeThreshold: appearance.labelSizeThreshold,
 			labelDensity: appearance.labelDensity,
+			edgeArrowSize: appearance.edgeArrowSize,
 		});
+		this.applyEdgeDirection();
 		this.setupNodeDragging();
 		this.setupNodeClick();
 		this.setupNodeHover();
@@ -423,19 +463,66 @@ export class GraphPane {
 		this.renderer.refresh();
 	}
 
-	/** The theme's edge color (with theme.ts's contrast-safety fallback already applied), unless the user picked an explicit override - see ClewAppearanceSettings.edgeColorOverride. */
+	/**
+	 * The theme's edge color (with theme.ts's contrast-safety fallback
+	 * already applied), unless the user picked an explicit override - see
+	 * ClewAppearanceSettings.edgeColorOverride - then blended toward the
+	 * background by edgeIntensity either way. Applied here (once, after
+	 * the override-or-default choice), not inside theme.ts's
+	 * defaultEdgeColor computation (an earlier version) - baked into
+	 * defaultEdgeColor, the intensity slider silently stopped doing
+	 * anything the moment an override was set, since this method would
+	 * then never even read defaultEdgeColor at all.
+	 */
 	private resolvedEdgeColor(): string {
-		return this.plugin.settings.appearance.edgeColorOverride ?? this.theme.defaultEdgeColor;
+		const base = this.plugin.settings.appearance.edgeColorOverride ?? this.theme.defaultEdgeColor;
+		return blendToward(base, this.theme.backgroundColor, this.plugin.settings.appearance.edgeIntensity);
+	}
+
+	/** The theme's default (non-cover-image) note color, unless the user picked an explicit override - see ClewAppearanceSettings.nodeColorOverride. */
+	private resolvedNodeColor(): string {
+		return this.plugin.settings.appearance.nodeColorOverride ?? this.theme.graphColor;
 	}
 
 	private applyEdgeColorSetting(): void {
 		// Re-reads theme.defaultEdgeColor (not just the override) - needed so
 		// an edgeIntensity slider change actually takes effect, since that
-		// only affects theme.ts's softenTowardBackground() computation, not
-		// resolvedEdgeColor()'s own edgeColorOverride ?? branch.
+		// only affects theme.ts's own blend-toward-background computation,
+		// not resolvedEdgeColor()'s own edgeColorOverride ?? branch.
 		this.theme = readThemeColors(this.containerEl, this.plugin.settings.appearance.edgeIntensity);
 		this.renderer?.setSetting('defaultEdgeColor', this.resolvedEdgeColor());
 		this.renderer?.refresh();
+	}
+
+	/**
+	 * Sets every edge's `type` attribute directly (same pattern as
+	 * paintVisualEncoding() setting node `color` - not a reducer, since
+	 * this needs to actually stick as the base attribute every other edge
+	 * reducer (hover, search result, path highlight, stagnation) spreads
+	 * `...attr` from and otherwise leaves alone), rather than installing a
+	 * permanent edgeReducer of its own. `undefined` (showEdgeDirection off,
+	 * or GitHub's own default) falls back to sigma's own `defaultEdgeType`
+	 * ('line') - see applyEdgeDefaults() in sigma's source.
+	 */
+	private applyEdgeDirection(): void {
+		if (!this.graph) return;
+		const { showEdgeDirection } = this.plugin.settings.appearance;
+		this.graph.forEachEdge((edge, attr) => {
+			const type = showEdgeDirection ? (attr.mutual ? 'doubleArrow' : 'arrow') : undefined;
+			this.graph!.setEdgeAttribute(edge, 'type', type);
+		});
+		this.renderer?.refresh();
+	}
+
+	/** Rebuilds the 'arrow'/'doubleArrow' edge programs at the new size and re-registers them - see createArrowEdgePrograms()'s docstring for why sigma's own edgeProgramClasses diffing makes this a live update, not a renderer recreation. */
+	private applyEdgeArrowSize(): void {
+		if (!this.renderer) return;
+		const current = this.renderer.getSetting('edgeProgramClasses');
+		this.renderer.setSetting('edgeProgramClasses', {
+			...current,
+			...createArrowEdgePrograms(this.plugin.settings.appearance.edgeArrowSize),
+		});
+		this.renderer.refresh();
 	}
 
 	/** Re-runs whichever layout is currently active with the latest physics/spacing settings - a no-op for radial if no focus note has been chosen yet this session (nothing to re-center on). */
@@ -478,7 +565,37 @@ export class GraphPane {
 		this.appearancePanelEl.empty();
 		this.appearancePanelEl.createEl('h4', { text: 'Graph appearance' });
 
-		new Setting(this.appearancePanelEl).setName('Colors').setHeading();
+		// Grouped by topic (Nodes, then Edges) rather than by control type
+		// (a shared "Colors" section plus a separately-headed "Node size"
+		// group, the previous layout) - user feedback: every node-related
+		// setting should sit together, likewise every edge-related one.
+		new Setting(this.appearancePanelEl).setName('Nodes').setHeading();
+		new Setting(this.appearancePanelEl)
+			.setName('Node color')
+			.setDesc(
+				'Uses the current theme\'s color by default. Pick a color to override it - doesn\'t affect cover-image notes or a chosen visual-encoding color.',
+			)
+			.addColorPicker((picker) =>
+				picker.setValue(toHexColor(this.resolvedNodeColor())).onChange((value) => {
+					this.plugin.settings.appearance.nodeColorOverride = value;
+					void this.plugin.saveSettings();
+					this.applyNodeSizeSettings();
+				}),
+			)
+			.addExtraButton((button) =>
+				button
+					.setIcon('rotate-ccw')
+					.setTooltip('Reset to theme color')
+					.onClick(() => {
+						this.plugin.settings.appearance.nodeColorOverride = null;
+						void this.plugin.saveSettings();
+						this.applyNodeSizeSettings();
+						this.renderAppearancePanel();
+					}),
+			);
+		for (const spec of NODE_SIZE_SLIDERS) this.renderAppearanceSlider(spec);
+
+		new Setting(this.appearancePanelEl).setName('Edges').setHeading();
 		new Setting(this.appearancePanelEl)
 			.setName('Edge color')
 			.setDesc(
@@ -502,58 +619,28 @@ export class GraphPane {
 						this.renderAppearancePanel();
 					}),
 			);
-
-		// Not part of APPEARANCE_SLIDER_GROUPS below - that loop's
-		// AppearanceSliderSpec['apply'] categories (size/label/layout) don't
-		// cover "re-read the theme's edge color", and this belongs next to
-		// the edge-color picker it directly affects anyway, not in a later
-		// separately-headed group.
-		{
-			const debouncedApplyEdgeIntensity = debounce(() => {
-				void this.plugin.saveSettings();
-				this.applyEdgeColorSetting();
-			}, 250);
-			new Setting(this.appearancePanelEl)
-				.setName('Edge intensity')
-				.setDesc('How strongly edges stand out - lower is more muted. Ignored while a custom edge color above is set.')
-				.addSlider((slider) =>
-					slider
-						.setLimits(0, 1, 0.05)
-						.setValue(this.plugin.settings.appearance.edgeIntensity)
-						.setDynamicTooltip()
-						.onChange((value) => {
-							this.plugin.settings.appearance.edgeIntensity = value;
-							debouncedApplyEdgeIntensity();
-						}),
-				);
-		}
+		this.renderAppearanceSlider(EDGE_INTENSITY_SLIDER);
+		new Setting(this.appearancePanelEl)
+			.setName('Show edge direction')
+			.setDesc(
+				'Draws an arrowhead on each edge pointing from the linking note to the note it links to. A note that links both ways gets a double-headed arrow instead.',
+			)
+			.addToggle((toggle) =>
+				toggle.setValue(this.plugin.settings.appearance.showEdgeDirection).onChange((value) => {
+					this.plugin.settings.appearance.showEdgeDirection = value;
+					void this.plugin.saveSettings();
+					this.applyEdgeDirection();
+					// Arrow size only makes sense - and is only shown - while
+					// this is on, so the panel needs a full re-render to
+					// show/hide that slider, not just a live-reapply.
+					this.renderAppearancePanel();
+				}),
+			);
+		if (this.plugin.settings.appearance.showEdgeDirection) this.renderAppearanceSlider(EDGE_ARROW_SIZE_SLIDER);
 
 		for (const group of APPEARANCE_SLIDER_GROUPS) {
 			new Setting(this.appearancePanelEl).setName(group.heading).setHeading();
-
-			for (const spec of group.sliders) {
-				// A fresh debouncer per slider (not shared) - each one only
-				// ever needs to coalesce that single slider's own rapid
-				// 'input' events, not compete with other sliders' timers.
-				const debouncedApply = debounce(() => {
-					void this.plugin.saveSettings();
-					this.applyAppearanceCategory(spec.apply);
-				}, 250);
-
-				new Setting(this.appearancePanelEl)
-					.setName(spec.name)
-					.setDesc(spec.desc)
-					.addSlider((slider) =>
-						slider
-							.setLimits(spec.min, spec.max, spec.step)
-							.setValue(this.plugin.settings.appearance[spec.key])
-							.setDynamicTooltip()
-							.onChange((value) => {
-								this.plugin.settings.appearance[spec.key] = value;
-								debouncedApply();
-							}),
-					);
-			}
+			for (const spec of group.sliders) this.renderAppearanceSlider(spec);
 		}
 
 		new Setting(this.appearancePanelEl)
@@ -565,15 +652,44 @@ export class GraphPane {
 					this.applyEdgeColorSetting();
 					this.applyNodeSizeSettings();
 					this.applyLabelSettings();
+					this.applyEdgeDirection();
+					this.applyEdgeArrowSize();
 					this.reapplyActiveLayout();
 					this.renderAppearancePanel();
 				}),
 			);
 	}
 
+	/** Renders one Appearance-panel slider from its spec - shared by the "Nodes"/"Edges" sections above and the APPEARANCE_SLIDER_GROUPS loop, all of which need the identical Setting+addSlider+debounced-apply wiring. */
+	private renderAppearanceSlider(spec: AppearanceSliderSpec): void {
+		// A fresh debouncer per slider (not shared) - each one only ever
+		// needs to coalesce that single slider's own rapid 'input' events,
+		// not compete with other sliders' timers.
+		const debouncedApply = debounce(() => {
+			void this.plugin.saveSettings();
+			this.applyAppearanceCategory(spec.apply);
+		}, 250);
+
+		new Setting(this.appearancePanelEl)
+			.setName(spec.name)
+			.setDesc(spec.desc)
+			.addSlider((slider) =>
+				slider
+					.setLimits(spec.min, spec.max, spec.step)
+					.setValue(this.plugin.settings.appearance[spec.key])
+					.setDynamicTooltip()
+					.onChange((value) => {
+						this.plugin.settings.appearance[spec.key] = value;
+						debouncedApply();
+					}),
+			);
+	}
+
 	private applyAppearanceCategory(category: AppearanceSliderSpec['apply']): void {
 		if (category === 'size') this.applyNodeSizeSettings();
 		else if (category === 'label') this.applyLabelSettings();
+		else if (category === 'edgeColor') this.applyEdgeColorSetting();
+		else if (category === 'edgeArrow') this.applyEdgeArrowSize();
 		else this.reapplyActiveLayout();
 	}
 
@@ -715,7 +831,7 @@ export class GraphPane {
 
 		const colorByNode = this.colorProperty ? colorByCategory(this.propertyValues(this.colorProperty, toStringValue)) : null;
 		graph.forEachNode((node, attr) => {
-			const defaultColor = attr.type === 'image' ? this.theme.imageNodeColor : this.theme.graphColor;
+			const defaultColor = attr.type === 'image' ? this.theme.imageNodeColor : this.resolvedNodeColor();
 			graph.setNodeAttribute(node, 'color', colorByNode?.get(node) ?? defaultColor);
 		});
 	}
@@ -1038,8 +1154,45 @@ export class GraphPane {
 	 * one more paint against the now-idle camera state.
 	 */
 	private async resetCameraAndRefresh(): Promise<void> {
+		const bbox = this.fittedBBox();
+		if (bbox) this.renderer?.setCustomBBox(bbox);
 		await this.renderer?.getCamera().animatedReset();
 		this.renderer?.refresh();
+	}
+
+	/**
+	 * The bounding box "Reset view"'s camera.animatedReset() fits to -
+	 * sigma's own default (fitting to the graph's raw node extent, a fixed
+	 * 30px stagePadding) zooms in on a sparse graph so tightly it fills
+	 * almost the entire pane: a settled few-node graph naturally spans only
+	 * a handful of world units (measured directly: ~5-20 for 2-5 notes at
+	 * default gravity/scalingRatio, vs. 25-45+ for 10+), and sigma's padding
+	 * is a fixed pixel amount, negligible against a typical pane width
+	 * regardless of how small that world-space extent is. Flooring the
+	 * fitted extent at MIN_FIT_EXTENT leaves comfortable empty space around
+	 * a sparse graph instead, while barely affecting anything with enough
+	 * notes to already reach this scale on its own - large graphs need no
+	 * special-casing, since "fit everything" is already the right behavior
+	 * there once there's enough content to naturally exceed the floor.
+	 */
+	private fittedBBox(): { x: [number, number]; y: [number, number] } | null {
+		if (!this.graph || this.graph.order === 0) return null;
+		let xMin = Infinity;
+		let xMax = -Infinity;
+		let yMin = Infinity;
+		let yMax = -Infinity;
+		this.graph.forEachNode((_node, attr) => {
+			const x = attr.x as number;
+			const y = attr.y as number;
+			if (x < xMin) xMin = x;
+			if (x > xMax) xMax = x;
+			if (y < yMin) yMin = y;
+			if (y > yMax) yMax = y;
+		});
+		const centerX = (xMin + xMax) / 2;
+		const centerY = (yMin + yMax) / 2;
+		const half = Math.max(xMax - xMin, yMax - yMin, MIN_FIT_EXTENT) / 2;
+		return { x: [centerX - half, centerX + half], y: [centerY - half, centerY + half] };
 	}
 
 	/**
@@ -1233,7 +1386,13 @@ export class GraphPane {
 
 		const nodeReducer = (n: string, attr: Attributes) => {
 			const base = previousNodeReducer ? previousNodeReducer(n, attr) : attr;
-			if (n === hoveredNode) return { ...base, color: this.theme.matchColor, image: undefined, zIndex: 2, forceLabel: true };
+			// Same reasoning as the incident-edge color below: a chosen node
+			// color override shouldn't get silently replaced by the theme's
+			// accent color the moment the node is hovered.
+			if (n === hoveredNode) {
+				const color = this.plugin.settings.appearance.nodeColorOverride ?? this.theme.matchColor;
+				return { ...base, color, image: undefined, zIndex: 2, forceLabel: true };
+			}
 			if (neighbors.has(n)) return { ...base, forceLabel: true };
 			// A cover-image node (type: 'image', see vaultGraph.ts) ignores
 			// `color` entirely once its texture has loaded - @sigma/node-image's
@@ -1254,7 +1413,16 @@ export class GraphPane {
 		const edgeReducer = (e: string, attr: Attributes) => {
 			if (incidentEdges.has(e)) {
 				const base = previousEdgeReducer ? previousEdgeReducer(e, attr) : attr;
-				return { ...base, color: this.theme.matchColor, size: 2, zIndex: 2 };
+				// If the user picked a custom edge color, honor it for the
+				// highlighted neighbor edges too instead of always forcing
+				// the theme's accent color - otherwise a deliberately chosen
+				// edge color would still get silently overridden the moment
+				// you hover, which is exactly the kind of "override doesn't
+				// actually apply everywhere" gap edgeColorOverride exists to
+				// avoid. Falls back to the usual accent color when no
+				// override is set, unchanged from before.
+				const color = this.plugin.settings.appearance.edgeColorOverride ?? this.theme.matchColor;
+				return { ...base, color, size: 2, zIndex: 2 };
 			}
 			// Color alone reads as barely-there on an edge: dimEdgeColor
 			// (--text-faint) and the default edge color (--graph-line) are

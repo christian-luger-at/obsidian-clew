@@ -49,24 +49,54 @@ export interface ClewAppearanceSettings {
 	/**
 	 * null = auto (the current theme's --graph-line, with an automatic
 	 * contrast-safety fallback if that's too hard to see against the
-	 * background - see theme.ts's ensureEdgeContrast()); otherwise a
+	 * background - see theme.ts's ensureContrast()); otherwise a
 	 * user-picked hex color that overrides both, for the rare theme where
 	 * even the corrected color still doesn't look right to a given user.
+	 * Also used (instead of the theme's accent color) for the highlighted
+	 * edges to a hovered node's neighbors, so a chosen edge color doesn't
+	 * get silently overridden the moment you hover - see GraphPane's
+	 * setupNodeHover().
 	 */
 	edgeColorOverride: string | null;
 	/**
-	 * How much of the theme's edge color survives theme.ts's
-	 * softenTowardBackground() blend - 1 = unsoftened theme color, lower =
-	 * more muted (search for its most-softened result that still clears
-	 * softenTowardBackground()'s own separate, much lower contrast floor -
-	 * see EDGE_SOFTEN_MIN_CONTRAST's docstring - so this is a ceiling on the
-	 * softening, not a guaranteed exact result). User feedback: 0.6
-	 * (theme.ts's own original default) still read as too prominent, 0.45
-	 * better but asked to be user-tunable rather than another guessed
-	 * constant - ignored entirely when edgeColorOverride is set, same as
-	 * every other edge-color computation in theme.ts.
+	 * How much of the *resolved* edge color (edgeColorOverride if set,
+	 * otherwise the theme's) survives GraphPane's resolvedEdgeColor()
+	 * blend toward the background - 1 = unblended, 0 = fully the
+	 * background (a deliberate, user-dialed choice, not clamped to any
+	 * minimum-contrast floor the way the raw theme color is via
+	 * ensureContrast()). User feedback: 0.6 (the original hardcoded
+	 * default) still read as too prominent, 0.45 better but asked to be
+	 * user-tunable rather than another guessed constant. Applied uniformly
+	 * to whichever color is active - an earlier version baked this into
+	 * theme.ts's defaultEdgeColor computation directly, which meant it
+	 * silently stopped doing anything the moment edgeColorOverride was
+	 * set (reported: "edge intensity doesn't work anymore once you set a
+	 * color").
 	 */
 	edgeIntensity: number;
+	/**
+	 * null = auto (the current theme's --graph-node); otherwise a
+	 * user-picked hex color that overrides the default (non-cover-image)
+	 * note color - same logic as edgeColorOverride, including that it's
+	 * also used (instead of the theme's accent color) for the hovered node
+	 * itself. Doesn't affect cover-image nodes (theme.ts's imageNodeColor,
+	 * a deliberately distinct accent) or a chosen visual-encoding color
+	 * (visualEncoding.ts), same as edgeColorOverride never affecting
+	 * search/path/stagnation edge coloring.
+	 */
+	nodeColorOverride: string | null;
+	/**
+	 * Whether edges show an arrowhead pointing from the linking note to the
+	 * note it links to - off by default, since a fully-arrowed vault-scale
+	 * graph is a lot more visual noise than most people want by default,
+	 * and most vaults have plenty of mutual/circular links anyway. A
+	 * mutual link (both notes link to each other - vaultGraph.ts's
+	 * `mutual` edge attribute) gets a double-headed arrow instead of an
+	 * arbitrary single direction.
+	 */
+	showEdgeDirection: boolean;
+	/** Scales sigma's own default arrowhead length/wideness (both, together - see renderer.ts's createArrowEdgePrograms()) - 1 = sigma's own default size. Only visible while showEdgeDirection is on. */
+	edgeArrowSize: number;
 }
 
 export const DEFAULT_APPEARANCE_SETTINGS: ClewAppearanceSettings = {
@@ -83,6 +113,9 @@ export const DEFAULT_APPEARANCE_SETTINGS: ClewAppearanceSettings = {
 	hierarchicalRankSpacing: 80,
 	edgeColorOverride: null,
 	edgeIntensity: 0.45,
+	nodeColorOverride: null,
+	showEdgeDirection: false,
+	edgeArrowSize: 1,
 };
 
 export interface ClewSettings {

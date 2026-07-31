@@ -10,7 +10,7 @@ export interface ThemeColors {
 	matchColor: string;
 	freshColorRgb: [number, number, number];
 	staleColorRgb: [number, number, number];
-	/** `--background-primary` - the graph canvas's own background. Exposed (not just used internally for ensureEdgeContrast) so GraphPane can pass it to renderer.ts's hover-label background fix - see readThemeColors()'s docstring. */
+	/** `--background-primary` - the graph canvas's own background. Exposed (not just used internally for ensureContrast) so GraphPane can pass it to renderer.ts's hover-label background fix - see readThemeColors()'s docstring. */
 	backgroundColor: string;
 }
 
@@ -24,31 +24,68 @@ function cssVarRgb(computed: CSSStyleDeclaration, name: string, fallback: [numbe
 }
 
 /**
- * Parses an `rgb()`/`rgba()` string (what cssVar's probe-based resolution
- * always produces) or a `#rgb`/`#rrggbb` hex string into a [r, g, b] triple -
- * null if it's neither.
+ * Lazily-created, reused 1x1 canvas 2D context backing parseRgbString()
+ * below - reused rather than a fresh canvas per call since this can run
+ * several times per readThemeColors() call, and canvas creation isn't free.
+ */
+let colorProbeContext: CanvasRenderingContext2D | null = null;
+
+/**
+ * Parses *any* valid CSS color string into an [r, g, b] triple - null if
+ * `value` isn't a valid CSS color at all. Originally a regex matching only
+ * `rgb()`/`rgba()` (what cssVar's probe-based resolution was assumed to
+ * always produce) plus `#rgb`/`#rrggbb` hex (added after
+ * ClewAppearanceSettings.edgeColorOverride, straight from Obsidian's native
+ * `Setting.addColorPicker()` - an `<input type="color">`, always hex -
+ * turned out to need it too).
  *
- * Hex support was added after blendToward() (which this backs) started
- * silently no-oping on the graph's edge color: ensureEdgeContrast() below
- * falls back to a hardcoded hex string ('#4b5563'/'#9ca3af') for a
- * low-contrast theme, and ClewAppearanceSettings.edgeColorOverride comes
- * straight from Obsidian's native `Setting.addColorPicker()`
- * (`<input type="color">`), which is always hex too - both are real values
- * `this.resolvedEdgeColor()` (graphPane.ts) can hand to blendToward for the
- * hover-dim fade, and neither ever went through cssVar's rgb()-normalizing
- * probe element. Node colors never hit this gap (always cssVar-resolved
- * rgb()), which is why only edges silently failed to dim.
+ * Rewritten to this canvas-based approach after a real-world report of
+ * still-black node/edge colors even on a fresh, correctly-timed
+ * recomputation, on a theme this session had no reason to suspect: turned
+ * out `getComputedStyle().color` does NOT always normalize to `rgb()`/
+ * `rgba()` the way this file's own probe-element trick assumed - a user's
+ * community theme defined its `--graph-*` variables via `oklch()`, and a
+ * recent-enough Chromium (Obsidian is Electron/Chromium) serializes
+ * `.color` back out in whatever modern CSS Color Module syntax the
+ * declaration used, not always legacy `rgb()`. The regex silently failed
+ * to match, `ensureContrast()`/`blendToward()` passed the untouched
+ * `oklch(...)` string straight through, and sigma's own color parser -
+ * which only understands `#hex`/`rgb()`/`rgba()` - fell back to its own
+ * hardcoded opaque black for anything else, rendering as solid black
+ * regardless of what the theme's colors actually were.
+ *
+ * A regex can only ever cover the color syntaxes it was written for
+ * (already wrong twice - rgb-only, then rgb-or-hex); painting to a canvas
+ * and reading the rasterized pixel back is the browser's own ground-truth
+ * color resolution instead, so it's correct for oklch/lab/lch/color()/
+ * named colors/anything CSS-valid, present or future, with no further
+ * cases to special-case here.
  */
 function parseRgbString(value: string): [number, number, number] | null {
-	const rgbMatch = value.match(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/);
-	if (rgbMatch) return [Number(rgbMatch[1]), Number(rgbMatch[2]), Number(rgbMatch[3])];
-	const hexMatch = value.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
-	if (hexMatch) {
-		const hex = hexMatch[1]!;
-		const full = hex.length === 3 ? hex.replace(/(.)/g, '$1$1') : hex;
-		return [parseInt(full.slice(0, 2), 16), parseInt(full.slice(2, 4), 16), parseInt(full.slice(4, 6), 16)];
+	if (!colorProbeContext) {
+		// Obsidian's global createEl() (not document.createElement()) - this
+		// canvas is a permanent, detached, module-level utility buffer,
+		// deliberately never appended to any document.
+		const canvas = createEl('canvas');
+		canvas.width = 1;
+		canvas.height = 1;
+		const ctx = canvas.getContext('2d', { willReadFrequently: true });
+		if (!ctx) return null;
+		colorProbeContext = ctx;
 	}
-	return null;
+	const ctx = colorProbeContext;
+	// fillStyle silently no-ops (keeps its previous value) when assigned an
+	// unparseable string, rather than throwing - set a recognizable
+	// sentinel first so an invalid `value` is detectable as "unchanged"
+	// instead of misread as that sentinel's own color.
+	const UNPARSEABLE_SENTINEL = '#010203';
+	ctx.fillStyle = UNPARSEABLE_SENTINEL;
+	ctx.fillStyle = value;
+	if (ctx.fillStyle === UNPARSEABLE_SENTINEL) return null;
+	ctx.clearRect(0, 0, 1, 1);
+	ctx.fillRect(0, 0, 1, 1);
+	const pixel = ctx.getImageData(0, 0, 1, 1).data;
+	return [pixel[0]!, pixel[1]!, pixel[2]!];
 }
 
 /**
@@ -80,18 +117,26 @@ const DIM_FACTOR = 0.35;
  * GraphPane actually passes - this only matters for a caller that doesn't).
  *
  * User feedback: edges at the theme's raw `--graph-line` intensity read as
- * too prominent/heavy against the rest of the graph, so `defaultEdgeColor`
- * below blends `--graph-line` toward the background by this much (see
- * blendToward() - 1 = unblended, 0 = fully the background). Deliberately a
- * *literal* blend, not clamped to any minimum-contrast floor the way
- * ensureEdgeContrast() protects the raw theme color: an earlier version
- * did clamp this, meant to protect a hardcoded constant from being *too*
- * washed out on an unlucky theme - once it became a user-facing 0-1
- * slider, that same clamp fought the user's own explicit choice instead
- * (reported: edges still visible at the slider's 0 end, since the clamp
- * silently pulled it back up to whatever the floor demanded). A setting
- * the user is dialing on purpose, all the way to "off" if they want, isn't
- * the accidental-invisibility risk ensureEdgeContrast() exists for.
+ * too prominent/heavy against the rest of the graph - GraphPane's
+ * resolvedEdgeColor() blends *whichever* color it resolves to (the theme's
+ * or the user's edgeColorOverride) toward the background by this much (see
+ * blendToward() - 1 = unblended, 0 = fully the background). NOT applied
+ * here to defaultEdgeColor directly (an earlier version did): baking it in
+ * here meant it silently stopped doing anything the moment
+ * edgeColorOverride was set, since resolvedEdgeColor() then uses the
+ * override verbatim and never even reads defaultEdgeColor - reported as
+ * "edge intensity doesn't work anymore once you set a color". Applying it
+ * once, after the override-or-default choice is already made, is what
+ * makes it affect either one. Deliberately a *literal* blend, not clamped
+ * to any minimum-contrast floor the way ensureContrast() protects the
+ * raw theme color: an earlier version did clamp this, meant to protect a
+ * hardcoded constant from being *too* washed out on an unlucky theme -
+ * once it became a user-facing 0-1 slider, that same clamp fought the
+ * user's own explicit choice instead (reported: edges still visible at
+ * the slider's 0 end, since the clamp silently pulled it back up to
+ * whatever the floor demanded). A setting the user is dialing on purpose,
+ * all the way to "off" if they want, isn't the accidental-invisibility
+ * risk ensureContrast() exists for.
  */
 const EDGE_INTENSITY_FACTOR = 0.45;
 
@@ -136,37 +181,57 @@ function contrastRatio(a: [number, number, number], b: [number, number, number])
 
 /**
  * WCAG 1.4.11 ("non-text contrast") recommends 3:1 for graphical/UI content
- * against its background - edges are exactly that (informational graphics,
- * not decoration), so this reuses that number rather than picking one by
- * eye. Not WCAG's higher 4.5:1 text threshold - a thin line doesn't need to
- * be as legible as text, and requiring that much would make edges look
- * heavier than most themes intend.
+ * against its background - edges and node fills are exactly that
+ * (informational graphics, not decoration), so this reuses that number
+ * rather than picking one by eye. Not WCAG's higher 4.5:1 text threshold -
+ * a thin line or a small dot doesn't need to be as legible as text, and
+ * requiring that much would make the graph look heavier than most themes
+ * intend.
  */
-const MIN_EDGE_CONTRAST = 3;
+const MIN_CONTRAST = 3;
 
 /**
- * User feedback: a theme-derived edge color ("--graph-line") can render
- * with too little contrast against the background to actually see - a real
- * risk this file's own docstring already flagged (unlike the "Foundation"
- * colors every theme has to get right to be usable at all, `--graph-line`
- * is optional and easy for a theme to leave under-tuned). Rather than trust
- * the theme unconditionally, this measures the actual rendered contrast
- * against `--background-primary` and substitutes a guaranteed-visible
- * neutral gray - picked light or dark based on the background's own
- * luminance, not a single fixed color, so it stays visible against both
- * light and dark themes - if the theme's own value falls short.
+ * User feedback: a theme-derived color ("--graph-line", "--graph-node", …)
+ * can render with too little contrast against the background to actually
+ * see - a real risk this file's own docstring already flagged (unlike the
+ * "Foundation" colors every theme has to get right to be usable at all,
+ * the `--graph-*` variables are optional and easy for a theme to leave
+ * under-tuned). Originally edge-only (ensureEdgeContrast) - generalized on
+ * request to also guard the node-color defaults (graphColor,
+ * imageNodeColor, matchColor below), which had no contrast check at all
+ * despite the identical risk. Rather than trust the theme unconditionally,
+ * this measures the actual rendered contrast against `--background-primary`
+ * and substitutes a guaranteed-visible neutral gray - picked light or dark
+ * based on the background's own luminance, not a single fixed color, so it
+ * stays visible against both light and dark themes - if the theme's own
+ * value falls short.
  *
  * Only ever loosens what the theme already provides (never overrides a
  * theme color that already has enough contrast), and is fully bypassed by
- * GraphPane when the user sets an explicit edge-color override
- * (ClewAppearanceSettings.edgeColorOverride) - this is a safety net for the
- * "no override set" default path only.
+ * GraphPane when the user sets an explicit color override
+ * (ClewAppearanceSettings.edgeColorOverride/nodeColorOverride) - this is a
+ * safety net for the "no override set" default path only.
+ *
+ * Always returns a `rgb(...)` string reconstructed from the already-parsed
+ * triple, never the original `color` argument verbatim - even on the
+ * "contrast is already fine" path (an earlier version returned `color`
+ * itself there). Contrast and *renderability* are separate concerns: a
+ * theme's `--graph-node`/`--graph-line` can have perfectly good contrast
+ * while still being a syntax sigma's own color parser can't render at all
+ * (a real report - a community theme's oklch() colors measured as
+ * high-contrast, so this function correctly left them untouched, but
+ * sigma's parser only understands `#hex`/`rgb()`/`rgba()` and fell back to
+ * its own hardcoded black regardless of the contrast check ever having
+ * passed). parseRgbString() above already resolves *any* valid CSS color
+ * to concrete RGB numbers via canvas rasterization - reusing that result
+ * to always rebuild a plain `rgb()` string, instead of only doing so on
+ * the "contrast failed" fallback path, makes every return sigma-safe.
  */
-function ensureEdgeContrast(edgeColor: string, backgroundColor: string): string {
-	const edgeRgb = parseRgbString(edgeColor);
+function ensureContrast(color: string, backgroundColor: string): string {
+	const colorRgb = parseRgbString(color);
 	const backgroundRgb = parseRgbString(backgroundColor);
-	if (!edgeRgb || !backgroundRgb) return edgeColor;
-	if (contrastRatio(edgeRgb, backgroundRgb) >= MIN_EDGE_CONTRAST) return edgeColor;
+	if (!colorRgb || !backgroundRgb) return color;
+	if (contrastRatio(colorRgb, backgroundRgb) >= MIN_CONTRAST) return `rgb(${colorRgb[0]}, ${colorRgb[1]}, ${colorRgb[2]})`;
 	return relativeLuminance(backgroundRgb) > 0.5 ? '#4b5563' : '#9ca3af';
 }
 
@@ -218,19 +283,19 @@ function ensureEdgeContrast(edgeColor: string, backgroundColor: string): string 
  * Obsidian version, or in principle a theme that doesn't define Obsidian's
  * own documented variables - never renders with a missing/invalid color.
  *
- * `defaultEdgeColor` additionally goes through ensureEdgeContrast() below -
- * unlike the "Foundation" colors every theme has to get right to be usable
- * at all, `--graph-line` is easy for a theme to leave under-tuned, and a
- * low-contrast edge color is a real (reported) failure mode - then blended
- * toward the background by `edgeIntensity` (user-tunable - see
- * ClewAppearanceSettings.edgeIntensity, the caller-supplied value GraphPane
- * always passes; EDGE_INTENSITY_FACTOR only backs the parameter default for
- * a caller that doesn't), toning down a raw `--graph-line` that reads as
- * too prominent/heavy without undoing ensureEdgeContrast()'s guarantee on
- * the *unblended* color. GraphPane layers a user-settable override on top
- * of both (see ClewAppearanceSettings.edgeColorOverride)
- * for the rare case even the corrected/softened color still doesn't look
- * right to a given user.
+ * `graphColor`, `imageNodeColor`, `defaultEdgeColor`, and `matchColor`
+ * additionally go through ensureContrast() below - unlike the
+ * "Foundation" colors every theme has to get right to be usable at all,
+ * the `--graph-*` variables are easy for a theme to leave under-tuned,
+ * and a too-low-contrast color is a real (reported) failure mode, first
+ * found on edges and then generalized to nodes too. `defaultEdgeColor` is
+ * deliberately *not* also blended toward the background here for
+ * `edgeIntensity` (unlike an earlier version) - GraphPane's
+ * resolvedEdgeColor() does that once, after picking between this and
+ * edgeColorOverride, so the setting actually affects either one instead
+ * of only the theme default. `dimEdgeColor` below still reads
+ * `edgeIntensity` directly (for its own, separate "never dim to something
+ * more prominent than the resting intensity" floor).
  */
 export function readThemeColors(referenceEl: HTMLElement, edgeIntensity: number = EDGE_INTENSITY_FACTOR): ThemeColors {
 	const computed = getComputedStyle(referenceEl);
@@ -244,18 +309,18 @@ export function readThemeColors(referenceEl: HTMLElement, edgeIntensity: number 
 		return getComputedStyle(probe).color || fallback;
 	};
 
-	// Resolved first (not inline below) since ensureEdgeContrast() also
+	// Resolved first (not inline below) since ensureContrast() also
 	// needs it - computed once, not twice.
 	const backgroundColor = cssVar('--background-primary', '#ffffff');
 
 	const colors: ThemeColors = {
-		graphColor: cssVar('--graph-node', '#7c3aed'),
+		graphColor: ensureContrast(cssVar('--graph-node', '#7c3aed'), backgroundColor),
 		// Obsidian's graph doesn't have a "note with a cover image" concept
 		// of its own - --graph-node-attachment (its color for non-note
 		// files, e.g. images/PDFs attached in the vault) is the closest
 		// existing semantic match for "this node represents visual/media
 		// content", reused here rather than a generic accent color.
-		imageNodeColor: cssVar('--graph-node-attachment', '#f59e0b'),
+		imageNodeColor: ensureContrast(cssVar('--graph-node-attachment', '#f59e0b'), backgroundColor),
 		// sigma.js's own default labelColor is a hardcoded '#000' (see
 		// settings.ts in the sigma package) - never overridden before this,
 		// so every node label rendered as plain black text regardless of
@@ -263,9 +328,16 @@ export function readThemeColors(referenceEl: HTMLElement, edgeIntensity: number 
 		// issue #9's forceLabel on neighbor nodes, which shows labels that
 		// otherwise wouldn't render at that zoom level at all).
 		labelColor: cssVar('--graph-text', '#dcddde'),
-		defaultEdgeColor: blendToward(ensureEdgeContrast(cssVar('--graph-line', '#888888'), backgroundColor), backgroundColor, edgeIntensity),
-		primaryPathColor: cssVar('--color-green', '#22c55e'),
-		altPathColor: cssVar('--color-yellow', '#eab308'),
+		defaultEdgeColor: ensureContrast(cssVar('--graph-line', '#888888'), backgroundColor),
+		// ensureContrast() here isn't primarily for its contrast-safety
+		// fallback (--color-green/--color-yellow are Obsidian "Foundation"
+		// variables every theme has to get right) - it's what normalizes
+		// the result to a sigma-renderable rgb() string. Same latent risk
+		// as graphColor/defaultEdgeColor: these feed WebGL node/edge color
+		// attributes directly (applyHighlight() in graphPane.ts) and
+		// sigma's own color parser doesn't understand oklch()/lab()/etc.
+		primaryPathColor: ensureContrast(cssVar('--color-green', '#22c55e'), backgroundColor),
+		altPathColor: ensureContrast(cssVar('--color-yellow', '#eab308'), backgroundColor),
 		dimNodeColor: blendToward(cssVar('--text-faint', '#4b5563'), backgroundColor, DIM_FACTOR),
 		// min(DIM_FACTOR, edgeIntensity), not DIM_FACTOR alone: a low
 		// edgeIntensity setting can already put the *resting* edge color
@@ -280,7 +352,7 @@ export function readThemeColors(referenceEl: HTMLElement, edgeIntensity: number 
 		// "this is the node currently being interacted with" - the same
 		// concept as Clew's hover-highlight (#9), search match, and
 		// stagnation-cluster focus, all of which reuse this one color.
-		matchColor: cssVar('--graph-node-focused', '#22c55e'),
+		matchColor: ensureContrast(cssVar('--graph-node-focused', '#22c55e'), backgroundColor),
 		freshColorRgb: cssVarRgb(computed, '--color-blue-rgb', [59, 130, 246]),
 		staleColorRgb: cssVarRgb(computed, '--color-red-rgb', [239, 68, 68]),
 		backgroundColor,

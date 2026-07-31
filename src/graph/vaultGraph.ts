@@ -70,7 +70,20 @@ export function buildVaultGraph(app: App, files: TFile[], options: BuildVaultGra
 		for (const targetPath of Object.keys(targets)) {
 			if (targetPath === sourcePath) continue;
 			if (!nodePaths.has(targetPath)) continue;
-			if (graph.hasEdge(sourcePath, targetPath)) continue;
+			if (graph.hasEdge(sourcePath, targetPath)) {
+				// Undirected only: hasEdge(source, target) matches regardless
+				// of which direction created the edge, so reaching this on a
+				// *second* iteration (the other note's own resolvedLinks
+				// entry) means both notes link to each other - stamp that
+				// instead of silently dropping it, so GraphPane's arrow
+				// rendering (showEdgeDirection) can draw a double-headed
+				// arrow rather than an arbitrary single direction. Directed
+				// (pathfinding's search graph) never hits this branch: there,
+				// A->B and B->A are distinct edges, so hasEdge(source,
+				// target) only ever matches its own exact direction.
+				graph.setEdgeAttribute(sourcePath, targetPath, 'mutual', true);
+				continue;
+			}
 			graph.addEdge(sourcePath, targetPath);
 		}
 	}

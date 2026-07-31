@@ -1,7 +1,13 @@
 import Graph from 'graphology';
 import Sigma from 'sigma';
 import { NodeImageProgram } from '@sigma/node-image';
-import { drawDiscNodeLabel, NodeHoverDrawingFunction } from 'sigma/rendering';
+import {
+	drawDiscNodeLabel,
+	NodeHoverDrawingFunction,
+	createEdgeArrowProgram,
+	createEdgeDoubleArrowProgram,
+	DEFAULT_EDGE_ARROW_HEAD_PROGRAM_OPTIONS,
+} from 'sigma/rendering';
 import { GeneratedGraph } from './generateGraph';
 
 const GRAPH_COLOR = '#7c3aed';
@@ -65,6 +71,33 @@ export function createNodeHoverDrawer(backgroundColor: string): NodeHoverDrawing
 	};
 }
 
+/**
+ * Builds the 'arrow'/'doubleArrow' edge programs GraphPane registers for
+ * ClewAppearanceSettings.showEdgeDirection - a single-headed arrow for a
+ * one-way link, a double-headed one for a mutual link (see vaultGraph.ts's
+ * `mutual` edge attribute). Both are sigma's own built-ins
+ * (createEdgeArrowProgram/createEdgeDoubleArrowProgram from 'sigma/rendering'),
+ * just re-created with `arrowSize` scaling sigma's own default
+ * length/wideness ratios together - a factory (not a fixed constant) since
+ * arrowSize is a live-tunable Appearance-panel slider: sigma's
+ * edgeProgramClasses is a normal setting (handleSettingsUpdate diffs old
+ * vs. new and calls registerEdgeProgram() per changed type), so GraphPane
+ * can call this again and setSetting() the result whenever the slider
+ * moves, no renderer recreation needed.
+ */
+type EdgeProgramType = ReturnType<typeof createEdgeArrowProgram>;
+
+export function createArrowEdgePrograms(arrowSize: number): { arrow: EdgeProgramType; doubleArrow: EdgeProgramType } {
+	const ratios = {
+		lengthToThicknessRatio: DEFAULT_EDGE_ARROW_HEAD_PROGRAM_OPTIONS.lengthToThicknessRatio * arrowSize,
+		widenessToThicknessRatio: DEFAULT_EDGE_ARROW_HEAD_PROGRAM_OPTIONS.widenessToThicknessRatio * arrowSize,
+	};
+	return {
+		arrow: createEdgeArrowProgram(ratios),
+		doubleArrow: createEdgeDoubleArrowProgram(ratios),
+	};
+}
+
 /** Builds a graphology graph from generated data, with random initial positions (required before running FA2) and node styling. */
 export function buildGraph(data: GeneratedGraph, imageUrlForNode: (nodeId: string) => string | undefined): Graph {
 	const graph = new Graph();
@@ -99,6 +132,8 @@ export interface CreateRendererOptions {
 	labelRenderedSizeThreshold?: number;
 	/** how many labels are allowed to render per area at a given zoom - user-tunable, see settings.ts's ClewAppearanceSettings.labelDensity. */
 	labelDensity?: number;
+	/** Scales the arrowhead sigma draws when ClewAppearanceSettings.showEdgeDirection is on - see createArrowEdgePrograms(). 1 = sigma's own default size. */
+	edgeArrowSize?: number;
 }
 
 export function createRenderer(graph: Graph, container: HTMLElement, options: CreateRendererOptions = {}): Sigma {
@@ -108,10 +143,19 @@ export function createRenderer(graph: Graph, container: HTMLElement, options: Cr
 		hoverBackgroundColor = '#ffffff',
 		labelRenderedSizeThreshold = 9,
 		labelDensity = 0.5,
+		edgeArrowSize = 1,
 	} = options;
 
 	return new Sigma(graph, container, {
 		nodeProgramClasses: { image: NodeImageProgram },
+		// 'arrow'/'doubleArrow' are only actually used once GraphPane sets an
+		// edge's `type` attribute to one of them (showEdgeDirection) -
+		// registered unconditionally here regardless, since sigma's own
+		// edgeProgramClasses diffing (see createArrowEdgePrograms()'s
+		// docstring) is how the arrow *size* slider updates live, and that
+		// needs the types already registered to have something to diff
+		// against.
+		edgeProgramClasses: createArrowEdgePrograms(edgeArrowSize),
 		renderEdgeLabels: false,
 		// A vault-change refresh (StandaloneGraphView's create/changed/resolved
 		// listeners -> GraphPane.setFiles()) tears down and recreates the
