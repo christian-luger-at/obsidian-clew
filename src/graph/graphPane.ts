@@ -1,4 +1,4 @@
-import { App, Menu, Setting, setIcon, setTooltip, TFile } from 'obsidian';
+import { App, DropdownComponent, getAllTags, Menu, Setting, setIcon, setTooltip, TextComponent, TFile } from 'obsidian';
 import Graph from 'graphology';
 import type { Attributes } from 'graphology-types';
 import type Sigma from 'sigma';
@@ -16,6 +16,7 @@ import { CommunityStats, computeCommunityStats, detectCommunities, formatRelativ
 import { readThemeColors, ThemeColors, blendToward } from './theme';
 import { assignCategoryColors, colorByCategory, sizeByNumericValue } from './visualEncoding';
 import { VisualEncodingModal, VisualEncodingRequest } from './visualEncodingModal';
+import { EMPTY_SEARCH_QUERY, evaluateQuery, isEmptyQuery, NoteSearchFacts, SearchQuery } from './search';
 import { ClewAppearanceSettings, DEFAULT_APPEARANCE_SETTINGS } from '../settings';
 import type ClewPlugin from '../main';
 
@@ -56,6 +57,14 @@ const LAYOUT_MODE_LABELS: Record<LayoutMode, string> = {
 	radial: 'Radial',
 	circular: 'Circular',
 };
+
+/** Parses a search filter's number input (staleDays/minDegree) - empty/invalid/negative all mean "criterion off" (null), same as the field never being touched, rather than a confusing 0-vs-unset distinction the UI would otherwise need to expose separately. */
+function parsePositiveInt(value: string): number | null {
+	const trimmed = value.trim();
+	if (trimmed === '') return null;
+	const parsed = Number(trimmed);
+	return Number.isFinite(parsed) && parsed >= 0 ? Math.floor(parsed) : null;
+}
 
 /** Debounces the expensive part of an appearance slider's onChange (disk write + live re-render/re-layout) - a slider fires on every 'input' tick while dragging, and persisting + restarting ForceAtlas2 on every single tick would both spam disk writes and make the graph flicker instead of tuning smoothly. */
 function debounce(fn: () => void, delayMs: number): () => void {
@@ -308,6 +317,16 @@ export class GraphPane {
 	private readonly searchButton: HTMLButtonElement;
 	private readonly searchWrapperEl: HTMLElement;
 	private readonly searchInputEl: HTMLInputElement;
+	private readonly searchModeButtons: { highlight: HTMLButtonElement; filter: HTMLButtonElement };
+	// Assigned synchronously inside addDropdown()/addText()'s callback
+	// during construction (Setting invokes it immediately) - not `readonly`
+	// since that assignment happens in a nested closure, which TypeScript's
+	// definite-assignment check can't trace back to the constructor itself.
+	private searchTagDropdown!: DropdownComponent;
+	private searchPropertyDropdown!: DropdownComponent;
+	private searchPropertyValueInput!: TextComponent;
+	private searchStaleDaysInput!: TextComponent;
+	private searchMinDegreeInput!: TextComponent;
 	private readonly layoutButton: HTMLButtonElement;
 	private readonly visualEncodingButton: HTMLButtonElement;
 	private readonly appearanceButton: HTMLButtonElement;
@@ -317,7 +336,8 @@ export class GraphPane {
 	private files: TFile[] = [];
 	private mtimeByPath = new Map<string, number>();
 	private stagnationActive = false;
-	private searchQuery = '';
+	private searchQuery: SearchQuery = EMPTY_SEARCH_QUERY;
+	private searchMode: 'highlight' | 'filter' = 'highlight';
 	private layoutMode: LayoutMode = 'force';
 	private theme: ThemeColors;
 	private colorProperty: string | null = null;
@@ -427,27 +447,69 @@ export class GraphPane {
 		this.appearanceButton = iconButton('sliders-horizontal', 'Appearance…');
 		this.appearanceButton.addEventListener('click', () => this.toggleAppearancePanel());
 
-		// Focus mode: highlights matches, dims the rest - doesn't filter/hide
-		// anything, so the surrounding structure stays visible for context
-		// (doc's "Fokusmodus", matching an open Obsidian forum request rather
-		// than the more disruptive "hide non-matches" a naive filter would do).
-		// A sibling of the icon rail (not inside it) - a text input doesn't
-		// fit the icon-only rail, and sitting next to it needs no pixel math
-		// (see topbarEl's own docstring above).
+		// A small panel (not just a bare input) - "Suche mit verschiedenen
+		// Kriterien, die entweder highlighted oder filtert" - text is still
+		// the primary/always-visible criterion, but tag/property/staleness/
+		// link-count criteria and the Highlight-vs-Filter mode toggle live
+		// here too, all AND-combined (see search.ts). Doesn't filter/hide by
+		// default (Highlight mode: dims non-matches, keeps structure
+		// visible for context - doc's "Fokusmodus") - Filter mode is the
+		// new, explicitly opt-in "hide everything else" behavior. A
+		// sibling of the icon rail (not inside it) - sitting next to it
+		// needs no pixel math (see topbarEl's own docstring above). Hidden
+		// until searchButton (above) reveals it - see toggleSearch().
+		this.searchWrapperEl = topbarEl.createDiv({ cls: 'clew-search-panel' });
+		this.searchWrapperEl.hide();
+
 		// `search-input-container` is Obsidian's own class (used by its
 		// Quick Switcher, Settings search, etc.) - it draws the magnifying-
 		// glass icon via a themed `:before` pseudo-element and applies the
 		// matching input padding, so search gets an icon consistent with
 		// the rest of Obsidian's UI for free, no custom icon markup needed.
-		// Hidden until searchButton (above) reveals it - see toggleSearch().
-		this.searchWrapperEl = topbarEl.createDiv({ cls: 'search-input-container' });
-		this.searchWrapperEl.hide();
-		this.searchInputEl = this.searchWrapperEl.createEl('input', {
+		const searchInputWrapperEl = this.searchWrapperEl.createDiv({ cls: 'search-input-container' });
+		this.searchInputEl = searchInputWrapperEl.createEl('input', {
 			type: 'search',
 			placeholder: 'Search notes…',
 			cls: 'clew-search-input',
 		});
-		this.searchInputEl.addEventListener('input', () => this.onSearchInput(this.searchInputEl.value));
+		this.searchInputEl.addEventListener('input', () => this.updateSearch({ text: this.searchInputEl.value }));
+
+		const modeRowEl = this.searchWrapperEl.createDiv({ cls: 'clew-search-mode-toggle' });
+		const highlightModeButton = modeRowEl.createEl('button', { text: 'Highlight' });
+		const filterModeButton = modeRowEl.createEl('button', { text: 'Filter' });
+		this.searchModeButtons = { highlight: highlightModeButton, filter: filterModeButton };
+		highlightModeButton.addEventListener('click', () => this.setSearchMode('highlight'));
+		filterModeButton.addEventListener('click', () => this.setSearchMode('filter'));
+		this.updateSearchModeButtons();
+
+		new Setting(this.searchWrapperEl).setName('Tag').addDropdown((dropdown) => {
+			this.searchTagDropdown = dropdown;
+			dropdown.addOption('', '(Any)');
+			dropdown.onChange((value) => this.updateSearch({ tag: value === '' ? null : value }));
+		});
+		new Setting(this.searchWrapperEl)
+			.setName('Property')
+			.addDropdown((dropdown) => {
+				this.searchPropertyDropdown = dropdown;
+				dropdown.addOption('', '(None)');
+				dropdown.onChange((value) => this.updateSearch({ propertyKey: value === '' ? null : value }));
+			})
+			.addText((text) => {
+				this.searchPropertyValueInput = text;
+				text.setPlaceholder('Value').onChange((value) => this.updateSearch({ propertyValue: value }));
+			});
+		new Setting(this.searchWrapperEl).setName('Not edited in ≥ days').addText((text) => {
+			this.searchStaleDaysInput = text;
+			text.inputEl.type = 'number';
+			text.inputEl.min = '0';
+			text.onChange((value) => this.updateSearch({ staleDays: parsePositiveInt(value) }));
+		});
+		new Setting(this.searchWrapperEl).setName('Min links').addText((text) => {
+			this.searchMinDegreeInput = text;
+			text.inputEl.type = 'number';
+			text.inputEl.min = '0';
+			text.onChange((value) => this.updateSearch({ minDegree: parsePositiveInt(value) }));
+		});
 
 		// Top-left - opposite the top-right icon rail/search, so it doesn't
 		// compete with either for space.
@@ -488,6 +550,7 @@ export class GraphPane {
 
 		this.files = files;
 		this.mtimeByPath = new Map(files.map((file) => [file.path, file.stat.mtime]));
+		this.refreshSearchFilterOptions();
 		this.graph = buildVaultGraph(this.app, files, {
 			directed: false,
 			pinnedPositions: this.plugin.settings.pinnedPositions,
@@ -869,9 +932,10 @@ export class GraphPane {
 		const altEdges = new Set(paths.slice(1).flatMap((path) => edgeKeysAlongPath(this.graph!, path)));
 
 		this.renderer.setSetting('nodeReducer', (node, attr) => {
-			if (primaryNodes.has(node)) return { ...attr, color: this.theme.primaryPathColor, zIndex: 2, forceLabel: true };
-			if (allNodes.has(node)) return { ...attr, color: this.theme.altPathColor, zIndex: 1 };
-			return { ...attr, color: this.theme.dimNodeColor };
+			if (primaryNodes.has(node))
+				return { ...attr, color: this.theme.primaryPathColor, labelColor: this.theme.primaryPathColor, zIndex: 2, forceLabel: true };
+			if (allNodes.has(node)) return { ...attr, color: this.theme.altPathColor, labelColor: this.theme.altPathColor, zIndex: 1 };
+			return { ...attr, color: this.theme.dimNodeColor, labelColor: this.theme.dimNodeColor };
 		});
 
 		this.renderer.setSetting('edgeReducer', (edge, attr) => {
@@ -969,9 +1033,11 @@ export class GraphPane {
 			this.addLegendItem(rgbToCss(this.theme.staleColorRgb), 'Stagnant cluster');
 			return;
 		}
-		if (this.searchQuery) {
-			this.addLegendItem(this.theme.matchColor, 'Matches search');
-			this.addLegendItem(this.theme.dimNodeColor, 'No match');
+		if (!isEmptyQuery(this.searchQuery)) {
+			this.addLegendItem(this.theme.matchColor, this.searchMode === 'filter' ? 'Shown' : 'Matches search');
+			// Filter mode hides non-matches entirely - nothing left to
+			// explain a "dimmed" swatch for.
+			if (this.searchMode === 'highlight') this.addLegendItem(this.theme.dimNodeColor, 'No match');
 			return;
 		}
 		if (this.pathResultActive) {
@@ -1519,7 +1585,10 @@ export class GraphPane {
 			// (0 = not dimmed, 1 = fully dimmed).
 			const color = blendToward(attr.color as string, this.theme.dimNodeColor, 1 - dimProgress);
 			const image = dimProgress > 0 ? undefined : (attr.image as string | undefined);
-			return { ...attr, color, image };
+			// The label fades in step with the dot (same computed color,
+			// same dimProgress) instead of staying full-brightness while
+			// everything around it dims - user feedback.
+			return { ...attr, color, image, labelColor: color };
 		};
 		const edgeReducer = (e: string, attr: Attributes) => {
 			if (incidentEdges.has(e)) {
@@ -1631,53 +1700,163 @@ export class GraphPane {
 		this.renderLegend();
 	}
 
-	private onSearchInput(value: string): void {
-		this.searchQuery = value.trim();
-
-		if (this.searchQuery) {
-			// Mutually exclusive with the other modes, same as they are with
-			// each other - clears their state directly rather than only
-			// overwriting reducers, so re-toggling one of them later doesn't
-			// resurrect stale UI (e.g. the stagnation button staying "active").
-			this.hideStagnationHeatmap();
-			this.panelEl.empty();
-			this.panelEl.hide();
-			this.pathResultActive = false;
-			this.applyFocusFilter(this.searchQuery);
-			this.renderLegend();
-		} else {
-			this.clearHighlight();
-			this.renderLegend();
-		}
+	/** Merges a partial change into the current query (one field at a time - every filter control's onChange calls this with just its own field) and re-evaluates - see search.ts's SearchQuery. */
+	private updateSearch(partial: Partial<SearchQuery>): void {
+		this.searchQuery = { ...this.searchQuery, ...partial };
+		this.applySearch();
 	}
 
-	private applyFocusFilter(query: string): void {
-		if (!this.renderer) return;
-		const q = query.toLowerCase();
+	private setSearchMode(mode: 'highlight' | 'filter'): void {
+		this.searchMode = mode;
+		this.updateSearchModeButtons();
+		this.applySearch();
+	}
 
-		this.renderer.setSetting('nodeReducer', (node, attr) => {
-			const label = typeof attr.label === 'string' ? attr.label.toLowerCase() : '';
-			if (label.includes(q)) return { ...attr, color: this.theme.matchColor, zIndex: 2, forceLabel: true };
-			return { ...attr, color: this.theme.dimNodeColor };
+	private updateSearchModeButtons(): void {
+		this.searchModeButtons.highlight.toggleClass('is-active', this.searchMode === 'highlight');
+		this.searchModeButtons.filter.toggleClass('is-active', this.searchMode === 'filter');
+	}
+
+	/**
+	 * Gathers per-note facts once per query change (not cached across calls -
+	 * this.files/graph can change between them, and re-scanning is cheap
+	 * relative to a metadataCache lookup per file) for search.ts's pure
+	 * evaluateQuery() to match against. tags comes from Obsidian's own
+	 * getAllTags() - combines frontmatter `tags:` and inline #tags into one
+	 * normalized list (leading '#'), rather than reimplementing that here.
+	 */
+	private buildSearchFacts(): Map<string, NoteSearchFacts> {
+		const result = new Map<string, NoteSearchFacts>();
+		for (const file of this.files) {
+			const cache = this.app.metadataCache.getFileCache(file);
+			result.set(file.path, {
+				label: file.basename,
+				tags: (cache ? getAllTags(cache) : null) ?? [],
+				frontmatter: cache?.frontmatter ?? {},
+				mtime: this.mtimeByPath.get(file.path) ?? file.stat.mtime,
+				degree: this.graph?.degree(file.path) ?? 0,
+			});
+		}
+		return result;
+	}
+
+	/**
+	 * Re-evaluates the current query against every note and applies the
+	 * result as either a Highlight (dim non-matches, same as the old
+	 * text-only search) or a Filter (hide non-matches entirely) - called on
+	 * every criterion/mode change, not just text input, so e.g. picking a
+	 * tag from the dropdown updates the graph immediately too.
+	 */
+	private applySearch(): void {
+		if (!this.graph) return;
+
+		if (isEmptyQuery(this.searchQuery)) {
+			this.clearHighlight();
+			this.renderLegend();
+			return;
+		}
+
+		// Mutually exclusive with the other modes, same as they are with
+		// each other - clears their state directly rather than only
+		// overwriting reducers, so re-toggling one of them later doesn't
+		// resurrect stale UI (e.g. the stagnation button staying "active").
+		this.hideStagnationHeatmap();
+		this.panelEl.empty();
+		this.panelEl.hide();
+		this.pathResultActive = false;
+
+		const matches = evaluateQuery(this.buildSearchFacts(), this.searchQuery);
+		if (this.searchMode === 'filter') this.applySearchFilter(matches);
+		else this.applySearchHighlight(matches);
+		this.renderLegend();
+	}
+
+	private applySearchHighlight(matches: Set<string>): void {
+		this.renderer?.setSetting('nodeReducer', (node, attr) => {
+			if (matches.has(node)) return { ...attr, color: this.theme.matchColor, labelColor: this.theme.matchColor, zIndex: 2, forceLabel: true };
+			return { ...attr, color: this.theme.dimNodeColor, labelColor: this.theme.dimNodeColor };
 		});
-		this.renderer.setSetting('edgeReducer', (edge, attr) => ({ ...attr, color: this.theme.dimEdgeColor }));
+		this.renderer?.setSetting('edgeReducer', (edge, attr) => ({ ...attr, color: this.theme.dimEdgeColor }));
+	}
+
+	/**
+	 * "nur die passenden Knoten anzeigen" - hides every non-matching node
+	 * (via sigma's own `hidden` attribute), plus every edge touching one,
+	 * rather than leaving a dangling line pointing at nothing. An edge only
+	 * stays visible when *both* extremities match - showing a match's edge
+	 * to a hidden neighbor would look broken and defeats "only show what
+	 * matches" anyway. Precomputed as a Set before installing the edge
+	 * reducer (same pattern as applyHighlight()'s primaryEdges/altEdges) -
+	 * graphology's extremities() is a lookup, not free, and the reducer
+	 * runs once per edge per frame.
+	 */
+	private applySearchFilter(matches: Set<string>): void {
+		if (!this.graph) return;
+		const graph = this.graph;
+		const visibleEdges = new Set(graph.edges().filter((edge) => graph.extremities(edge).every((node) => matches.has(node))));
+
+		this.renderer?.setSetting('nodeReducer', (node, attr) => ({ ...attr, hidden: !matches.has(node) }));
+		this.renderer?.setSetting('edgeReducer', (edge, attr) => ({ ...attr, hidden: !visibleEdges.has(edge) }));
+	}
+
+	/**
+	 * Repopulates the Tag/Property dropdowns from the current file set -
+	 * called from setFiles(), same trigger as openVisualEncodingModal()'s
+	 * property discovery, since both depend on "every frontmatter key/tag
+	 * across the currently loaded notes". Resets the dropdown's own
+	 * selection (and the corresponding query field) if the previously
+	 * chosen value no longer exists in the new list, rather than silently
+	 * keeping a query criterion the UI no longer shows as selected.
+	 */
+	private refreshSearchFilterOptions(): void {
+		const tags = new Set<string>();
+		const properties = new Set<string>();
+		for (const file of this.files) {
+			const cache = this.app.metadataCache.getFileCache(file);
+			for (const tag of (cache ? getAllTags(cache) : null) ?? []) tags.add(tag);
+			for (const key of Object.keys(cache?.frontmatter ?? {})) properties.add(key);
+		}
+
+		const sortedTags = [...tags].sort();
+		const sortedProperties = [...properties].sort();
+
+		this.searchTagDropdown.selectEl.empty();
+		this.searchTagDropdown.addOption('', '(Any)');
+		for (const tag of sortedTags) this.searchTagDropdown.addOption(tag, tag);
+		const tagStillValid = this.searchQuery.tag !== null && tags.has(this.searchQuery.tag);
+		this.searchTagDropdown.setValue(tagStillValid ? this.searchQuery.tag! : '');
+		if (!tagStillValid && this.searchQuery.tag !== null) this.searchQuery = { ...this.searchQuery, tag: null };
+
+		this.searchPropertyDropdown.selectEl.empty();
+		this.searchPropertyDropdown.addOption('', '(None)');
+		for (const key of sortedProperties) this.searchPropertyDropdown.addOption(key, key);
+		const propertyStillValid = this.searchQuery.propertyKey !== null && properties.has(this.searchQuery.propertyKey);
+		this.searchPropertyDropdown.setValue(propertyStillValid ? this.searchQuery.propertyKey! : '');
+		if (!propertyStillValid && this.searchQuery.propertyKey !== null) this.searchQuery = { ...this.searchQuery, propertyKey: null };
 	}
 
 	/**
 	 * Resets search state - called when another mode takes over, not from
-	 * the search input's own handler (which must never overwrite what the
-	 * user is actively typing). Also closes the search box itself (see
-	 * toggleSearch()), so switching to another mode doesn't leave it
-	 * sitting open with stale (or already-cleared) text.
+	 * the search input's own handlers (which must never overwrite what the
+	 * user is actively typing/choosing). Also closes the search panel
+	 * itself (see toggleSearch()), so switching to another mode doesn't
+	 * leave it sitting open with stale (or already-cleared) criteria.
 	 */
 	private clearSearch(): void {
-		this.searchQuery = '';
+		this.searchQuery = EMPTY_SEARCH_QUERY;
+		this.searchMode = 'highlight';
 		this.searchInputEl.value = '';
+		this.searchTagDropdown.setValue('');
+		this.searchPropertyDropdown.setValue('');
+		this.searchPropertyValueInput.setValue('');
+		this.searchStaleDaysInput.setValue('');
+		this.searchMinDegreeInput.setValue('');
+		this.updateSearchModeButtons();
 		this.searchWrapperEl.hide();
 		this.searchButton.removeClass('is-active');
 	}
 
-	/** Reveals the search box (behind its own icon, like Find path is behind a modal) or closes and resets it - see clearSearch(). */
+	/** Reveals the search panel (behind its own icon, like Find path is behind a modal) or closes and resets it - see clearSearch(). */
 	private toggleSearch(): void {
 		if (this.searchWrapperEl.isShown()) {
 			this.clearSearch();
@@ -1723,8 +1902,8 @@ export class GraphPane {
 		);
 
 		this.renderer.setSetting('nodeReducer', (node, attr) => {
-			if (nodeSet.has(node)) return { ...attr, color: this.theme.matchColor, zIndex: 2, forceLabel: true };
-			return { ...attr, color: this.theme.dimNodeColor };
+			if (nodeSet.has(node)) return { ...attr, color: this.theme.matchColor, labelColor: this.theme.matchColor, zIndex: 2, forceLabel: true };
+			return { ...attr, color: this.theme.dimNodeColor, labelColor: this.theme.dimNodeColor };
 		});
 		this.renderer.setSetting('edgeReducer', (edge, attr) => {
 			if (edgeSet.has(edge)) return { ...attr, color: this.theme.matchColor, size: 2, zIndex: 2 };

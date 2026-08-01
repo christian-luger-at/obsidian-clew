@@ -147,6 +147,17 @@ export function createRenderer(graph: Graph, container: HTMLElement, options: Cr
 	} = options;
 
 	return new Sigma(graph, container, {
+		// sigma ignores every node/edge `zIndex` attribute by default (drawn
+		// in graph/insertion order instead) unless this is explicitly
+		// turned on - GraphPane's highlight reducers (hover, search,
+		// path-find, stagnation cluster focus) all set `zIndex: 1`/`2` on
+		// the emphasized nodes/edges, expecting them to draw on top of the
+		// dimmed rest, but without this setting those values were silently
+		// no-ops: a dimmed edge could still paint over a highlighted one
+		// depending on which happened to come later in the graph - user
+		// report ("hervorgehobene Kanten werden von gedimmten Kanten
+		// überdeckt").
+		zIndex: true,
 		nodeProgramClasses: { image: NodeImageProgram },
 		// 'arrow'/'doubleArrow' are only actually used once GraphPane sets an
 		// edge's `type` attribute to one of them (showEdgeDirection) -
@@ -182,8 +193,15 @@ export function createRenderer(graph: Graph, container: HTMLElement, options: Cr
 		// sigma's own default is a hardcoded black ('#000') - unreadable
 		// against a dark theme's canvas. Caller passes a theme-derived color
 		// (see theme.ts's labelColor); the default here only matters for the
-		// spike harness.
-		labelColor: { color: labelColor },
+		// spike harness. `attribute: 'labelColor'` (not just `color`) lets a
+		// node's own `labelColor` attribute override this default per-node -
+		// GraphPane's dim reducers (hover, search, path-find) set it
+		// alongside a dimmed node `color` so the label fades in step with
+		// the dot instead of staying full-brightness while everything
+		// around it dims. Falls back to this theme color for any node that
+		// doesn't set one (sigma's own drawDiscNodeLabel: `data[attribute]
+		// || settings.labelColor.color`).
+		labelColor: { attribute: 'labelColor', color: labelColor },
 		defaultDrawNodeHover: createNodeHoverDrawer(hoverBackgroundColor),
 		hideEdgesOnMove: true,
 		// Level-of-detail: without this, sigma renders a label for nearly

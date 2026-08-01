@@ -46,11 +46,88 @@
 	color: var(--text-on-accent);
 }
 
+/* Same floating-panel treatment as .clew-toolbar/.clew-legend/
+   .clew-appearance-panel - holds the text-search row, the Highlight/Filter
+   mode toggle, and the tag/property/staleness/link-count filter rows (see
+   graphPane.ts's constructor and search.ts). */
+.clew-search-panel {
+	display: flex;
+	flex-direction: column;
+	gap: var(--size-4-2);
+	width: 260px;
+	padding: var(--size-4-2);
+	background: var(--background-primary);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-m);
+	box-shadow: var(--shadow-s);
+}
+
 /* Obsidian's own `.search-input-container input` rule sets width: 100% -
    more specific than a bare `.clew-search-input` class, so the fixed width
    has to live on the wrapper (which that rule then fills) instead. */
-.clew-topbar .search-input-container {
-	width: 160px;
+.clew-search-panel .search-input-container {
+	width: 100%;
+}
+
+.clew-search-mode-toggle {
+	display: flex;
+	gap: var(--size-4-1);
+}
+
+.clew-search-mode-toggle button {
+	flex: 1;
+}
+
+.clew-search-mode-toggle button.is-active {
+	background-color: var(--interactive-accent);
+	color: var(--text-on-accent);
+}
+
+/* Appearance-panel Settings (Tag/Property/staleness/link-count rows) are
+   comfortable at that panel's own generous width - cramped at this one's
+   260px otherwise, since Setting's default layout puts name and control
+   side by side. Stacking name above control instead keeps every row
+   readable without widening the whole panel just for these four rows. */
+.clew-search-panel .setting-item {
+	flex-direction: column;
+	align-items: flex-start;
+	padding: var(--size-4-1) 0;
+}
+
+.clew-search-panel .setting-item-info {
+	padding-right: 0;
+}
+
+.clew-search-panel .setting-item-control {
+	width: 100%;
+	justify-content: stretch;
+	gap: var(--size-4-1);
+}
+
+/* min-width: 0 lets a flex item shrink below its content's natural size
+   when needed - without it, the "Property" row's <select> (dropdown +
+   value text input sharing one row) refused to shrink at all and instead
+   forced the *text input* down to nothing, rather than the two sharing
+   space proportionally. */
+.clew-search-panel .setting-item-control > * {
+	flex: 1 1 0;
+	min-width: 0;
+}
+
+/* The dropdown only needs to show its selected option, not grow/shrink
+   like the free-text value input next to it (Property row) - flex-shrink:
+   0 (not just a smaller flex-basis) guarantees it always sizes to its
+   content instead of "(None)"/a tag name truncating under space pressure,
+   with the value input (flex: 1 1 0 above) absorbing all the free space.
+   `width: auto` overrides Obsidian's own `.setting-item-control
+   select.dropdown { width: var(--dropdown-fitted-width, inherit); }` -
+   with that variable unset, `inherit` literally took the parent flex
+   container's own width, stretching the dropdown to fill the whole row
+   and squeezing the value input next to it down to nothing. */
+.clew-search-panel .setting-item-control > select {
+	flex: 0 0 auto;
+	width: auto;
+	min-width: 5.5em;
 }
 
 .clew-path-panel {
