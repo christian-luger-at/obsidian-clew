@@ -111,7 +111,7 @@ src/
     layoutRunner.ts         # thin wrapper around graphology-layout-forceatlas2's worker-based layout
     renderer.ts             # sigma.js setup, node styling, image-node program
     graphPane.ts             # rendering + find-path UI, composed into the view below
-    standaloneGraphView.ts   # the "Graph" view - ribbon icon / "Open graph" command, whole vault
+    standaloneGraphView.ts   # the "Clew graph view" - ribbon icon / "Open graph view" command, whole vault
     pathfinding.ts           # Yen's k-shortest-paths, hub-avoidance weighting
     pathfindingModal.ts      # note-picker modal for path finding
     canvasExport.ts          # export a found path as a .canvas file
@@ -228,24 +228,57 @@ manual copy step. Then open `test-vault` in Obsidian and check:
 - **Find path**, anything → `Island X` or `Island Y`: should report "no path
   found" (a first-class result, not an error) - `Island X`/`Island Y` are a
   deliberately disconnected two-note component.
-- **Stagnation heatmap**: `Old Cluster A/B/C` (backdated ~200 days) should be
-  the stalest (deep red), `Medium Age A/B` (~45 days) a visibly different
-  middling color, everything else fresh (blue) - confirms the color scale
-  interpolates rather than being effectively binary.
+- **Cluster freshness** (a "Stagnation" criterion on a node group - see
+  "Color & size" below and `nodeGroups.ts`): create a group with a single
+  Stagnation criterion set to "Most stagnant" - `Old Cluster A/B/C`
+  (backdated ~200 days) should join the group; `Medium Age A/B` (~45 days)
+  and everything fresher should not, since they're in the fresher half of
+  clusters present. Switch the dropdown to "Most recently active" - now the
+  fresher clusters should join instead and the old ones should drop out.
+  This is a plain two-way choice (a note's cluster is in the stalest half
+  present, or the freshest half - see `StalenessBucket` in `nodeGroups.ts`),
+  not a numeric threshold - two earlier attempts (a raw 0-1 ratio, then a
+  labeled 0-100% range) were both user feedback'd as still not
+  understandable.
 - **`With Cover`** should render its frontmatter `cover` image as the node,
   not a plain dot.
-- **`Isolated`** (no links at all) should render with degree 0 and should
-  *not* appear in the stagnation panel's ranked list (communities smaller
-  than 2 notes are filtered out there, see `MIN_COMMUNITY_SIZE_SHOWN` in
-  `graphPane.ts`) even though it's still colored in the graph itself.
-- **Search** (focus mode), typing `Topic`: should highlight `Topic A`,
-  `Topic A - Detail 1/2`, `Topic B`, `Topic B - Detail 1`, and `Topic C`
-  (forced labels), dim everything else - notes stay visible/positioned, not
-  hidden, since this dims rather than filters. Clearing the box should
-  restore the normal view. Opening "Find path" or "Stagnation heatmap"
-  while a search is active should clear the search box; typing in the
-  search box while the heatmap is active should turn the heatmap off (all
-  three modes are mutually exclusive).
+- **`Isolated`** (no links at all) should still render with degree 0 and be
+  colorable by any group whose criteria it happens to match (e.g. a
+  `filename`/`tag`/`property` criterion) - Louvain still assigns it its own
+  single-note community, so a `clusterFreshness` criterion can match it too.
+- **Filter** (funnel icon, opens a panel that drops down directly below the
+  icon rail - not positioned like "Appearance…", with its own "x" to
+  close): typing `Topic` in the text field should hide every note *except*
+  `Topic A`, `Topic A - Detail 1/2`, `Topic B`, `Topic B - Detail 1`, and
+  `Topic C`, plus every edge touching a hidden note - no dimming, always a
+  hard hide (no Highlight mode). Clearing the text field should restore
+  the normal view. **Tags**: selected tags should render as small,
+  removable pills wrapping in one row (not one dropdown row per tag);
+  picking `#project` from the "+ add tag…" select, then `#todo` from it
+  again, should add both as pills and reset the select back to its
+  placeholder each time - a note with *either* tag should show (OR).
+  Clicking a pill's "x" should remove just that tag. **Properties**: click
+  "+ add property" twice, set one row to `status` contains `done` and
+  another to `priority` contains `5` - only notes matching *both* rows
+  should show (AND across rows); removing a row (the "x" button) should
+  immediately drop that constraint. **Persistence**: set any criterion,
+  close the panel (the "x" or the filter icon again) - the filter icon
+  should stay highlighted and the graph should stay filtered; reopen the
+  panel - every control should still show what you set. Reload the plugin
+  (or restart Obsidian) - the filter should still be applied and the panel
+  should still remember it (see settings.ts's ClewSettings.filterQuery -
+  it's saved, not just session state). "Clear filter" (bottom of the
+  panel) should reset everything and un-highlight the icon. Opening "Find
+  path", or enabling/editing a node group in "Color & size…", should *not*
+  clear a saved filter - the filter is a baseline the path/group reducer
+  temporarily paints over. **Hover while filtering**: with a
+  filter active, hover a *visible* (matching) node - every currently-
+  hidden node/edge must stay hidden throughout the hover, not flash back
+  into view (a real bug this exact scenario caught: the hover reducer's
+  "everyone else" branch was reading raw graph attributes instead of the
+  filter's own reducer output, silently dropping `hidden`). Opening
+  "Appearance…" while the filter panel is open (or vice versa) should
+  leave both open now - they no longer share a corner.
 - **Deterministic layout**: close and reopen the graph view (or reload the
   plugin) a few times - each note should *start* the force layout from the
   same position every time, so the settled result looks recognizably the
@@ -280,20 +313,113 @@ manual copy step. Then open `test-vault` in Obsidian and check:
   CSS variables (`--color-purple`, `--color-orange`, `--text-faint`, etc.)
   rather than fixed hex values, and `GraphPane.refreshTheme()` re-reads
   them on Obsidian's `'css-change'` workspace event. Also check "Find
-  path…" and "Stagnation heatmap" still look reasonable in a light theme -
-  never verified there before this.
-- **Visual encoding**: click "Visual encoding…" - the "Color by property"
-  and "Size by property" dropdowns should list `status`, `priority`, and
-  `cover` (discovered from the current file set, not hardcoded). Pick
-  `status` for color: `Topic A`/`Topic A - Detail 1`/`Topic A - Detail 2`
-  should share one color, `Topic B`/`Topic B - Detail 1` another, `Topic C`
-  a third - notes without a `status` (`Isolated`, `Island X`/`Y`, etc.)
-  keep the default color. Pick `priority` for size: `Topic A - Detail 2`
-  (priority 5) should be visibly the largest of that group, notes without
-  a `priority` keep the default (link-count-based) size. Switching either
-  dropdown back to "Default" should restore the original coloring/sizing
-  exactly - not a stale value left over from the property that was
-  selected before.
+  path…" and the cluster-freshness coloring still look reasonable in a
+  light theme - never verified there before this.
+- **Color & size** (palette icon, opens a panel dropping down below the
+  icon rail, same look as Filter/Appearance - see `nodeGroups.ts`): click
+  "+ new group" - a blank group ("Group 1", a default color, no criteria)
+  is created, saved, and opens directly in its edit form under a "Group"
+  heading (same bold style as "Criteria" below, and as Appearance's own
+  "Nodes"/"Edges"), with an *unlabeled* color+name row right underneath -
+  color swatch flush left, title field stretching to fill the rest of the
+  row. Set the name to "Status A", click "+ add" - it should sit flush
+  with the "Criteria" heading below (not just its own text nudged in with
+  the button's border/background still sitting at the form's own left
+  edge - an earlier version got this wrong: a plain div can be aligned by
+  nudging its *content* with padding, but a button has its own visible
+  box, so it needs its whole box shifted with a margin instead). It opens
+  a small menu (Tag / Property / Folder / Filename / Text / Stagnation,
+  same pattern as the "Layout" toolbar button's own menu) - pick
+  "Property" and the new criterion opens directly in its expanded
+  controls (not yet a chip, since it still needs configuring), reading top
+  to bottom as **heading, then fields, then actions**: a "Property" label
+  on its own line, the key/operator/value controls on the line(s) below
+  it, and the checkmark/"x" on their own line under those (never crammed
+  onto the same line as the fields, even if the fields themselves wrap);
+  set it to `status` / "Equals" / `done` - *without clicking anything
+  else*, every note with `status: done` (`Topic A`/`Topic A - Detail
+  1`/`Topic A - Detail 2`) should immediately take that color and the
+  palette icon should highlight - **everything here saves immediately as
+  you go, there is no separate Save step anywhere in this panel**. Click
+  the checkmark next to the criterion - it should collapse into a compact
+  chip reading `status equals "done"` (nodeGroups.ts's
+  `describeCriterion()`), flush-aligned with the "Criteria" heading and
+  its description text right above it. **Cancel reverts, not deletes**:
+  click an existing chip to re-expand it, change its value, then click the
+  "x" (not the checkmark) - it should revert to what the chip showed
+  *before* you started this edit, not delete the criterion (an earlier
+  version deleted it - user feedback: "x" while editing should mean
+  Cancel). For a criterion you just added via "+ add" (never had a
+  "before" state), the same "x" removes it instead, since there's nothing
+  to revert to. A chip's own "x" *while collapsed* still removes it
+  directly, no expand needed. **Chips**: with several criteria configured,
+  the "Criteria" section should read as a short row of wrapping chips, not
+  a wall of dropdowns/text fields all shown at once. **Wrapped tag
+  pills**: expand a `tag` criterion and pick enough tags that its pills
+  wrap onto a second line - the wrapped line should stay inside the
+  criterion's own controls, not jump to the panel's own left edge, and the
+  checkmark/"x" row should still land on its own line below all of it, no
+  matter how many lines the fields wrapped onto. **No empty-state text**:
+  a brand new group with no criteria yet should show no placeholder line
+  under "Criteria" at all - just the heading, description, and the "+
+  add" button. **Multiple criteria (AND only)**: add a `tag` criterion too
+  - now only notes matching *both* the property AND the tag should stay
+  colored (every criterion in a group is AND'd, with no OR/grouping option
+  - the "Criteria" heading's own description says "A note must match every
+  criterion below."). **Size multiplier**: "Scale size" is off by default
+  on a new group; toggle it on - a "Size multiplier" slider appears (no
+  explanatory text under it - its own live tooltip while dragging is
+  enough), range 0.3-3, starting at 1; drag it to 2 - matching notes
+  should visibly grow, but a hub note among them should still look bigger
+  than a leaf note in the same group (it's a *multiplier* on each note's
+  own degree-based size, not a fixed size replacing it - user feedback: an
+  earlier absolute-size version made every matching note identically
+  sized, losing the hub-vs-leaf signal entirely); at exactly 1 every
+  matching note's size should be unchanged from default. Toggle "Scale
+  size" back off and sizes should return to fully default. **Closing a
+  group's edit form**: there is no standalone "Done"/Save/Cancel button at
+  the bottom any more (removed - user feedback: nothing was left for it to
+  commit) - the only way to collapse the form back to the group's row is
+  the small "x" next to the "Group" heading itself, at the top.
+  **Precedence**: create a second group ("Status B", a different color,
+  the same `status` equals `done` criterion) - only the *first* group in
+  the list (topmost) should win for those notes; use the ↑/↓ reorder
+  arrows to move "Status B" above "Status A" and the notes should switch
+  to its color instead, confirming order is the precedence rule. **Enable
+  toggle**: toggling a group's switch off (on its collapsed row, no need
+  to open the edit form) should immediately stop it affecting the graph,
+  and drop the palette icon's highlight if it was the last enabled group.
+  **Delete**: should show a confirmation dialog first ("Delete group?" /
+  group name in the message) - cancelling it must leave the group
+  untouched; confirming should immediately un-color its matched notes
+  (falling through to the next matching enabled group, or the default
+  color if none). **Max groups**: create groups until "+ new group"
+  disables itself at 10 (`MAX_NODE_GROUPS`). **Persistence**: reload the
+  plugin (or restart Obsidian) - every saved
+  group (including disabled ones) and its enabled/disabled state should
+  survive.
+- **Color & size criteria - other types**: `folder` - a free-text field
+  (not a dropdown - user feedback: a vault can have many folders) with
+  autocomplete suggestions via a native datalist; typing a folder path
+  should match that folder *and every subfolder under it*, not just notes
+  directly in it. `filename` (contains, title only). `tag` - pills + a
+  "+ tag…" picker, same widget as the Filter panel's own tags, letting one
+  criterion match *any* of several tags at once (user feedback) rather
+  than needing a separate row per tag. `text` (contains, matches the
+  *title and note body* - create a group with a `text` criterion matching
+  a word that only appears in one note's body, not its title, and confirm
+  that note joins the group; this reads every note's content once via
+  `vault.cachedRead()`, only when at least one enabled group actually has
+  a `text` criterion - `needsContentSearch()` in `nodeGroups.ts`).
+  `property` - an operator dropdown (Contains / Equals / Not equals / Is
+  empty / Is not empty) next to the key; picking "Is empty"/"Is not empty"
+  should hide the value field entirely (it's not needed); "Is empty"
+  should match notes *missing* the property altogether, not just ones with
+  an empty string value. Every criterion row (any type) should render as a
+  single compact line with a thin divider between rows, not a full Setting
+  block each - the whole criteria list should read as noticeably more
+  compact than a typical Settings screen (user feedback: the UI wasn't
+  "clean enough").
 - **Drag to pin a node** (force layout only): drag any note - its
   *neighbors* should visibly shift/readjust for a second or two after you
   release it (ForceAtlas2 briefly re-settling around the now-fixed
@@ -321,11 +447,11 @@ manual copy step. Then open `test-vault` in Obsidian and check:
   de-emphasized, but still recognizable as actual notes/edges, not faded to
   the point of disappearing. Should not open the note (that's the click,
   not the hover). Un-hovering should restore the view exactly as it was
-  before - try hovering while "Stagnation heatmap" or "Find path" is
-  active: neighbors should keep showing their heatmap/path colors
-  untouched (just with their label now forced on too), and un-hovering
-  should return to the heatmap/path view unchanged, not reset to plain
-  default coloring.
+  before - try hovering while cluster-freshness coloring or "Find path" is
+  active: neighbors should keep showing their cluster/path colors
+  untouched (just with their label now shown if it fits), and un-hovering
+  should return to that view unchanged, not reset to plain default
+  coloring.
 - **Radial layout**: click "Radial…", pick `Hub` in the picker, click
   Apply - `Hub` should land dead center, its direct link neighbors on one
   ring around it, their neighbors on a ring further out, and `Island X`/
@@ -343,16 +469,16 @@ manual copy step. Then open `test-vault` in Obsidian and check:
   crossing the whole circle. Click "Force" to leave it. Dragging should do
   nothing while it's active.
 - **Legend** (GitHub issue #13): a small panel, bottom-left, always visible,
-  showing what the current colors mean. Should read "Note" / "Note with
-  cover image" by default; switch to "Shortest path" / "Alternative path" /
-  "Not on a shown path" once "Find path" finds a result; switch to
-  "Recently edited cluster" / "Stagnant cluster" once the stagnation
-  heatmap is on; switch to "Matches search" / "No match" while typing in
-  the search box; and show one swatch per distinct value (capped at 8,
-  with a "+N more" line beyond that) when a "Color by property" is chosen
-  in Visual encoding. Toggling the heatmap or search on top of a shown path
-  result should switch the legend to the heatmap's/search's own labels,
-  not leave it describing the path.
+  showing what the current colors mean. Empty (no panel shown - see
+  `.clew-legend:empty`) with nothing active or with node groups active
+  (user feedback: a group's own name, shown right in its row in the Color &
+  size panel, is already its label - no separate legend entry); switches to
+  "Shortest path" / "Alternative path" / "Not on a shown path" once "Find
+  path" finds a result; switches to just "Shown" while the filter is active
+  (no "no match" counterpart - non-matches are hidden, not dimmed).
+  Activating the filter on top of a shown path result should switch the
+  legend to the filter's own "Shown" label, not leave it describing the
+  path underneath.
 - **Appearance panel**: click the sliders icon in the top-right icon rail -
   a panel opens bottom-right with "Nodes" and "Edges" sections (each with
   their own color picker and sliders), then grouped sliders (Physics /
@@ -420,7 +546,7 @@ node scripts/gen-graph-vault.mjs   # writes ./spike-vault: 10,000 notes with a h
    ln -s "$PWD/main.js" "$PWD/manifest.json" "$PWD/styles.css" spike-vault/.obsidian/plugins/clew/
    ```
    Then open `spike-vault` in Obsidian and enable the plugin.
-2. Use the ribbon icon or the **"Open graph"** command.
+2. Use the ribbon icon or the **"Open graph view"** command.
 3. Check: pan, zoom, click a node (should select without noticeable lag), and confirm the ~100 image nodes render their cover image - this exercises `app.vault.getResourcePath()` feeding a WebGL texture (the browser harness only proves sigma *can* render images at all, not that a real vault image loads cleanly).
 
 ### Known open item

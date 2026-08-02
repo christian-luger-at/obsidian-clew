@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import Graph from 'graphology';
-import { detectCommunities, computeCommunityStats, staleness, stalenessColor, formatRelativeTime } from './stagnation';
+import { detectCommunities, computeCommunityStats, staleness } from './stagnation';
 
 describe('stagnation', () => {
 	describe('detectCommunities', () => {
@@ -145,82 +145,4 @@ describe('stagnation', () => {
 		});
 	});
 
-	describe('stalenessColor', () => {
-		it('returns blue for staleness 0 (fresh)', () => {
-			const result = stalenessColor(0);
-			expect(result).toBe('rgb(59, 130, 246)');
-		});
-
-		it('returns red for staleness 1 (stale)', () => {
-			const result = stalenessColor(1);
-			expect(result).toBe('rgb(239, 68, 68)');
-		});
-
-		it('interpolates for middle values', () => {
-			const result = stalenessColor(0.5);
-			// Should be somewhere between blue and red
-			expect(result).toMatch(/^rgb\(\d+, \d+, \d+\)$/);
-			const match = result.match(/rgb\((\d+), (\d+), (\d+)\)/);
-			expect(match).toBeTruthy();
-			const [, r] = match!.map(Number);
-			// At 0.5, should be roughly midpoint
-			expect(r).toBeGreaterThan(59);
-			expect(r).toBeLessThan(239);
-		});
-
-		it('clamps out-of-range values', () => {
-			const low = stalenessColor(-1);
-			const high = stalenessColor(2);
-			expect(low).toBe('rgb(59, 130, 246)'); // blue
-			expect(high).toBe('rgb(239, 68, 68)'); // red
-		});
-
-		it('uses explicitly passed fresh/stale colors instead of the defaults', () => {
-			// GraphPane passes theme-derived colors (see theme.ts) rather than
-			// relying on these hardcoded fallbacks - verifies the values
-			// actually get used, not just that passing extra args doesn't error.
-			const green: [number, number, number] = [0, 255, 0];
-			const purple: [number, number, number] = [128, 0, 128];
-
-			expect(stalenessColor(0, green, purple)).toBe('rgb(0, 255, 0)');
-			expect(stalenessColor(1, green, purple)).toBe('rgb(128, 0, 128)');
-		});
-	});
-
-	describe('formatRelativeTime', () => {
-		it('returns "today" for current timestamp', () => {
-			const now = Date.now();
-			expect(formatRelativeTime(now)).toBe('today');
-		});
-
-		it('returns "1 day ago" for exactly 1 day', () => {
-			const oneDayAgo = Date.now() - 24 * 60 * 60 * 1000;
-			expect(formatRelativeTime(oneDayAgo)).toBe('1 day ago');
-		});
-
-		it('returns "N days ago" for multiple days', () => {
-			const fiveDaysAgo = Date.now() - 5 * 24 * 60 * 60 * 1000;
-			expect(formatRelativeTime(fiveDaysAgo)).toBe('5 days ago');
-		});
-
-		it('returns "1 month ago" for ~30 days', () => {
-			const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
-			expect(formatRelativeTime(thirtyDaysAgo)).toBe('1 month ago');
-		});
-
-		it('returns "N months ago" for multiple months', () => {
-			const threeMonthsAgo = Date.now() - 90 * 24 * 60 * 60 * 1000;
-			expect(formatRelativeTime(threeMonthsAgo)).toBe('3 months ago');
-		});
-
-		it('returns "1 year ago" for ~12 months', () => {
-			const oneYearAgo = Date.now() - 365 * 24 * 60 * 60 * 1000;
-			expect(formatRelativeTime(oneYearAgo)).toBe('1 year ago');
-		});
-
-		it('returns "N years ago" for multiple years', () => {
-			const twoYearsAgo = Date.now() - 2 * 365 * 24 * 60 * 60 * 1000;
-			expect(formatRelativeTime(twoYearsAgo)).toBe('2 years ago');
-		});
-	});
 });

@@ -8,19 +8,8 @@ export interface ThemeColors {
 	dimNodeColor: string;
 	dimEdgeColor: string;
 	matchColor: string;
-	freshColorRgb: [number, number, number];
-	staleColorRgb: [number, number, number];
 	/** `--background-primary` - the graph canvas's own background. Exposed (not just used internally for ensureContrast) so GraphPane can pass it to renderer.ts's hover-label background fix - see readThemeColors()'s docstring. */
 	backgroundColor: string;
-}
-
-function cssVarRgb(computed: CSSStyleDeclaration, name: string, fallback: [number, number, number]): [number, number, number] {
-	const value = computed.getPropertyValue(name).trim();
-	const parts = value.split(',').map((part) => Number(part.trim()));
-	if (parts.length === 3 && parts.every((n) => Number.isFinite(n))) {
-		return [parts[0]!, parts[1]!, parts[2]!];
-	}
-	return fallback;
 }
 
 /**
@@ -353,8 +342,6 @@ export function readThemeColors(referenceEl: HTMLElement, edgeIntensity: number 
 		// concept as Clew's hover-highlight (#9), search match, and
 		// stagnation-cluster focus, all of which reuse this one color.
 		matchColor: ensureContrast(cssVar('--graph-node-focused', '#22c55e'), backgroundColor),
-		freshColorRgb: cssVarRgb(computed, '--color-blue-rgb', [59, 130, 246]),
-		staleColorRgb: cssVarRgb(computed, '--color-red-rgb', [239, 68, 68]),
 		backgroundColor,
 	};
 

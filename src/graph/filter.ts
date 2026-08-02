@@ -1,23 +1,31 @@
 /**
- * Doc section 3.1/3.3 follow-up: a single search that considers several
- * criteria at once (text, tag, a frontmatter property, staleness, link
+ * Doc section 3.1/3.3 follow-up: a single filter that considers several
+ * criteria at once (text, tags, frontmatter properties, staleness, link
  * count) instead of text-only matching - GitHub issue discussion "search
  * that considers different criteria". Kept Obsidian-app-free (same
  * boundary as visualEncoding.ts/stagnation.ts/pathfinding.ts) so the
  * matching logic itself is unit-testable without a real vault; GraphPane
- * is responsible for gathering each note's NoteSearchFacts from
- * app.metadataCache/graph and applying the result as either a highlight
- * (dim everything else) or a filter (hide everything else).
+ * is responsible for gathering each note's NoteFilterFacts from
+ * app.metadataCache/graph and applying the result by hiding every
+ * non-matching node and edge.
  *
- * Deliberately AND-only across criteria (no per-criterion OR groups, no
- * expression language) - same "no formula support" v1-scope reasoning as
- * visualEncoding.ts: a query builder for arbitrary boolean expressions is
- * a lot more surface area (and a lot more ways to end up with a confusing
- * empty result) than "every active criterion must match", which already
- * covers the common cases (e.g. "tag=#project AND not edited in 30 days").
+ * Originally offered a Highlight mode too (dim non-matches instead of
+ * hiding them) - removed on user feedback: Filter alone was simpler to
+ * reason about and covered every real use case, and maintaining two
+ * separate application paths for the same match set wasn't worth it.
+ *
+ * AND across different criterion *types* (text, tags, properties,
+ * staleness, link count all have to pass), but OR *within* tags (any one
+ * selected tag is enough) and, separately, AND across each individual
+ * property filter (every property row has to match) - same reasoning
+ * multi-select filters generally use: tags are interchangeable instances
+ * of the same kind of criterion ("has #project or #urgent"), while each
+ * property row targets a conceptually different field ("status=done AND
+ * priority contains 5"), where OR-ing across different fields would
+ * rarely be what someone actually wants.
  */
 
-export interface NoteSearchFacts {
+export interface NoteFilterFacts {
 	label: string;
 	/** From Obsidian's getAllTags() - includes the leading '#'. */
 	tags: string[];
@@ -27,41 +35,45 @@ export interface NoteSearchFacts {
 	degree: number;
 }
 
+/** One "property contains value" row - see FilterQuery.properties. */
+export interface PropertyFilter {
+	key: string;
+	value: string;
+}
+
 /**
- * Every field is optional/nullable and independently "off" - an unset
- * field never excludes a note, so a query with everything unset is a
+ * Every field is independently "off" when empty/null - an unset field
+ * never excludes a note, so a query with everything unset is a
  * matches-everything no-op (see isEmptyQuery()), and turning on one
  * criterion doesn't require filling in the others.
  */
-export interface SearchQuery {
+export interface FilterQuery {
 	/** Case-insensitive substring match against the note's title. */
 	text: string;
-	/** Exact tag, leading '#' included (e.g. "#project") - null = not filtering by tag. */
-	tag: string | null;
-	/** Only applied once both are set - a key with an empty value would otherwise match every note that merely has the property, which reads as a silent no-op filter. */
-	propertyKey: string | null;
-	propertyValue: string;
+	/** Exact tags, leading '#' included (e.g. "#project") - a note matches if it has *any* of these (OR); empty = not filtering by tag. */
+	tags: string[];
+	/** Each row only applies once its value is non-empty (an empty-value row would otherwise match every note that merely has the property, which reads as a silent no-op filter) - a note must satisfy *every* row with a value (AND). */
+	properties: PropertyFilter[];
 	/** Note not edited in at least this many days - null = not filtering by staleness. */
 	staleDays: number | null;
 	/** Note has at least this many links (graph.degree()) - null = not filtering by degree. */
 	minDegree: number | null;
 }
 
-export const EMPTY_SEARCH_QUERY: SearchQuery = {
+export const EMPTY_FILTER_QUERY: FilterQuery = {
 	text: '',
-	tag: null,
-	propertyKey: null,
-	propertyValue: '',
+	tags: [],
+	properties: [],
 	staleDays: null,
 	minDegree: null,
 };
 
 /** Whether every criterion is unset - the caller's cue to fall back to "nothing active" instead of running a no-op match-everything query. */
-export function isEmptyQuery(query: SearchQuery): boolean {
+export function isEmptyQuery(query: FilterQuery): boolean {
 	return (
 		query.text.trim() === '' &&
-		query.tag === null &&
-		!(query.propertyKey !== null && query.propertyValue.trim() !== '') &&
+		query.tags.length === 0 &&
+		query.properties.every((p) => p.value.trim() === '') &&
 		query.staleDays === null &&
 		query.minDegree === null
 	);
@@ -84,16 +96,17 @@ function stringifyPropertyValue(value: unknown): string {
 	return (JSON.stringify(value) ?? '').toLowerCase();
 }
 
-/** AND across every active criterion - see this module's docstring for why. */
-export function matchesQuery(facts: NoteSearchFacts, query: SearchQuery): boolean {
+/** See this module's docstring for the AND/OR rules across criteria. */
+export function matchesQuery(facts: NoteFilterFacts, query: FilterQuery): boolean {
 	const text = query.text.trim().toLowerCase();
 	if (text && !facts.label.toLowerCase().includes(text)) return false;
 
-	if (query.tag !== null && !facts.tags.includes(query.tag)) return false;
+	if (query.tags.length > 0 && !query.tags.some((tag) => facts.tags.includes(tag))) return false;
 
-	if (query.propertyKey !== null && query.propertyValue.trim() !== '') {
-		const value = stringifyPropertyValue(facts.frontmatter[query.propertyKey]);
-		if (!value.includes(query.propertyValue.trim().toLowerCase())) return false;
+	for (const property of query.properties) {
+		if (property.value.trim() === '') continue;
+		const value = stringifyPropertyValue(facts.frontmatter[property.key]);
+		if (!value.includes(property.value.trim().toLowerCase())) return false;
 	}
 
 	if (query.staleDays !== null) {
@@ -108,8 +121,8 @@ export function matchesQuery(facts: NoteSearchFacts, query: SearchQuery): boolea
 	return true;
 }
 
-/** Every node id whose facts satisfy the query - the caller applies this as either a highlight or a filter (see this module's docstring). */
-export function evaluateQuery(factsByNode: Map<string, NoteSearchFacts>, query: SearchQuery): Set<string> {
+/** Every node id whose facts satisfy the query - the caller hides everything else (see this module's docstring). */
+export function evaluateQuery(factsByNode: Map<string, NoteFilterFacts>, query: FilterQuery): Set<string> {
 	const matches = new Set<string>();
 	for (const [node, facts] of factsByNode) {
 		if (matchesQuery(facts, query)) matches.add(node);

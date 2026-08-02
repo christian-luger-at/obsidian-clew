@@ -1,3 +1,6 @@
+import { FilterQuery } from './graph/filter';
+import { NodeGroup } from './graph/nodeGroups';
+
 export interface PinnedPosition {
 	x: number;
 	y: number;
@@ -76,9 +79,9 @@ export interface ClewAppearanceSettings {
 	 * note color - same logic as edgeColorOverride, including that it's
 	 * also used (instead of the theme's accent color) for the hovered node
 	 * itself. Doesn't affect cover-image nodes (theme.ts's imageNodeColor,
-	 * a deliberately distinct accent) or a chosen visual-encoding color
-	 * (visualEncoding.ts), same as edgeColorOverride never affecting
-	 * search/path/stagnation edge coloring.
+	 * a deliberately distinct accent) or a note colored by a node group
+	 * (graph/nodeGroups.ts) - a group's own color always wins, same as
+	 * edgeColorOverride never affecting search/path edge coloring.
 	 */
 	nodeColorOverride: string | null;
 	/**
@@ -125,4 +128,22 @@ export interface ClewSettings {
 	 */
 	pinnedPositions: Record<string, PinnedPosition>;
 	appearance: ClewAppearanceSettings;
+	/**
+	 * The Filter panel's current criteria - user feedback: closing the
+	 * panel (or the graph view, or Obsidian itself) shouldn't lose it, the
+	 * same reasoning pinnedPositions above already follows. GraphPane's
+	 * filter icon shows `is-active` whenever this isn't
+	 * isEmptyQuery()-empty, independent of whether the panel itself is
+	 * currently open.
+	 */
+	filterQuery: FilterQuery;
+	/**
+	 * User-defined "Color & size" node groups (see graph/nodeGroups.ts) -
+	 * saved state, same reasoning as filterQuery/pinnedPositions above: a
+	 * group someone spent time defining shouldn't vanish on panel close or
+	 * plugin reload. Empty array = no groups defined yet, not "feature off" -
+	 * GraphPane.colorAndSizeButton's `is-active` tracks whether any group is
+	 * *enabled*, independent of the panel being open.
+	 */
+	nodeGroups: NodeGroup[];
 }

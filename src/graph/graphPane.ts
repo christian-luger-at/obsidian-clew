@@ -1,4 +1,4 @@
-import { App, DropdownComponent, getAllTags, Menu, Setting, setIcon, setTooltip, TextComponent, TFile } from 'obsidian';
+import { App, ColorComponent, DropdownComponent, ExtraButtonComponent, getAllTags, Menu, Setting, setIcon, setTooltip, TextComponent, TFile, ToggleComponent } from 'obsidian';
 import Graph from 'graphology';
 import type { Attributes } from 'graphology-types';
 import type Sigma from 'sigma';
@@ -11,12 +11,25 @@ import { computeCircularLayout } from './circularLayout';
 import { findPaths, PathResult } from './pathfinding';
 import { PathfindingModal } from './pathfindingModal';
 import { RadialLayoutModal } from './radialLayoutModal';
+import { ConfirmModal } from './confirmModal';
 import { exportPathToCanvas } from './canvasExport';
-import { CommunityStats, computeCommunityStats, detectCommunities, formatRelativeTime, staleness, stalenessColor } from './stagnation';
+import { computeCommunityStats, detectCommunities, staleness } from './stagnation';
 import { readThemeColors, ThemeColors, blendToward } from './theme';
-import { assignCategoryColors, colorByCategory, sizeByNumericValue } from './visualEncoding';
-import { VisualEncodingModal, VisualEncodingRequest } from './visualEncodingModal';
-import { EMPTY_SEARCH_QUERY, evaluateQuery, isEmptyQuery, NoteSearchFacts, SearchQuery } from './search';
+import { EMPTY_FILTER_QUERY, evaluateQuery, FilterQuery, isEmptyQuery, NoteFilterFacts } from './filter';
+import {
+	DEFAULT_GROUP_COLORS,
+	describeCriterion,
+	evaluateGroups,
+	GroupCriterion,
+	GroupCriterionType,
+	MAX_NODE_GROUPS,
+	needsClusterFreshness,
+	needsContentSearch,
+	NodeGroup,
+	NodeGroupFacts,
+	StalenessBucket,
+	StringOperator,
+} from './nodeGroups';
 import { ClewAppearanceSettings, DEFAULT_APPEARANCE_SETTINGS } from '../settings';
 import type ClewPlugin from '../main';
 
@@ -38,11 +51,6 @@ const MIN_FIT_EXTENT = 32;
  */
 const HOVER_DIM_TRANSITION_MS = 200;
 
-const MIN_COMMUNITY_SIZE_SHOWN = 2;
-
-/** Caps the visual-encoding legend so a property with many distinct values doesn't turn it into a second scrollable panel. */
-const MAX_LEGEND_CATEGORIES = 8;
-
 /**
  * 'force' is the only mode with live physics (ForceAtlas2) and the only one
  * dragging (setupNodeDragging) or pinning (finishDrag) works against - the
@@ -58,7 +66,17 @@ const LAYOUT_MODE_LABELS: Record<LayoutMode, string> = {
 	circular: 'Circular',
 };
 
-/** Parses a search filter's number input (staleDays/minDegree) - empty/invalid/negative all mean "criterion off" (null), same as the field never being touched, rather than a confusing 0-vs-unset distinction the UI would otherwise need to expose separately. */
+/** A persistent label at the start of every Color & size criterion row (renderCriterionRow()) - user feedback: once a folder/filename/text criterion had a value typed in, its placeholder-only hint disappeared and every free-text row looked identical. */
+const CRITERION_TYPE_LABELS: Record<GroupCriterionType, string> = {
+	tag: 'Tag',
+	property: 'Property',
+	folder: 'Folder',
+	filename: 'Filename',
+	text: 'Text',
+	clusterFreshness: 'Stagnation',
+};
+
+/** Parses the filter panel's number inputs (staleDays/minDegree) - empty/invalid/negative all mean "criterion off" (null), same as the field never being touched, rather than a confusing 0-vs-unset distinction the UI would otherwise need to expose separately. */
 function parsePositiveInt(value: string): number | null {
 	const trimmed = value.trim();
 	if (trimmed === '') return null;
@@ -313,35 +331,70 @@ export class GraphPane {
 	private readonly panelEl: HTMLElement;
 	private readonly legendEl: HTMLElement;
 	private readonly appearancePanelEl: HTMLElement;
-	private readonly stagnationButton: HTMLButtonElement;
-	private readonly searchButton: HTMLButtonElement;
-	private readonly searchWrapperEl: HTMLElement;
-	private readonly searchInputEl: HTMLInputElement;
-	private readonly searchModeButtons: { highlight: HTMLButtonElement; filter: HTMLButtonElement };
-	// Assigned synchronously inside addDropdown()/addText()'s callback
-	// during construction (Setting invokes it immediately) - not `readonly`
-	// since that assignment happens in a nested closure, which TypeScript's
-	// definite-assignment check can't trace back to the constructor itself.
-	private searchTagDropdown!: DropdownComponent;
-	private searchPropertyDropdown!: DropdownComponent;
-	private searchPropertyValueInput!: TextComponent;
-	private searchStaleDaysInput!: TextComponent;
-	private searchMinDegreeInput!: TextComponent;
+	private readonly filterButton: HTMLButtonElement;
+	private readonly filterPanelEl: HTMLElement;
+	// Reassigned on every renderFilterPanel() call (rebuilt from scratch
+	// each time the panel opens, same as appearancePanelEl/
+	// renderAppearancePanel()) - not `readonly`, and no need to also keep
+	// direct references to the text/staleDays/minDegree inputs the way an
+	// earlier version did, since nothing outside renderFilterPanel() needs
+	// to reach into them individually any more (clearing now happens by
+	// resetting plugin.settings.filterQuery and re-rendering, not by
+	// imperatively resetting each control).
+	private filterTagsContainerEl!: HTMLElement;
+	private filterPropertiesContainerEl!: HTMLElement;
+	/** Every distinct tag/frontmatter-property-key across the current file set - refreshed alongside the graph in refreshFilterOptions(), read by renderFilterTagRows()/renderFilterPropertyRows() when (re)building their controls. */
+	private filterAvailableTags: string[] = [];
+	private filterAvailableProperties: string[] = [];
+	/** Debounces the disk write (not the live filter apply, which stays instant) - filter criteria change on every keystroke/checkbox click, and persisting on every single one would spam disk writes for no benefit (see settings.ts's ClewSettings.filterQuery). */
+	private readonly debouncedSaveFilterQuery = debounce(() => void this.plugin.saveSettings(), 250);
 	private readonly layoutButton: HTMLButtonElement;
-	private readonly visualEncodingButton: HTMLButtonElement;
+	private readonly colorAndSizeButton: HTMLButtonElement;
+	private readonly colorAndSizePanelEl: HTMLElement;
+	// Reassigned on every renderColorAndSizePanel() call, same reasoning as
+	// filterTagsContainerEl above.
+	private colorAndSizeGroupsContainerEl!: HTMLElement;
+	/** id of the group currently expanded into its edit form - null when every group is shown collapsed. Editing operates directly on the real object in plugin.settings.nodeGroups (see debouncedSaveNodeGroups's docstring) - there's no separate draft/Save/Cancel step any more (user feedback: every change should just save immediately). */
+	private editingGroupId: string | null = null;
+	/** Debounces the disk write for node-group edits (name/color/criteria/etc. change on every keystroke) - the live graph apply (applyNodeGroups()) stays instant, only the write to disk is coalesced. Same pattern as debouncedSaveFilterQuery above. */
+	private readonly debouncedSaveNodeGroups = debounce(() => void this.plugin.saveSettings(), 250);
+	/**
+	 * Index into the editing group's criteria of the one criterion currently
+	 * shown expanded (its full type-specific controls) instead of as a
+	 * compact chip - null when every criterion is shown as a chip. User
+	 * feedback: every criterion always showing its full controls at once
+	 * read as cluttered/hard to scan ("unübersichtlich") once a group had
+	 * more than one or two; a chip per criterion (see nodeGroups.ts's
+	 * describeCriterion()) that expands on click keeps the common case (a
+	 * few configured criteria) compact, at the cost of an extra click to
+	 * edit one.
+	 */
+	private editingCriterionIndex: number | null = null;
+	/**
+	 * A copy of the criterion at editingCriterionIndex, taken the moment it
+	 * was expanded - lets its "Cancel" button revert live edits made during
+	 * this one editing session (everything else auto-saves immediately, but
+	 * a half-finished criterion edit - e.g. picking a property key before
+	 * typing its value - should still be revertable). null specifically
+	 * means "this criterion was just created by '+ add', not opened from an
+	 * existing chip" - Cancel then removes it outright instead of
+	 * "reverting" to a blank criterion that would just sit there unconfigured.
+	 */
+	private criterionEditSnapshot: GroupCriterion | null = null;
+	/** Every distinct tag/frontmatter-property-key/folder across the current file set, for the group-criteria dropdowns - refreshed alongside the graph in refreshColorAndSizeOptions(), same reasoning as filterAvailableTags/filterAvailableProperties above. */
+	private colorAndSizeAvailableTags: string[] = [];
+	private colorAndSizeAvailableProperties: string[] = [];
+	private colorAndSizeAvailableFolders: string[] = [];
+	/** Lowercased "title\ncontent" per note path - only populated when at least one enabled group has a `text` criterion (see nodeGroups.ts's needsContentSearch()); refreshed by refreshNoteContentCache(). Reading every note's body is a real I/O cost, so this stays empty (and unused) otherwise. */
+	private noteContentCache = new Map<string, string>();
 	private readonly appearanceButton: HTMLButtonElement;
 	private renderer: Sigma | null = null;
 	private layout: LayoutRun | null = null;
 	private graph: Graph | null = null;
 	private files: TFile[] = [];
 	private mtimeByPath = new Map<string, number>();
-	private stagnationActive = false;
-	private searchQuery: SearchQuery = EMPTY_SEARCH_QUERY;
-	private searchMode: 'highlight' | 'filter' = 'highlight';
 	private layoutMode: LayoutMode = 'force';
 	private theme: ThemeColors;
-	private colorProperty: string | null = null;
-	private sizeProperty: string | null = null;
 	private draggedNode: string | null = null;
 	/**
 	 * Whether the mouse actually moved between downNode and mouseup - a
@@ -353,7 +406,7 @@ export class GraphPane {
 	 * that method's docstring for why this is necessary at all.
 	 */
 	private dragMoved = false;
-	/** Whether a found path result is the reason nodes/edges are currently colored - see renderLegend()'s precedence over this vs. stagnation/search, which visually override a path's reducer when active. */
+	/** Whether a found path result is the reason nodes/edges are currently colored - see renderLegend()'s precedence over this vs. the filter, which visually overrides a path's reducer when active. */
 	private pathResultActive = false;
 	/** Remembers the radial layout's chosen focus note so an appearance-panel change can re-apply it (reapplyActiveLayout()) without re-prompting for a note. */
 	private radialFocusNode: string | null = null;
@@ -379,9 +432,11 @@ export class GraphPane {
 		// needs; `.clew-toolbar`'s own background/border/shadow (styles.css)
 		// gives it the same solid "floating panel" look as the legend and
 		// appearance panel already have, instead of sitting directly on the
-		// canvas. Wrapped in `.clew-topbar` (a plain flex row) so the search
-		// input can sit immediately to the rail's right without either one
-		// needing a hardcoded pixel offset.
+		// canvas. `.clew-topbar` is a flex-column positioning wrapper
+		// (top-right) - the filter panel (filterPanelEl below) is its second
+		// child, dropping straight down below the rail rather than jumping
+		// to the opposite (bottom-right) corner like the appearance panel -
+		// user feedback that it doesn't need to match Appearance's position.
 		const topbarEl = this.containerEl.createDiv({ cls: 'clew-topbar' });
 		const toolbarEl = topbarEl.createDiv({ cls: 'clew-toolbar' });
 
@@ -407,12 +462,18 @@ export class GraphPane {
 
 		// Tucked behind its own icon (like Find path is behind its icon,
 		// opening a modal) rather than an always-visible input - user
-		// feedback: a persistent search box competed for space in the
-		// toolbar/topbar. Toggles searchWrapperEl's visibility instead of
-		// opening a modal, since search is a live filter you watch the graph
+		// feedback: a persistent filter box competed for space in the
+		// toolbar/topbar. Toggles filterPanelEl's visibility instead of
+		// opening a modal, since this is a live filter you watch the graph
 		// react to while typing, not a one-shot dialog you submit and close.
-		this.searchButton = iconButton('search', 'Search notes…');
-		this.searchButton.addEventListener('click', () => this.toggleSearch());
+		// `is-active` here tracks whether a filter is actually *set*
+		// (updateFilterButtonState(), called from applyFilter()) rather
+		// than whether the panel happens to be open - the filter keeps
+		// running in the background once you close the panel (it's saved
+		// state, see settings.ts's ClewSettings.filterQuery), so the icon
+		// needs to keep saying so.
+		this.filterButton = iconButton('filter', 'Filter…');
+		this.filterButton.addEventListener('click', () => this.toggleFilterPanel());
 
 		const findPathButton = iconButton('route', 'Find path…');
 		findPathButton.addEventListener('click', () => this.openPathfindingModal());
@@ -424,101 +485,38 @@ export class GraphPane {
 		const centerButton = iconButton('maximize', 'Reset view');
 		centerButton.addEventListener('click', () => void this.resetCameraAndRefresh());
 
-		// TEMP: disabled while the toolbar reorder above (Layout, Find path)
-		// is being tried out - re-enable once that's settled.
-		this.stagnationButton = iconButton('flame', 'Stagnation heatmap');
-		this.stagnationButton.disabled = true;
-		this.stagnationButton.addEventListener('click', () => this.toggleStagnationHeatmap());
+		// Doc section 3.1 / GitHub issue #1: user-defined named groups of
+		// notes (see nodeGroups.ts), each with its own color/size and one or
+		// more matching criteria - replaced the old "pick one frontmatter
+		// property, or the built-in Cluster freshness gradient, to color/size
+		// the whole graph by" modal entirely (user feedback: a single
+		// property dropdown couldn't express "notes tagged #project OR in
+		// the Work folder" as one visual group).
+		this.colorAndSizeButton = iconButton('palette', 'Color & size…');
+		this.colorAndSizeButton.addEventListener('click', () => this.toggleColorAndSizePanel());
 
-		// Doc section 3.1 / GitHub issue #1: color/size driven by a chosen
-		// frontmatter property instead of the fixed image/degree defaults.
-		this.visualEncodingButton = iconButton('palette', 'Visual encoding…');
-		this.visualEncodingButton.disabled = true;
-		this.visualEncodingButton.addEventListener('click', () => this.openVisualEncodingModal());
-
-		// Node size / physics / label / layout-spacing tuning - lives here
-		// (not the plugin's Settings tab) since the user adjusts these while
-		// watching the graph react, not on a separate settings screen.
-		// Re-enabled (the other TEMP-disabled buttons below stay disabled) -
-		// needed to check/reset ClewAppearanceSettings.edgeColorOverride,
-		// which silently overrides every defaultEdgeColor computation in
-		// theme.ts and had no other way to reach while this button was
-		// disabled.
 		this.appearanceButton = iconButton('sliders-horizontal', 'Appearance…');
 		this.appearanceButton.addEventListener('click', () => this.toggleAppearancePanel());
 
-		// A small panel (not just a bare input) - "Suche mit verschiedenen
-		// Kriterien, die entweder highlighted oder filtert" - text is still
-		// the primary/always-visible criterion, but tag/property/staleness/
-		// link-count criteria and the Highlight-vs-Filter mode toggle live
-		// here too, all AND-combined (see search.ts). Doesn't filter/hide by
-		// default (Highlight mode: dims non-matches, keeps structure
-		// visible for context - doc's "Fokusmodus") - Filter mode is the
-		// new, explicitly opt-in "hide everything else" behavior. A
-		// sibling of the icon rail (not inside it) - sitting next to it
-		// needs no pixel math (see topbarEl's own docstring above). Hidden
-		// until searchButton (above) reveals it - see toggleSearch().
-		this.searchWrapperEl = topbarEl.createDiv({ cls: 'clew-search-panel' });
-		this.searchWrapperEl.hide();
+		// Both live inside topbarEl, right below the icon rail (see
+		// topbarEl's own comment above) - not siblings of appearancePanelEl,
+		// so neither shares a corner with it and both can be open at once
+		// without overlapping. Empty shells here - contents are (re)built
+		// fresh every time they open, same reasoning as
+		// renderAppearancePanel().
+		this.filterPanelEl = topbarEl.createDiv({ cls: 'clew-filter-panel clew-compact-settings' });
+		this.filterPanelEl.hide();
+		this.colorAndSizePanelEl = topbarEl.createDiv({ cls: 'clew-filter-panel clew-color-size-panel' });
+		this.colorAndSizePanelEl.hide();
 
-		// `search-input-container` is Obsidian's own class (used by its
-		// Quick Switcher, Settings search, etc.) - it draws the magnifying-
-		// glass icon via a themed `:before` pseudo-element and applies the
-		// matching input padding, so search gets an icon consistent with
-		// the rest of Obsidian's UI for free, no custom icon markup needed.
-		const searchInputWrapperEl = this.searchWrapperEl.createDiv({ cls: 'search-input-container' });
-		this.searchInputEl = searchInputWrapperEl.createEl('input', {
-			type: 'search',
-			placeholder: 'Search notes…',
-			cls: 'clew-search-input',
-		});
-		this.searchInputEl.addEventListener('input', () => this.updateSearch({ text: this.searchInputEl.value }));
-
-		const modeRowEl = this.searchWrapperEl.createDiv({ cls: 'clew-search-mode-toggle' });
-		const highlightModeButton = modeRowEl.createEl('button', { text: 'Highlight' });
-		const filterModeButton = modeRowEl.createEl('button', { text: 'Filter' });
-		this.searchModeButtons = { highlight: highlightModeButton, filter: filterModeButton };
-		highlightModeButton.addEventListener('click', () => this.setSearchMode('highlight'));
-		filterModeButton.addEventListener('click', () => this.setSearchMode('filter'));
-		this.updateSearchModeButtons();
-
-		new Setting(this.searchWrapperEl).setName('Tag').addDropdown((dropdown) => {
-			this.searchTagDropdown = dropdown;
-			dropdown.addOption('', '(Any)');
-			dropdown.onChange((value) => this.updateSearch({ tag: value === '' ? null : value }));
-		});
-		new Setting(this.searchWrapperEl)
-			.setName('Property')
-			.addDropdown((dropdown) => {
-				this.searchPropertyDropdown = dropdown;
-				dropdown.addOption('', '(None)');
-				dropdown.onChange((value) => this.updateSearch({ propertyKey: value === '' ? null : value }));
-			})
-			.addText((text) => {
-				this.searchPropertyValueInput = text;
-				text.setPlaceholder('Value').onChange((value) => this.updateSearch({ propertyValue: value }));
-			});
-		new Setting(this.searchWrapperEl).setName('Not edited in ≥ days').addText((text) => {
-			this.searchStaleDaysInput = text;
-			text.inputEl.type = 'number';
-			text.inputEl.min = '0';
-			text.onChange((value) => this.updateSearch({ staleDays: parsePositiveInt(value) }));
-		});
-		new Setting(this.searchWrapperEl).setName('Min links').addText((text) => {
-			this.searchMinDegreeInput = text;
-			text.inputEl.type = 'number';
-			text.inputEl.min = '0';
-			text.onChange((value) => this.updateSearch({ minDegree: parsePositiveInt(value) }));
-		});
-
-		// Top-left - opposite the top-right icon rail/search, so it doesn't
-		// compete with either for space.
+		// Top-left - opposite the top-right icon rail/filter panel, so it
+		// doesn't compete with either for space.
 		this.panelEl = this.containerEl.createDiv({ cls: 'clew-path-panel' });
 		this.panelEl.hide();
 
 		// Bottom-left - opposite the bottom-right appearance panel and the
-		// top-right icon rail/search, so it doesn't compete with either for
-		// space.
+		// top-right icon rail/filter panel, so it doesn't compete with
+		// either for space.
 		this.legendEl = this.containerEl.createDiv({ cls: 'clew-legend' });
 
 		// Bottom-right - the one remaining free corner.
@@ -539,18 +537,13 @@ export class GraphPane {
 		// with dead click handlers.
 		this.panelEl.empty();
 		this.panelEl.hide();
-		this.stagnationActive = false;
-		this.stagnationButton.removeClass('is-active');
-		this.clearSearch();
 		this.activateLayoutMode('force');
-		this.colorProperty = null;
-		this.sizeProperty = null;
-		this.visualEncodingButton.removeClass('is-active');
 		this.pathResultActive = false;
 
 		this.files = files;
 		this.mtimeByPath = new Map(files.map((file) => [file.path, file.stat.mtime]));
-		this.refreshSearchFilterOptions();
+		this.refreshFilterOptions();
+		this.refreshColorAndSizeOptions();
 		this.graph = buildVaultGraph(this.app, files, {
 			directed: false,
 			pinnedPositions: this.plugin.settings.pinnedPositions,
@@ -570,6 +563,16 @@ export class GraphPane {
 		this.setupNodeClick();
 		this.setupNodeHover();
 		this.layout = runLayout(this.graph, this.layoutOptions(SETTLE_DURATION_MS));
+		// Re-applies the saved filter (see settings.ts's
+		// ClewSettings.filterQuery) to the freshly-built graph - a no-op if
+		// it's empty (isEmptyQuery() branch inside applyFilter()).
+		this.applyFilter();
+		// Re-evaluates the saved node groups (see settings.ts's
+		// ClewSettings.nodeGroups) against the freshly-built file set -
+		// updates the button state and, if a group needs note content (see
+		// nodeGroups.ts's needsContentSearch()), refreshes that cache and
+		// repaints again once it lands.
+		this.applyNodeGroups();
 
 		this.renderLegend();
 		GraphPane.active = this;
@@ -634,7 +637,7 @@ export class GraphPane {
 	 * Sets every edge's `type` attribute directly (same pattern as
 	 * paintVisualEncoding() setting node `color` - not a reducer, since
 	 * this needs to actually stick as the base attribute every other edge
-	 * reducer (hover, search result, path highlight, stagnation) spreads
+	 * reducer (hover, the filter, path highlight, cluster focus) spreads
 	 * `...attr` from and otherwise leaves alone), rather than installing a
 	 * permanent edgeReducer of its own. `undefined` (showEdgeDirection off,
 	 * or GitHub's own default) falls back to sigma's own `defaultEdgeType`
@@ -696,8 +699,21 @@ export class GraphPane {
 	 * left standing) so it always reflects the current settings - notably
 	 * after "Reset to defaults", where every slider needs to visibly jump
 	 * back rather than silently disagree with the values it just wrote.
+	 *
+	 * `.empty()` below resets the panel's own scroll position to 0 - a real
+	 * problem since this also gets called mid-drag by any *layout* slider
+	 * (activateLayoutMode(), called from reapplyActiveLayout()'s
+	 * setForceLayout()/setHierarchicalLayout()/etc., re-renders the panel
+	 * whenever it's open so its layout-specific slider groups stay in
+	 * sync). Without saving/restoring scrollTop, nudging e.g. "Hierarchical
+	 * level spacing" (near the bottom) yanked the panel back up to the top
+	 * on every single tick - user feedback ("springt zur ersten
+	 * Einstellung"). Saved/restored here (not per-caller) so every
+	 * renderAppearancePanel() call is covered, including "Reset to
+	 * defaults".
 	 */
 	private renderAppearancePanel(): void {
+		const previousScrollTop = this.appearancePanelEl.scrollTop;
 		this.appearancePanelEl.empty();
 		const headerEl = this.appearancePanelEl.createDiv({ cls: 'clew-appearance-panel-header' });
 		headerEl.createEl('h4', { text: 'Graph appearance' });
@@ -820,6 +836,8 @@ export class GraphPane {
 					this.renderAppearancePanel();
 				}),
 			);
+
+		this.appearancePanelEl.scrollTop = previousScrollTop;
 	}
 
 	/** Renders one Appearance-panel slider from its spec - shared by the "Nodes"/"Edges" sections above and the APPEARANCE_SLIDER_GROUPS loop, all of which need the identical Setting+addSlider+debounced-apply wiring. */
@@ -863,8 +881,6 @@ export class GraphPane {
 
 	openPathfindingModal(): void {
 		if (!this.graph) return;
-		this.hideStagnationHeatmap();
-		this.clearSearch();
 		new PathfindingModal(this.app, this.files, (request) => {
 			this.runPathSearch(request.source, request.target, request.directed);
 		}).open();
@@ -952,16 +968,16 @@ export class GraphPane {
 	}
 
 	/**
-	 * The "nothing else active" color/size - a node's color depends on
-	 * `colorProperty` if set (falling back to `type`, plain vs. cover-image,
-	 * for any node missing that property, plus the current theme - see
-	 * vaultGraph.ts's docstring on why it doesn't set `color` itself), size
-	 * on `sizeProperty` if set (falling back to vaultGraph.ts's degree-based
-	 * default). sizeNodesByDegree() always runs first to (re-)establish that
-	 * true baseline, then the property-driven value overlays wherever it
-	 * applies - so switching from one sizeProperty to another, or back to
-	 * "Default", never leaves a node showing a stale size left over from a
-	 * previous choice that no longer covers it.
+	 * The "nothing else active" color/size - a node's color/size comes from
+	 * the first *enabled* node group (see nodeGroups.ts) whose criteria it
+	 * matches, falling back to `type` (plain vs. cover-image, plus the
+	 * current theme - see vaultGraph.ts's docstring on why it doesn't set
+	 * `color` itself) for color and the degree-based default for size.
+	 * sizeNodesByDegree() always runs first to (re-)establish that true
+	 * baseline, then each matched group's own size (if it set one) overlays
+	 * on top - so a note that stops matching any group, or starts matching
+	 * a group with no size override, never keeps a stale size left over
+	 * from a previous evaluation.
 	 *
 	 * Bakes color/size into each node's own attributes and leaves
 	 * nodeReducer null, rather than an always-on reducer computing them
@@ -984,27 +1000,66 @@ export class GraphPane {
 			imageBaseSize: appearance.nodeImageBaseSize,
 			degreeGrowth: appearance.nodeDegreeGrowth,
 		});
-		if (this.sizeProperty) {
-			const sizeByNode = sizeByNumericValue(this.propertyValues(this.sizeProperty, toNumberValue));
-			graph.forEachNode((node) => {
-				const size = sizeByNode.get(node);
-				if (size !== undefined) graph.setNodeAttribute(node, 'size', size);
-			});
-		}
 
-		const colorByNode = this.colorProperty ? colorByCategory(this.propertyValues(this.colorProperty, toStringValue)) : null;
+		const groupByNode = evaluateGroups(this.buildNodeGroupFacts(), this.plugin.settings.nodeGroups);
+
+		for (const [node, group] of groupByNode) {
+			if (group.sizeMultiplier === null) continue;
+			// Scales the size sizeNodesByDegree() just computed rather than
+			// replacing it outright - see NodeGroup.sizeMultiplier's own
+			// docstring for why (a hub note in the group should still read as
+			// bigger than a leaf note in the same group, not collapse to one
+			// uniform size).
+			const baseSize = graph.getNodeAttribute(node, 'size') as number;
+			graph.setNodeAttribute(node, 'size', baseSize * group.sizeMultiplier);
+		}
 		graph.forEachNode((node, attr) => {
 			const defaultColor = attr.type === 'image' ? this.theme.imageNodeColor : this.resolvedNodeColor();
-			graph.setNodeAttribute(node, 'color', colorByNode?.get(node) ?? defaultColor);
+			graph.setNodeAttribute(node, 'color', groupByNode.get(node)?.color ?? defaultColor);
 		});
 	}
 
-	/** Reads a frontmatter property across the current file set, parsing each raw value with `parse` (undefined for anything that doesn't fit). */
-	private propertyValues<T>(property: string, parse: (raw: unknown) => T | undefined): Map<string, T | undefined> {
-		const result = new Map<string, T | undefined>();
+	/**
+	 * Gathers per-note facts once per paint (not cached across calls - see
+	 * buildFilterFacts()'s identical reasoning) for nodeGroups.ts's pure
+	 * evaluateGroups() to match against. `content` and `clusterStaleness`
+	 * are the two facts real I/O/computation backs - both stay at their
+	 * empty/null default unless an enabled group actually needs them (see
+	 * nodeGroups.ts's needsContentSearch()/needsClusterFreshness()), so a
+	 * vault with no `text` or `clusterFreshness` criteria in use never pays
+	 * for either.
+	 */
+	private buildNodeGroupFacts(): Map<string, NodeGroupFacts> {
+		const clusterStalenessByNode = needsClusterFreshness(this.plugin.settings.nodeGroups) ? this.computeClusterStaleness() : null;
+		const result = new Map<string, NodeGroupFacts>();
 		for (const file of this.files) {
-			const raw = this.app.metadataCache.getFileCache(file)?.frontmatter?.[property] as unknown;
-			result.set(file.path, parse(raw));
+			const cache = this.app.metadataCache.getFileCache(file);
+			const folder = file.parent?.path ?? '';
+			result.set(file.path, {
+				label: file.basename,
+				folder: folder === '/' ? '' : folder,
+				content: this.noteContentCache.get(file.path) ?? '',
+				tags: (cache ? getAllTags(cache) : null) ?? [],
+				frontmatter: cache?.frontmatter ?? {},
+				clusterStaleness: clusterStalenessByNode?.get(file.path) ?? null,
+			});
+		}
+		return result;
+	}
+
+	/** Louvain communities (stagnation.ts) turned into a 0-1 staleness value per node, relative to every other community present - backs the `clusterFreshness` group criterion. Only called when at least one enabled group actually uses it (needsClusterFreshness()) - Louvain detection is a real per-open computational cost, not worth paying unconditionally. */
+	private computeClusterStaleness(): Map<string, number> {
+		if (!this.graph) return new Map();
+		const communities = detectCommunities(this.graph);
+		const stats = computeCommunityStats(communities, (nodeId) => this.mtimeByPath.get(nodeId) ?? 0);
+		const newestValues = stats.map((s) => s.newestMtime);
+		const minNewest = Math.min(...newestValues);
+		const maxNewest = Math.max(...newestValues);
+		const stalenessByCommunity = new Map(stats.map((s) => [s.communityId, staleness(s.newestMtime, minNewest, maxNewest)]));
+		const result = new Map<string, number>();
+		for (const [node, communityId] of communities) {
+			const value = stalenessByCommunity.get(communityId);
+			if (value !== undefined) result.set(node, value);
 		}
 		return result;
 	}
@@ -1019,79 +1074,33 @@ export class GraphPane {
 	 * button `is-active` classes) right where the state changes.
 	 *
 	 * Reflects what's actually painted right now, not merely which piece of
-	 * state happens to be set: stagnation and search both overwrite
-	 * whatever reducer a shown path result set, so they take precedence
-	 * here too, ahead of pathResultActive - otherwise toggling the heatmap
-	 * on top of a shown path would leave the legend describing colors that
-	 * are no longer on screen.
+	 * state happens to be set: the filter overwrites whatever reducer a
+	 * shown path result set, so it takes precedence here too. Node groups
+	 * (Color & size) deliberately have no legend entry of their own - user
+	 * feedback - a group's own name (shown right in its row in the Color &
+	 * size panel) is already the label.
 	 */
 	private renderLegend(): void {
 		this.legendEl.empty();
 
-		if (this.stagnationActive) {
-			this.addLegendItem(rgbToCss(this.theme.freshColorRgb), 'Recently edited cluster');
-			this.addLegendItem(rgbToCss(this.theme.staleColorRgb), 'Stagnant cluster');
-			return;
-		}
-		if (!isEmptyQuery(this.searchQuery)) {
-			this.addLegendItem(this.theme.matchColor, this.searchMode === 'filter' ? 'Shown' : 'Matches search');
-			// Filter mode hides non-matches entirely - nothing left to
-			// explain a "dimmed" swatch for.
-			if (this.searchMode === 'highlight') this.addLegendItem(this.theme.dimNodeColor, 'No match');
+		if (!isEmptyQuery(this.plugin.settings.filterQuery)) {
+			// Everything not shown here is hidden entirely (see
+			// applyFilter()) - nothing left to explain a "dimmed" swatch
+			// for, unlike when this still had a Highlight mode.
+			this.addLegendItem(this.theme.matchColor, 'Shown');
 			return;
 		}
 		if (this.pathResultActive) {
 			this.addLegendItem(this.theme.primaryPathColor, 'Shortest path');
 			this.addLegendItem(this.theme.altPathColor, 'Alternative path');
 			this.addLegendItem(this.theme.dimNodeColor, 'Not on a shown path');
-			return;
 		}
-		if (this.colorProperty) {
-			const values = [...this.propertyValues(this.colorProperty, toStringValue).values()].filter(
-				(value): value is string => value !== undefined,
-			);
-			const entries = [...assignCategoryColors(values).entries()];
-			const shown = entries.slice(0, MAX_LEGEND_CATEGORIES);
-			for (const [value, color] of shown) this.addLegendItem(color, value);
-			if (entries.length > shown.length) {
-				this.legendEl.createDiv({ cls: 'clew-legend-item', text: `+${entries.length - shown.length} more` });
-			}
-			return;
-		}
-
-		// Plain Force layout with nothing else active: no legend. A "Note"
-		// vs. "Note with cover image" legend would be misleading anyway -
-		// @sigma/node-image's default drawing mode keeps the image's own
-		// pixel colors once it loads (see node_modules/@sigma/node-image),
-		// so an image node ends up looking like its thumbnail, never like a
-		// plain color swatch the legend could represent.
 	}
 
 	private addLegendItem(color: string, label: string): void {
 		const item = this.legendEl.createDiv({ cls: 'clew-legend-item' });
 		item.createSpan({ cls: 'clew-legend-swatch' }).style.backgroundColor = color;
 		item.createSpan({ text: label });
-	}
-
-	private openVisualEncodingModal(): void {
-		if (!this.graph) return;
-
-		const availableProperties = new Set<string>();
-		for (const file of this.files) {
-			const frontmatter = this.app.metadataCache.getFileCache(file)?.frontmatter;
-			if (!frontmatter) continue;
-			for (const key of Object.keys(frontmatter)) availableProperties.add(key);
-		}
-
-		const current: VisualEncodingRequest = { colorProperty: this.colorProperty, sizeProperty: this.sizeProperty };
-		new VisualEncodingModal(this.app, [...availableProperties].sort(), current, (request) => {
-			this.colorProperty = request.colorProperty;
-			this.sizeProperty = request.sizeProperty;
-			this.visualEncodingButton.toggleClass('is-active', request.colorProperty !== null || request.sizeProperty !== null);
-			this.paintVisualEncoding();
-			this.renderer?.refresh();
-			this.renderLegend();
-		}).open();
 	}
 
 	/**
@@ -1101,33 +1110,41 @@ export class GraphPane {
 	 *
 	 * Simplest correct behavior, not the most clever one: drops back to the
 	 * neutral default coloring rather than trying to detect which mode
-	 * (path result / stagnation / search) was active and replay it with
-	 * fresh colors - matches the existing precedent that every mode already
+	 * (path result / the filter) was active and replay it with fresh
+	 * colors - matches the existing precedent that every mode already
 	 * resets on a vault refresh (setFiles()), and a user-initiated theme
 	 * switch is rare enough that this isn't worth the added complexity of
 	 * remembering and reapplying arbitrary mode state. Layout mode (force
-	 * vs. hierarchical) and visual encoding (colorProperty/sizeProperty) are
-	 * left untouched here, unlike stagnation/search - neither is actually
-	 * theme-dependent (the categorical palette in visualEncoding.ts is a
-	 * fixed set of colors, not derived from `this.theme`), so there's
-	 * nothing about them a theme switch would make stale. paintVisualEncoding()
-	 * still re-runs below, since its *fallback* colors (nodes without the
-	 * chosen property) do use `this.theme`.
+	 * vs. hierarchical) and node groups are left untouched here, unlike the
+	 * filter - neither is actually theme-dependent (a group's color is
+	 * always a fixed, user-picked value, not derived from `this.theme`), so
+	 * there's nothing about them a theme switch would make stale.
+	 * paintVisualEncoding() still re-runs below, since its *fallback* color
+	 * (nodes matching no enabled group) does use `this.theme`.
 	 */
 	refreshTheme(): void {
 		if (!this.graph) return;
 		this.theme = readThemeColors(this.containerEl, this.plugin.settings.appearance.edgeIntensity);
 		this.renderer?.setSetting('defaultEdgeColor', this.resolvedEdgeColor());
-		this.renderer?.setSetting('labelColor', { color: this.theme.labelColor });
+		// `attribute: 'labelColor'` here too (not just createRenderer()'s
+		// initial setting) - a bare `{ color }` would silently drop the
+		// per-node labelColor override the dim reducers rely on (see
+		// renderer.ts's labelColor docstring), reverting every dimmed
+		// node's label back to full brightness the next time the theme
+		// changes while a highlight happens to be active.
+		this.renderer?.setSetting('labelColor', { attribute: 'labelColor', color: this.theme.labelColor });
 		this.renderer?.setSetting('defaultDrawNodeHover', createNodeHoverDrawer(this.theme.backgroundColor));
 
-		this.stagnationActive = false;
-		this.stagnationButton.removeClass('is-active');
-		this.clearSearch();
 		this.panelEl.empty();
 		this.panelEl.hide();
 		this.paintVisualEncoding();
-		this.clearHighlight();
+		// Re-applies the saved filter with fresh theme colors instead of
+		// unconditionally clearing it - it's saved state now (see
+		// settings.ts's ClewSettings.filterQuery), not something a theme
+		// switch should reset. Already a no-op when there's nothing to
+		// filter (isEmptyQuery() branch inside, same as clearHighlight()
+		// would have done).
+		this.applyFilter();
 		this.renderer?.refresh();
 		this.renderLegend();
 	}
@@ -1263,8 +1280,20 @@ export class GraphPane {
 		// and kept fixed - none of the other layouts respect pins, so this
 		// is what makes a pin survive a round trip through any of them.
 		resetToDeterministicPositions(this.graph, this.plugin.settings.pinnedPositions);
-		this.layout = runLayout(this.graph, this.layoutOptions(SETTLE_DURATION_MS));
-		void this.resetCameraAndRefresh();
+		// Unlike the other layouts (which compute final positions
+		// synchronously, so fitting the camera right after is fitting the
+		// real result), ForceAtlas2 relaxes asynchronously over
+		// SETTLE_DURATION_MS starting from the tight deterministic seed
+		// scatter just reset above - calling resetCameraAndRefresh()
+		// synchronously here (an earlier version of this) fit/locked the
+		// camera to that seed's tiny bounding box, not the spread-out
+		// settled layout, so the graph looked "wrong" (cramped into a
+		// corner or oddly zoomed) until something else (a manual "Reset
+		// view" click, made well after settling) recomputed the fit -
+		// reported as "switching back to Force looks completely different
+		// until I hit Reset View". onSettled fires once the physics run
+		// actually finishes, so the fit reflects the real result.
+		this.layout = runLayout(this.graph, { ...this.layoutOptions(SETTLE_DURATION_MS), onSettled: () => void this.resetCameraAndRefresh() });
 	}
 
 	/**
@@ -1479,21 +1508,26 @@ export class GraphPane {
 	 * version also recolored every neighbor, which read as "everything is
 	 * highlighted" rather than clearly marking one node as selected.
 	 * Neighbors instead keep their exact current color (`base` below -
-	 * whatever a stagnation heatmap/search/path mode already painted them,
-	 * or their normal baked-in color otherwise) - they're exempted from
-	 * dimming, not recolored. Their label *is* forced on though (reversing
-	 * an even earlier attempt at hiding it) - user feedback: being able to
-	 * read which notes a hovered note connects to, without also opening a
-	 * path-finding query, is the actual point of this feature.
+	 * whatever cluster-freshness/the filter/a path result already painted
+	 * them, or their normal baked-in color otherwise) - they're exempted
+	 * from dimming, not recolored. Their label shows if it would anyway
+	 * (same labelSizeThreshold/labelDensity rule as any other node, not
+	 * forced) - user feedback: being able to read which notes a hovered
+	 * note connects to, without also opening a path-finding query, is the
+	 * actual point of this feature.
 	 *
 	 * Composes with whatever mode is currently active (default coloring,
-	 * stagnation heatmap, search, a shown path result) rather than
+	 * cluster freshness, the filter, a shown path result) rather than
 	 * replacing it: saves the current nodeReducer/edgeReducer via
 	 * renderer.getSetting() before overlaying the hover highlight, and
 	 * restores exactly those saved reducers on mouse-leave - so hovering
-	 * while, say, the stagnation heatmap is active leaves neighbors showing
-	 * their heatmap colors untouched, and un-hovering returns to the
-	 * heatmap exactly as it was, not a reset to plain default coloring.
+	 * while, say, the filter is active leaves non-hovered nodes/edges
+	 * respecting the filter's `hidden` untouched (see the node/edge
+	 * reducers below reading `base`, not raw `attr`, in their "everyone
+	 * else" branches - an earlier version used `attr` there and leaked
+	 * every filtered-out node/edge back into view for the hover's
+	 * duration), and un-hovering returns to the filtered view exactly as
+	 * it was, not a reset to plain default coloring.
 	 */
 	private setupNodeHover(): void {
 		if (!this.renderer) return;
@@ -1583,16 +1617,31 @@ export class GraphPane {
 			// blendToward's factor is "how much of the original color remains"
 			// (1 = original, 0 = fully the target) - the inverse of dimProgress
 			// (0 = not dimmed, 1 = fully dimmed).
-			const color = blendToward(attr.color as string, this.theme.dimNodeColor, 1 - dimProgress);
-			const image = dimProgress > 0 ? undefined : (attr.image as string | undefined);
+			// `base`, not raw `attr` - a filter's `hidden: true` (or anything
+			// else a previously-installed reducer computed) lives only in
+			// `base`, never in the graph's own raw attributes, since Filter
+			// mode never bakes `hidden` onto the graph itself. Spreading
+			// `attr` here instead (an earlier version of this) silently
+			// dropped that `hidden` for every node in this branch - i.e.
+			// every non-hovered, non-neighbor node - the instant a hover
+			// started, making the whole filtered-out set flash back into
+			// view (dimmed, but no longer hidden) for as long as the hover
+			// lasted. Reported as "hovering shows nodes/edges the filter
+			// should be hiding".
+			const color = blendToward(base.color as string, this.theme.dimNodeColor, 1 - dimProgress);
+			// `image` isn't part of sigma's own NodeDisplayData type (only
+			// Clew's own `attr`/Attributes-typed data carries it) - `base`'s
+			// type is a union of both, so this needs the same cast `color`
+			// above didn't (color exists on both sides of that union).
+			const image = dimProgress > 0 ? undefined : ((base as Attributes).image as string | undefined);
 			// The label fades in step with the dot (same computed color,
 			// same dimProgress) instead of staying full-brightness while
 			// everything around it dims - user feedback.
-			return { ...attr, color, image, labelColor: color };
+			return { ...base, color, image, labelColor: color };
 		};
 		const edgeReducer = (e: string, attr: Attributes) => {
+			const base = previousEdgeReducer ? previousEdgeReducer(e, attr) : attr;
 			if (incidentEdges.has(e)) {
-				const base = previousEdgeReducer ? previousEdgeReducer(e, attr) : attr;
 				// If the user picked a custom edge color, honor it for the
 				// highlighted neighbor edges too instead of always forcing
 				// the theme's accent color - otherwise a deliberately chosen
@@ -1614,12 +1663,15 @@ export class GraphPane {
 			// signal that doesn't depend on the two colors being distinguishable.
 			// vaultGraph.ts never sets an edge `size` (sigma defaults it to
 			// 0.5 itself, but only *after* the reducer runs - see sigma's own
-			// applyEdgeDefaults) - attr.size is undefined here for every real
+			// applyEdgeDefaults) - base.size is undefined here for every real
 			// edge, so this must fall back to that same 0.5 itself, or the
 			// multiplication below produces NaN and breaks the edge entirely.
-			const baseSize = typeof attr.size === 'number' ? attr.size : 0.5;
+			// `base`, not raw `attr`, for the same reason as the node
+			// reducer above - a filtered-out edge's `hidden: true` only
+			// exists in `base`.
+			const baseSize = typeof base.size === 'number' ? base.size : 0.5;
 			const size = baseSize * (1 - 0.5 * dimProgress);
-			return { ...attr, color: blendToward(this.resolvedEdgeColor(), this.theme.dimEdgeColor, 1 - dimProgress), size };
+			return { ...base, color: blendToward(this.resolvedEdgeColor(), this.theme.dimEdgeColor, 1 - dimProgress), size };
 		};
 
 		renderer.on('enterNode', (payload) => {
@@ -1631,8 +1683,9 @@ export class GraphPane {
 			// Only capture/install once, the first time a hover starts from
 			// fully settled (undimmed) - not on every enterNode, which would
 			// otherwise re-capture *this* reducer as "previous" on a quick
-			// hop between two nodes and lose whatever mode (search/path/
-			// stagnation) was active before hovering began at all.
+			// hop between two nodes and lose whatever mode (the filter, a
+			// path result, cluster freshness) was active before hovering
+			// began at all.
 			if (animationFrame === null && dimProgress === 0) {
 				previousNodeReducer = renderer.getSetting('nodeReducer');
 				previousEdgeReducer = renderer.getSetting('edgeReducer');
@@ -1652,81 +1705,204 @@ export class GraphPane {
 		});
 	}
 
-	private toggleStagnationHeatmap(): void {
-		if (this.stagnationActive) {
-			this.hideStagnationHeatmap();
-		} else {
-			this.showStagnationHeatmap();
-		}
-	}
+	/**
+	 * Rebuilt from scratch each time the panel opens (not built once and
+	 * left standing) so it always reflects plugin.settings.filterQuery,
+	 * same reasoning as renderAppearancePanel() - notably after "Clear
+	 * filter" below, where every control needs to visibly jump back rather
+	 * than silently disagree with the value it just wrote. Grouped by
+	 * topic (Text / Tags / Properties / Activity) the same way the
+	 * Appearance panel groups Nodes/Edges/Physics - user feedback.
+	 */
+	private renderFilterPanel(): void {
+		this.filterPanelEl.empty();
+		const headerEl = this.filterPanelEl.createDiv({ cls: 'clew-appearance-panel-header' });
+		headerEl.createEl('h4', { text: 'Filter' });
+		const closeButton = headerEl.createEl('button', { cls: 'clickable-icon' });
+		setIcon(closeButton, 'x');
+		setTooltip(closeButton, 'Close');
+		closeButton.addEventListener('click', () => this.toggleFilterPanel());
 
-	private showStagnationHeatmap(): void {
-		if (!this.graph) return;
-		this.clearSearch();
-		this.pathResultActive = false;
-		this.stagnationActive = true;
-		this.stagnationButton.addClass('is-active');
+		const query = this.plugin.settings.filterQuery;
 
-		const communities = detectCommunities(this.graph);
-		const stats = computeCommunityStats(communities, (nodeId) => this.mtimeByPath.get(nodeId) ?? 0);
-		const newestValues = stats.map((s) => s.newestMtime);
-		const minNewest = Math.min(...newestValues);
-		const maxNewest = Math.max(...newestValues);
-		const colorByCommunity = new Map(
-			stats.map((s) => [
-				s.communityId,
-				stalenessColor(staleness(s.newestMtime, minNewest, maxNewest), this.theme.freshColorRgb, this.theme.staleColorRgb),
-			]),
-		);
-
-		this.renderer?.setSetting('nodeReducer', (node, attr) => {
-			const communityId = communities.get(node);
-			const color = communityId !== undefined ? colorByCommunity.get(communityId) : undefined;
-			return color ? { ...attr, color } : attr;
+		// `search-input-container` is Obsidian's own class (used by its
+		// Quick Switcher, Settings search, etc.) - it draws the magnifying-
+		// glass icon via a themed `:before` pseudo-element and applies the
+		// matching input padding, so this criterion gets an icon consistent
+		// with the rest of Obsidian's UI for free, no custom icon markup
+		// needed. No heading above it (unlike Tags/Properties/Activity
+		// below) - it's the one always-present, primary criterion, same
+		// spot a plain search box would occupy.
+		const filterTextWrapperEl = this.filterPanelEl.createDiv({ cls: 'search-input-container' });
+		const textInput = filterTextWrapperEl.createEl('input', {
+			type: 'search',
+			placeholder: 'Title contains…',
+			cls: 'clew-filter-text-input',
 		});
-		this.renderer?.setSetting('edgeReducer', null);
+		textInput.value = query.text;
+		textInput.addEventListener('input', () => this.updateFilterQuery({ text: textInput.value }));
 
-		this.renderStagnationPanel(stats);
-		this.renderLegend();
+		new Setting(this.filterPanelEl).setName('Tags').setHeading();
+		this.filterTagsContainerEl = this.filterPanelEl.createDiv({ cls: 'clew-filter-tags' });
+		this.renderFilterTagRows();
+
+		new Setting(this.filterPanelEl).setName('Properties').setHeading();
+		this.filterPropertiesContainerEl = this.filterPanelEl.createDiv({ cls: 'clew-filter-properties' });
+		this.renderFilterPropertyRows();
+		const addPropertyButton = this.filterPanelEl.createEl('button', {
+			text: '+ add property',
+			cls: 'clew-filter-add-button',
+		});
+		addPropertyButton.disabled = this.filterAvailableProperties.length === 0;
+		addPropertyButton.addEventListener('click', () => {
+			const properties = [...this.plugin.settings.filterQuery.properties, { key: this.filterAvailableProperties[0] ?? '', value: '' }];
+			this.updateFilterQuery({ properties });
+			this.renderFilterPropertyRows();
+		});
+
+		new Setting(this.filterPanelEl).setName('Activity').setHeading();
+		new Setting(this.filterPanelEl).setName('Not edited in at least (days)').addText((text) => {
+			text.setValue(query.staleDays === null ? '' : String(query.staleDays));
+			text.inputEl.type = 'number';
+			text.inputEl.min = '0';
+			text.onChange((value) => this.updateFilterQuery({ staleDays: parsePositiveInt(value) }));
+		});
+		// "Min links" (the old name) read as unclear on its own - "links to
+		// what?" - user feedback.
+		new Setting(this.filterPanelEl).setName('Minimum number of links').addText((text) => {
+			text.setValue(query.minDegree === null ? '' : String(query.minDegree));
+			text.inputEl.type = 'number';
+			text.inputEl.min = '0';
+			text.onChange((value) => this.updateFilterQuery({ minDegree: parsePositiveInt(value) }));
+		});
+
+		new Setting(this.filterPanelEl)
+			.setName('Clear filter')
+			.addButton((button) =>
+				button
+					.setButtonText('Clear')
+					.setDisabled(isEmptyQuery(query))
+					.onClick(() => {
+						this.plugin.settings.filterQuery = EMPTY_FILTER_QUERY;
+						void this.plugin.saveSettings();
+						this.applyFilter();
+						this.renderFilterPanel();
+					}),
+			);
 	}
 
-	private hideStagnationHeatmap(): void {
-		if (!this.stagnationActive) return;
-		this.stagnationActive = false;
-		this.stagnationButton.removeClass('is-active');
-		this.clearHighlight();
-		this.panelEl.empty();
-		this.panelEl.hide();
-		this.renderLegend();
+	/** Merges a partial change into the saved query (one field at a time - every filter control's onChange calls this with just its own field), persists it, and re-evaluates - see filter.ts's FilterQuery and settings.ts's ClewSettings.filterQuery. */
+	private updateFilterQuery(partial: Partial<FilterQuery>): void {
+		this.plugin.settings.filterQuery = { ...this.plugin.settings.filterQuery, ...partial };
+		this.debouncedSaveFilterQuery();
+		this.applyFilter();
 	}
 
-	/** Merges a partial change into the current query (one field at a time - every filter control's onChange calls this with just its own field) and re-evaluates - see search.ts's SearchQuery. */
-	private updateSearch(partial: Partial<SearchQuery>): void {
-		this.searchQuery = { ...this.searchQuery, ...partial };
-		this.applySearch();
+	/**
+	 * (Re)builds the tag-filter UI from filterQuery.tags - selected tags
+	 * render as removable pills wrapping in a single flow, with a compact
+	 * "+ Add tag" `<select>` underneath (choosing an option adds it and
+	 * immediately resets to the placeholder) rather than a `Setting` row
+	 * per tag - user feedback: one dropdown+remove-button row per tag, plus
+	 * a separate "+ add tag filter" button below, took up far too much
+	 * vertical space for what's often 2-3 tags. A note matching *any*
+	 * selected tag is enough (OR - see filter.ts's docstring for why
+	 * tags/properties use different combination rules).
+	 */
+	private renderFilterTagRows(): void {
+		this.filterTagsContainerEl.empty();
+		const tags = this.plugin.settings.filterQuery.tags;
+
+		if (tags.length > 0) {
+			const pillsEl = this.filterTagsContainerEl.createDiv({ cls: 'clew-filter-pills' });
+			tags.forEach((tag, index) => {
+				const pill = pillsEl.createDiv({ cls: 'clew-filter-pill' });
+				pill.createSpan({ text: tag });
+				const removeButton = pill.createSpan({ cls: 'clew-filter-pill-remove' });
+				setIcon(removeButton, 'x');
+				setTooltip(removeButton, 'Remove');
+				removeButton.addEventListener('click', () => {
+					const nextTags = this.plugin.settings.filterQuery.tags.filter((_, i) => i !== index);
+					this.updateFilterQuery({ tags: nextTags });
+					this.renderFilterTagRows();
+				});
+			});
+		}
+
+		const remaining = this.filterAvailableTags.filter((tag) => !tags.includes(tag));
+		if (remaining.length === 0) {
+			if (tags.length === 0) this.filterTagsContainerEl.createEl('p', { text: 'No tags in this vault.', cls: 'clew-filter-empty-note' });
+			return;
+		}
+		const addSelect = this.filterTagsContainerEl.createEl('select', { cls: 'dropdown clew-filter-add-select' });
+		addSelect.createEl('option', { text: '+ add tag…', value: '' });
+		for (const tag of remaining) addSelect.createEl('option', { text: tag, value: tag });
+		addSelect.value = '';
+		// Resets to the placeholder after every pick (rather than staying
+		// on the just-picked tag) so the same control can immediately add
+		// another one, and so it never looks like it still "shows" a tag
+		// that's now living in the pills above instead.
+		addSelect.addEventListener('change', () => {
+			const value = addSelect.value;
+			if (!value) return;
+			const nextTags = [...this.plugin.settings.filterQuery.tags, value];
+			this.updateFilterQuery({ tags: nextTags });
+			this.renderFilterTagRows();
+		});
 	}
 
-	private setSearchMode(mode: 'highlight' | 'filter'): void {
-		this.searchMode = mode;
-		this.updateSearchModeButtons();
-		this.applySearch();
-	}
-
-	private updateSearchModeButtons(): void {
-		this.searchModeButtons.highlight.toggleClass('is-active', this.searchMode === 'highlight');
-		this.searchModeButtons.filter.toggleClass('is-active', this.searchMode === 'filter');
+	/**
+	 * (Re)builds the property-filter rows from filterQuery.properties - each
+	 * row is its own key dropdown + value text + remove button, so unlike
+	 * the single-property version this replaced, several can be active at
+	 * once (AND across rows - see filter.ts). Called from renderFilterPanel()
+	 * and every add/remove.
+	 */
+	private renderFilterPropertyRows(): void {
+		this.filterPropertiesContainerEl.empty();
+		this.plugin.settings.filterQuery.properties.forEach((property, index) => {
+			new Setting(this.filterPropertiesContainerEl)
+				.addDropdown((dropdown) => {
+					dropdown.addOption('', '(Choose)');
+					for (const key of this.filterAvailableProperties) dropdown.addOption(key, key);
+					dropdown.setValue(property.key);
+					dropdown.onChange((value) => {
+						const properties = [...this.plugin.settings.filterQuery.properties];
+						properties[index] = { ...properties[index]!, key: value };
+						this.updateFilterQuery({ properties });
+					});
+				})
+				.addText((text) => {
+					text.setPlaceholder('Value').setValue(property.value);
+					text.onChange((value) => {
+						const properties = [...this.plugin.settings.filterQuery.properties];
+						properties[index] = { ...properties[index]!, value };
+						this.updateFilterQuery({ properties });
+					});
+				})
+				.addExtraButton((button) =>
+					button
+						.setIcon('x')
+						.setTooltip('Remove')
+						.onClick(() => {
+							const properties = this.plugin.settings.filterQuery.properties.filter((_, i) => i !== index);
+							this.updateFilterQuery({ properties });
+							this.renderFilterPropertyRows();
+						}),
+				);
+		});
 	}
 
 	/**
 	 * Gathers per-note facts once per query change (not cached across calls -
 	 * this.files/graph can change between them, and re-scanning is cheap
-	 * relative to a metadataCache lookup per file) for search.ts's pure
+	 * relative to a metadataCache lookup per file) for filter.ts's pure
 	 * evaluateQuery() to match against. tags comes from Obsidian's own
 	 * getAllTags() - combines frontmatter `tags:` and inline #tags into one
 	 * normalized list (leading '#'), rather than reimplementing that here.
 	 */
-	private buildSearchFacts(): Map<string, NoteSearchFacts> {
-		const result = new Map<string, NoteSearchFacts>();
+	private buildFilterFacts(): Map<string, NoteFilterFacts> {
+		const result = new Map<string, NoteFilterFacts>();
 		for (const file of this.files) {
 			const cache = this.app.metadataCache.getFileCache(file);
 			result.set(file.path, {
@@ -1740,75 +1916,71 @@ export class GraphPane {
 		return result;
 	}
 
-	/**
-	 * Re-evaluates the current query against every note and applies the
-	 * result as either a Highlight (dim non-matches, same as the old
-	 * text-only search) or a Filter (hide non-matches entirely) - called on
-	 * every criterion/mode change, not just text input, so e.g. picking a
-	 * tag from the dropdown updates the graph immediately too.
-	 */
-	private applySearch(): void {
-		if (!this.graph) return;
+	/** Reflects whether a filter is currently *set* (not whether its panel is open) - see filterButton's own docstring in the constructor. */
+	private updateFilterButtonState(): void {
+		this.filterButton.toggleClass('is-active', !isEmptyQuery(this.plugin.settings.filterQuery));
+	}
 
-		if (isEmptyQuery(this.searchQuery)) {
+	/**
+	 * Re-evaluates the saved query against every note and hides every
+	 * non-matching node/edge - called on every criterion change, not just
+	 * text input, so e.g. adding a tag row updates the graph immediately
+	 * too, and from setFiles()/refreshTheme() so the filter keeps applying
+	 * across a vault refresh or theme switch instead of silently dropping
+	 * (it's saved state now, not transient - see settings.ts's
+	 * ClewSettings.filterQuery). "nur die passenden Knoten anzeigen" - an
+	 * edge only stays visible when *both* extremities match - showing a
+	 * match's edge to a hidden neighbor would look broken and defeats
+	 * "only show what matches" anyway. The match set is precomputed as a
+	 * Set before installing the edge reducer (same pattern as
+	 * applyHighlight()'s primaryEdges/altEdges) - graphology's
+	 * extremities() is a lookup, not free, and the reducer runs once per
+	 * edge per frame.
+	 */
+	private applyFilter(): void {
+		this.updateFilterButtonState();
+		if (!this.graph) return;
+		const graph = this.graph;
+		const query = this.plugin.settings.filterQuery;
+
+		if (isEmptyQuery(query)) {
 			this.clearHighlight();
 			this.renderLegend();
 			return;
 		}
 
-		// Mutually exclusive with the other modes, same as they are with
-		// each other - clears their state directly rather than only
+		// Mutually exclusive with a shown path result, same as it is with
+		// find-path itself - clears its state directly rather than only
 		// overwriting reducers, so re-toggling one of them later doesn't
-		// resurrect stale UI (e.g. the stagnation button staying "active").
-		this.hideStagnationHeatmap();
+		// resurrect stale UI. Active node groups (if any) are left alone -
+		// they're a baseline the filter reducer temporarily paints over,
+		// not something the filter needs to clear.
 		this.panelEl.empty();
 		this.panelEl.hide();
 		this.pathResultActive = false;
 
-		const matches = evaluateQuery(this.buildSearchFacts(), this.searchQuery);
-		if (this.searchMode === 'filter') this.applySearchFilter(matches);
-		else this.applySearchHighlight(matches);
+		const matches = evaluateQuery(this.buildFilterFacts(), query);
+		const visibleEdges = new Set(graph.edges().filter((edge) => graph.extremities(edge).every((node) => matches.has(node))));
+		this.renderer?.setSetting('nodeReducer', (node, attr) => ({ ...attr, hidden: !matches.has(node) }));
+		this.renderer?.setSetting('edgeReducer', (edge, attr) => ({ ...attr, hidden: !visibleEdges.has(edge) }));
 		this.renderLegend();
 	}
 
-	private applySearchHighlight(matches: Set<string>): void {
-		this.renderer?.setSetting('nodeReducer', (node, attr) => {
-			if (matches.has(node)) return { ...attr, color: this.theme.matchColor, labelColor: this.theme.matchColor, zIndex: 2, forceLabel: true };
-			return { ...attr, color: this.theme.dimNodeColor, labelColor: this.theme.dimNodeColor };
-		});
-		this.renderer?.setSetting('edgeReducer', (edge, attr) => ({ ...attr, color: this.theme.dimEdgeColor }));
-	}
-
 	/**
-	 * "nur die passenden Knoten anzeigen" - hides every non-matching node
-	 * (via sigma's own `hidden` attribute), plus every edge touching one,
-	 * rather than leaving a dangling line pointing at nothing. An edge only
-	 * stays visible when *both* extremities match - showing a match's edge
-	 * to a hidden neighbor would look broken and defeats "only show what
-	 * matches" anyway. Precomputed as a Set before installing the edge
-	 * reducer (same pattern as applyHighlight()'s primaryEdges/altEdges) -
-	 * graphology's extremities() is a lookup, not free, and the reducer
-	 * runs once per edge per frame.
+	 * Repopulates filterAvailableTags/filterAvailableProperties from the
+	 * current file set, drops any selected tag that no longer exists in
+	 * the new file set (silently keeping a query criterion the UI can't
+	 * even show as selected would be worse), and re-renders the panel if
+	 * it's currently open - called from setFiles(), same trigger as
+	 * refreshColorAndSizeOptions()'s own property/folder discovery, since
+	 * both depend on "every frontmatter key/tag across the currently loaded
+	 * notes". A
+	 * property row whose key has disappeared is left as-is (still a valid
+	 * row, just pointing at a property no notes currently have - matching
+	 * zero notes rather than needing to guess whether the user wants it
+	 * removed).
 	 */
-	private applySearchFilter(matches: Set<string>): void {
-		if (!this.graph) return;
-		const graph = this.graph;
-		const visibleEdges = new Set(graph.edges().filter((edge) => graph.extremities(edge).every((node) => matches.has(node))));
-
-		this.renderer?.setSetting('nodeReducer', (node, attr) => ({ ...attr, hidden: !matches.has(node) }));
-		this.renderer?.setSetting('edgeReducer', (edge, attr) => ({ ...attr, hidden: !visibleEdges.has(edge) }));
-	}
-
-	/**
-	 * Repopulates the Tag/Property dropdowns from the current file set -
-	 * called from setFiles(), same trigger as openVisualEncodingModal()'s
-	 * property discovery, since both depend on "every frontmatter key/tag
-	 * across the currently loaded notes". Resets the dropdown's own
-	 * selection (and the corresponding query field) if the previously
-	 * chosen value no longer exists in the new list, rather than silently
-	 * keeping a query criterion the UI no longer shows as selected.
-	 */
-	private refreshSearchFilterOptions(): void {
+	private refreshFilterOptions(): void {
 		const tags = new Set<string>();
 		const properties = new Set<string>();
 		for (const file of this.files) {
@@ -1817,98 +1989,590 @@ export class GraphPane {
 			for (const key of Object.keys(cache?.frontmatter ?? {})) properties.add(key);
 		}
 
-		const sortedTags = [...tags].sort();
-		const sortedProperties = [...properties].sort();
+		this.filterAvailableTags = [...tags].sort();
+		this.filterAvailableProperties = [...properties].sort();
 
-		this.searchTagDropdown.selectEl.empty();
-		this.searchTagDropdown.addOption('', '(Any)');
-		for (const tag of sortedTags) this.searchTagDropdown.addOption(tag, tag);
-		const tagStillValid = this.searchQuery.tag !== null && tags.has(this.searchQuery.tag);
-		this.searchTagDropdown.setValue(tagStillValid ? this.searchQuery.tag! : '');
-		if (!tagStillValid && this.searchQuery.tag !== null) this.searchQuery = { ...this.searchQuery, tag: null };
+		const stillValidTags = this.plugin.settings.filterQuery.tags.filter((tag) => tags.has(tag));
+		if (stillValidTags.length !== this.plugin.settings.filterQuery.tags.length) {
+			this.plugin.settings.filterQuery = { ...this.plugin.settings.filterQuery, tags: stillValidTags };
+			void this.plugin.saveSettings();
+		}
 
-		this.searchPropertyDropdown.selectEl.empty();
-		this.searchPropertyDropdown.addOption('', '(None)');
-		for (const key of sortedProperties) this.searchPropertyDropdown.addOption(key, key);
-		const propertyStillValid = this.searchQuery.propertyKey !== null && properties.has(this.searchQuery.propertyKey);
-		this.searchPropertyDropdown.setValue(propertyStillValid ? this.searchQuery.propertyKey! : '');
-		if (!propertyStillValid && this.searchQuery.propertyKey !== null) this.searchQuery = { ...this.searchQuery, propertyKey: null };
+		if (this.filterPanelEl.isShown()) this.renderFilterPanel();
+	}
+
+	/** Reveals the filter panel (behind its own icon, like Find path is behind a modal) or just hides it - the filter itself (see applyFilter()) keeps running either way, since it's saved state now, not something closing the panel should reset. */
+	private toggleFilterPanel(): void {
+		if (this.filterPanelEl.isShown()) {
+			this.filterPanelEl.hide();
+			return;
+		}
+		this.renderFilterPanel();
+		this.filterPanelEl.show();
+		this.filterPanelEl.querySelector<HTMLInputElement>('.clew-filter-text-input')?.focus();
 	}
 
 	/**
-	 * Resets search state - called when another mode takes over, not from
-	 * the search input's own handlers (which must never overwrite what the
-	 * user is actively typing/choosing). Also closes the search panel
-	 * itself (see toggleSearch()), so switching to another mode doesn't
-	 * leave it sitting open with stale (or already-cleared) criteria.
+	 * Repopulates colorAndSizeAvailableTags/Properties/Folders from the
+	 * current file set - called from setFiles(), same trigger and reasoning
+	 * as refreshFilterOptions(). Unlike that method, doesn't prune stale
+	 * values out of existing group criteria: a saved group's criterion is a
+	 * deliberate choice, and silently rewriting it out from under the user
+	 * just because a tag momentarily isn't present in the currently loaded
+	 * file set would be more surprising than leaving it matching zero notes.
 	 */
-	private clearSearch(): void {
-		this.searchQuery = EMPTY_SEARCH_QUERY;
-		this.searchMode = 'highlight';
-		this.searchInputEl.value = '';
-		this.searchTagDropdown.setValue('');
-		this.searchPropertyDropdown.setValue('');
-		this.searchPropertyValueInput.setValue('');
-		this.searchStaleDaysInput.setValue('');
-		this.searchMinDegreeInput.setValue('');
-		this.updateSearchModeButtons();
-		this.searchWrapperEl.hide();
-		this.searchButton.removeClass('is-active');
-	}
-
-	/** Reveals the search panel (behind its own icon, like Find path is behind a modal) or closes and resets it - see clearSearch(). */
-	private toggleSearch(): void {
-		if (this.searchWrapperEl.isShown()) {
-			this.clearSearch();
-			this.clearHighlight();
-			this.renderLegend();
-			return;
-		}
-		this.searchWrapperEl.show();
-		this.searchButton.addClass('is-active');
-		this.searchInputEl.focus();
-	}
-
-	private renderStagnationPanel(stats: CommunityStats[]): void {
-		this.panelEl.empty();
-		this.panelEl.show();
-
-		const shown = stats
-			.filter((community) => community.noteCount >= MIN_COMMUNITY_SIZE_SHOWN)
-			.sort((a, b) => a.newestMtime - b.newestMtime);
-
-		if (shown.length === 0) {
-			this.panelEl.createEl('p', { text: `No clusters with ${MIN_COMMUNITY_SIZE_SHOWN}+ notes found.` });
-			return;
+	private refreshColorAndSizeOptions(): void {
+		const tags = new Set<string>();
+		const properties = new Set<string>();
+		const folders = new Set<string>();
+		for (const file of this.files) {
+			const cache = this.app.metadataCache.getFileCache(file);
+			for (const tag of (cache ? getAllTags(cache) : null) ?? []) tags.add(tag);
+			for (const key of Object.keys(cache?.frontmatter ?? {})) properties.add(key);
+			const folder = file.parent?.path ?? '';
+			if (folder !== '' && folder !== '/') folders.add(folder);
 		}
 
-		this.panelEl.createEl('h4', { text: 'Stagnation by cluster (stalest first)' });
-		const list = this.panelEl.createEl('ol');
-		for (const community of shown) {
-			const item = list.createEl('li', { cls: 'clew-path-item' });
-			item.createDiv({ text: `${community.noteCount} notes` });
-			item.createDiv({ text: `newest edit: ${formatRelativeTime(community.newestMtime)}` });
-			item.createDiv({ text: `median edit: ${formatRelativeTime(community.medianMtime)}` });
-			item.addEventListener('click', () => this.focusCommunity(community.nodeIds));
-		}
+		this.colorAndSizeAvailableTags = [...tags].sort();
+		this.colorAndSizeAvailableProperties = [...properties].sort();
+		this.colorAndSizeAvailableFolders = [...folders].sort();
+
+		if (this.colorAndSizePanelEl.isShown()) this.renderColorAndSizePanel();
 	}
 
-	private focusCommunity(nodeIds: string[]): void {
-		if (!this.renderer || !this.graph) return;
-		const graph = this.graph;
-		const nodeSet = new Set(nodeIds);
-		const edgeSet = new Set(
-			graph.edges().filter((edge) => nodeSet.has(graph.source(edge)) && nodeSet.has(graph.target(edge))),
+	/** Reflects whether any node group is currently *enabled* (not whether the panel is open, or whether an enabled group actually matched anything) - see colorAndSizeButton's own docstring in the constructor. */
+	private updateColorAndSizeButtonState(): void {
+		this.colorAndSizeButton.toggleClass('is-active', this.plugin.settings.nodeGroups.some((group) => group.enabled));
+	}
+
+	/** Reads every note's title + body content into noteContentCache - real I/O (vault.cachedRead() per file), so only called when at least one enabled group has a `text` criterion (see nodeGroups.ts's needsContentSearch()); the cache is cleared instead once nothing needs it any more. */
+	private async refreshNoteContentCache(): Promise<void> {
+		const entries = await Promise.all(
+			this.files.map(async (file): Promise<[string, string]> => [
+				file.path,
+				`${file.basename}\n${await this.app.vault.cachedRead(file)}`.toLowerCase(),
+			]),
 		);
+		this.noteContentCache = new Map(entries);
+	}
 
-		this.renderer.setSetting('nodeReducer', (node, attr) => {
-			if (nodeSet.has(node)) return { ...attr, color: this.theme.matchColor, labelColor: this.theme.matchColor, zIndex: 2, forceLabel: true };
-			return { ...attr, color: this.theme.dimNodeColor, labelColor: this.theme.dimNodeColor };
+	/** Synchronous repaint using whatever's already in noteContentCache - the part of applyNodeGroups() every group-definition change needs *immediately*, split out so refreshNodeGroupContent() below can call it again once fresh content lands, without redoing the button-state/graph-guard bookkeeping twice. */
+	private repaintNodeGroups(): void {
+		this.updateColorAndSizeButtonState();
+		if (!this.graph) return;
+		this.paintVisualEncoding();
+		this.renderer?.refresh();
+		this.renderLegend();
+	}
+
+	/** The async half of applyNodeGroups() - refreshes (or clears) noteContentCache to match whether any enabled group currently needs it, repainting again only when that cache actually changed. */
+	private async refreshNodeGroupContent(): Promise<void> {
+		if (needsContentSearch(this.plugin.settings.nodeGroups)) {
+			await this.refreshNoteContentCache();
+		} else if (this.noteContentCache.size > 0) {
+			this.noteContentCache = new Map();
+		} else {
+			return;
+		}
+		this.repaintNodeGroups();
+	}
+
+	/**
+	 * The group-based analogue of applyFilter() - call after ANY change to
+	 * plugin.settings.nodeGroups (add/edit/delete/reorder/enable-toggle -
+	 * every field in the edit form calls this too, since there's no
+	 * separate Save step any more - user feedback) or from
+	 * setFiles()/refreshTheme(), so groups keep applying across a vault
+	 * refresh or theme switch instead of silently dropping (they're saved
+	 * state, not transient). Repaints immediately with whatever's already
+	 * cached, then - only if a group needs note content - awaits a fresh
+	 * read and repaints again, so a first-ever `text` criterion isn't left
+	 * showing stale (empty) matches until some unrelated repaint happens to
+	 * fire.
+	 */
+	private applyNodeGroups(): void {
+		this.repaintNodeGroups();
+		void this.refreshNodeGroupContent();
+	}
+
+	/**
+	 * Rebuilt from scratch on open and on every group add/edit/delete/
+	 * reorder (not built once and left standing), same reasoning as
+	 * renderFilterPanel()/renderAppearancePanel(). The group at
+	 * editingGroupId renders its full form in place of its collapsed row.
+	 */
+	private renderColorAndSizePanel(): void {
+		this.colorAndSizePanelEl.empty();
+		const headerEl = this.colorAndSizePanelEl.createDiv({ cls: 'clew-appearance-panel-header' });
+		headerEl.createEl('h4', { text: 'Color & size' });
+		const closeButton = headerEl.createEl('button', { cls: 'clickable-icon' });
+		setIcon(closeButton, 'x');
+		setTooltip(closeButton, 'Close');
+		closeButton.addEventListener('click', () => this.toggleColorAndSizePanel());
+
+		// Shared by every `folder` criterion row's text input (renderCriterionRow())
+		// as free-text-with-suggestions (a native <datalist>) rather than a
+		// dropdown - user feedback: a vault can have many folders, a rigid
+		// dropdown doesn't scale the way it does for tags/properties.
+		const datalist = this.colorAndSizePanelEl.createEl('datalist', { attr: { id: 'clew-color-size-folders' } });
+		for (const folder of this.colorAndSizeAvailableFolders) datalist.createEl('option', { value: folder });
+
+		this.colorAndSizeGroupsContainerEl = this.colorAndSizePanelEl.createDiv({ cls: 'clew-group-list' });
+		this.renderNodeGroupList();
+
+		const addButton = this.colorAndSizePanelEl.createEl('button', { text: '+ new group', cls: 'clew-filter-add-button' });
+		addButton.disabled = this.plugin.settings.nodeGroups.length >= MAX_NODE_GROUPS || this.editingGroupId !== null;
+		addButton.addEventListener('click', () => this.startCreatingGroup());
+	}
+
+	private renderNodeGroupList(): void {
+		this.colorAndSizeGroupsContainerEl.empty();
+		const groups = this.plugin.settings.nodeGroups;
+
+		if (groups.length === 0) {
+			this.colorAndSizeGroupsContainerEl.createEl('p', { text: 'No groups yet.', cls: 'clew-filter-empty-note' });
+		}
+
+		groups.forEach((group, index) => {
+			if (this.editingGroupId === group.id) this.renderGroupEditForm(group);
+			else this.renderGroupRow(group, index, groups.length);
 		});
-		this.renderer.setSetting('edgeReducer', (edge, attr) => {
-			if (edgeSet.has(edge)) return { ...attr, color: this.theme.matchColor, size: 2, zIndex: 2 };
-			return { ...attr, color: this.theme.dimEdgeColor };
+	}
+
+	/** A group's collapsed row - reorder arrows, an always-live enabled toggle (see nodeGroups.ts's docstring on why order is the match-precedence rule), a static color swatch, its name, and edit/delete - deliberately plain elements (not a full Setting per row) rather than the padding a Setting row costs, same reasoning Filter's tag pills used. */
+	private renderGroupRow(group: NodeGroup, index: number, total: number): void {
+		const row = this.colorAndSizeGroupsContainerEl.createDiv({ cls: 'clew-group-row' });
+
+		new ExtraButtonComponent(row).setIcon('chevron-up').setTooltip('Move up').setDisabled(index === 0).onClick(() => this.moveGroup(index, -1));
+		new ExtraButtonComponent(row)
+			.setIcon('chevron-down')
+			.setTooltip('Move down')
+			.setDisabled(index === total - 1)
+			.onClick(() => this.moveGroup(index, 1));
+
+		row.createSpan({ cls: 'clew-group-swatch' }).style.backgroundColor = group.color;
+		row.createSpan({ cls: 'clew-group-name', text: group.name });
+
+		new ExtraButtonComponent(row).setIcon('pencil').setTooltip('Edit').onClick(() => this.toggleEditingGroup(group.id));
+		new ExtraButtonComponent(row).setIcon('trash').setTooltip('Delete').onClick(() => this.deleteGroup(group.id));
+
+		// After delete, not near the reorder arrows (user feedback) - the
+		// enable toggle is the row's own "is this active" state, not part
+		// of the reorder/edit/delete action cluster.
+		new ToggleComponent(row).setValue(group.enabled).onChange((value) => {
+			group.enabled = value;
+			void this.plugin.saveSettings();
+			this.applyNodeGroups();
 		});
+	}
+
+	/** Swaps a group with its neighbor - the only reordering UI (no drag-and-drop), directly controlling match precedence (see nodeGroups.ts's docstring). */
+	private moveGroup(index: number, delta: number): void {
+		const groups = this.plugin.settings.nodeGroups;
+		const target = index + delta;
+		if (target < 0 || target >= groups.length) return;
+		[groups[index], groups[target]] = [groups[target]!, groups[index]!];
+		void this.plugin.saveSettings();
+		this.applyNodeGroups();
+		this.renderNodeGroupList();
+	}
+
+	/** Creates a new group, saves it immediately, and opens it in edit mode - user feedback: no separate "Save" step any more, a group exists (and is persisted) from the moment it's created, even before any criteria are added (an empty-criteria group just doesn't match anything yet - see nodeGroups.ts's matchesGroup()). */
+	private startCreatingGroup(): void {
+		if (this.plugin.settings.nodeGroups.length >= MAX_NODE_GROUPS) return;
+		const color = DEFAULT_GROUP_COLORS[this.plugin.settings.nodeGroups.length % DEFAULT_GROUP_COLORS.length]!;
+		const group: NodeGroup = {
+			id: `group-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+			name: `Group ${this.plugin.settings.nodeGroups.length + 1}`,
+			color,
+			sizeMultiplier: null,
+			enabled: true,
+			criteria: [],
+		};
+		this.plugin.settings.nodeGroups.push(group);
+		void this.plugin.saveSettings();
+		this.editingGroupId = group.id;
+		this.editingCriterionIndex = null;
+		this.criterionEditSnapshot = null;
+		this.applyNodeGroups();
+		this.renderColorAndSizePanel();
+	}
+
+	/** Expands a group's row into its edit form, or collapses it if it's already the one open - there's nothing to save/discard on either transition any more (every field already persists as it changes - see debouncedSaveNodeGroups's docstring), so this is purely a display toggle. */
+	private toggleEditingGroup(id: string): void {
+		this.editingGroupId = this.editingGroupId === id ? null : id;
+		this.editingCriterionIndex = null;
+		this.criterionEditSnapshot = null;
+		this.renderColorAndSizePanel();
+	}
+
+	private deleteGroup(id: string): void {
+		const group = this.plugin.settings.nodeGroups.find((g) => g.id === id);
+		if (!group) return;
+		new ConfirmModal(this.app, 'Delete group?', `"${group.name}" and its criteria will be permanently deleted.`, 'Delete', () => {
+			this.plugin.settings.nodeGroups = this.plugin.settings.nodeGroups.filter((g) => g.id !== id);
+			void this.plugin.saveSettings();
+			if (this.editingGroupId === id) {
+				this.editingGroupId = null;
+				this.editingCriterionIndex = null;
+				this.criterionEditSnapshot = null;
+			}
+			this.applyNodeGroups();
+			this.renderColorAndSizePanel();
+		}).open();
+	}
+
+	/** A blank starting point for a newly-added criterion of the chosen type - pre-fills the first available property (if any) rather than leaving an empty dropdown, so a freshly-added row already reads as a real (if not yet meaningful) criterion. `tag` starts with no tags picked (its own pill UI adds them) rather than guessing one. */
+	private blankCriterion(type: GroupCriterionType): GroupCriterion {
+		switch (type) {
+			case 'clusterFreshness':
+				return { type, bucket: 'stagnant' };
+			case 'text':
+				return { type, query: '' };
+			case 'folder':
+				return { type, folder: '' };
+			case 'filename':
+				return { type, query: '' };
+			case 'tag':
+				return { type, tags: [] };
+			case 'property':
+				return { type, key: this.colorAndSizeAvailableProperties[0] ?? '', operator: 'contains', value: '' };
+		}
+	}
+
+	/**
+	 * The full edit form for `group` - a real entry in
+	 * plugin.settings.nodeGroups, not a staged copy (user feedback: every
+	 * change should just save immediately, no separate Save/Cancel step).
+	 * Every field mutates `group` directly, persists (debouncedSaveNodeGroups)
+	 * and repaints (applyNodeGroups()) right away. "Done" at the bottom only
+	 * collapses the form back to the group's row - there's nothing left to
+	 * commit or discard by then.
+	 */
+	private renderGroupEditForm(group: NodeGroup): void {
+		const formEl = this.colorAndSizeGroupsContainerEl.createDiv({ cls: 'clew-group-edit' });
+
+		// A real section heading (.setHeading(), same as "Criteria" below
+		// and Appearance's "Nodes"/"Edges") rather than a plain Setting name
+		// - user feedback: as a plain name it didn't read as a heading at
+		// all. The trailing "x" is the only way left to collapse the form
+		// back to the group's row - user feedback removed the standalone
+		// "Done" button at the bottom entirely (every field already
+		// auto-saves, so there was nothing left for it to actually commit).
+		new Setting(formEl)
+			.setName('Group')
+			.setHeading()
+			.addExtraButton((button) =>
+				button
+					.setIcon('x')
+					.setTooltip('Close')
+					.onClick(() => this.toggleEditingGroup(group.id)),
+			);
+
+		// A plain flex row, not a Setting - user feedback: no "Name" label
+		// (redundant right under the "Group" heading), the color picker
+		// flush left, and the title field stretching to fill the rest of
+		// the row instead of the width Obsidian's default Setting control
+		// column would leave it.
+		const nameRowEl = formEl.createDiv({ cls: 'clew-group-name-row' });
+		new ColorComponent(nameRowEl).setValue(group.color).onChange((value) => {
+			group.color = value;
+			this.debouncedSaveNodeGroups();
+			this.applyNodeGroups();
+		});
+		new TextComponent(nameRowEl).setValue(group.name).onChange((value) => {
+			group.name = value;
+			this.debouncedSaveNodeGroups();
+			this.applyNodeGroups();
+		});
+
+		new Setting(formEl).setName('Scale size').addToggle((toggle) =>
+			toggle.setValue(group.sizeMultiplier !== null).onChange((value) => {
+				group.sizeMultiplier = value ? (group.sizeMultiplier ?? 1) : null;
+				void this.plugin.saveSettings();
+				this.applyNodeGroups();
+				this.renderColorAndSizePanel();
+			}),
+		);
+		// No description here (user feedback: not needed) - "Scale size"
+		// off by default (sizeMultiplier starts null, see startCreatingGroup())
+		// plus the slider's own live tooltip while dragging cover it well
+		// enough without a permanent explanatory line.
+		if (group.sizeMultiplier !== null) {
+			new Setting(formEl).setName('Size multiplier').addSlider((slider) =>
+				slider
+					.setLimits(0.3, 3, 0.1)
+					.setValue(group.sizeMultiplier!)
+					.setDynamicTooltip()
+					.onChange((value) => {
+						group.sizeMultiplier = value;
+						this.debouncedSaveNodeGroups();
+						this.applyNodeGroups();
+					}),
+			);
+		}
+
+		// "Criteria" (not "Criteria - all must match") - kept to a single
+		// short setDesc() below rather than a whole extra control, since
+		// AND-across-everything isn't user-configurable (removed on
+		// feedback: a per-group AND/OR choice, then nested AND/OR blocks,
+		// were both "too complicated for a first implementation" - see
+		// nodeGroups.ts's docstring).
+		new Setting(formEl).setName('Criteria').setDesc('A note must match every criterion below.').setHeading();
+		const criteriaEl = formEl.createDiv({ cls: 'clew-group-criteria' });
+		this.renderCriteriaList(criteriaEl, group);
+
+		// A single button opening a type-picker menu (same pattern as
+		// openLayoutMenu()'s toolbar button) rather than a separate type
+		// dropdown + "add" button next to it - user feedback: picking a
+		// type, then having to also click a second control to actually add
+		// it, was an extra step for what's really one action ("add a
+		// criterion of this type").
+		const addCriterionButton = formEl.createEl('button', { text: '+ add', cls: 'clew-filter-add-button' });
+		addCriterionButton.addEventListener('click', (evt) => {
+			const menu = new Menu();
+			const addCriterionOption = (type: GroupCriterionType, label: string): void => {
+				menu.addItem((item) =>
+					item.setTitle(label).onClick(() => {
+						group.criteria.push(this.blankCriterion(type));
+						// Opens straight into its expanded controls rather than
+						// showing as an unconfigured chip first - it needs setting
+						// up right away, and there's nothing useful a collapsed
+						// "(none picked)" chip would show in the meantime.
+						// criterionEditSnapshot stays null - see its own docstring
+						// for why that's what makes this criterion's "Cancel"
+						// remove it outright instead of "reverting" it to blank.
+						this.editingCriterionIndex = group.criteria.length - 1;
+						this.criterionEditSnapshot = null;
+						void this.plugin.saveSettings();
+						this.applyNodeGroups();
+						this.renderColorAndSizePanel();
+					}),
+				);
+			};
+			addCriterionOption('tag', 'Tag');
+			addCriterionOption('property', 'Property');
+			addCriterionOption('folder', 'Folder');
+			addCriterionOption('filename', 'Filename');
+			addCriterionOption('text', 'Text (name & content)');
+			addCriterionOption('clusterFreshness', 'Stagnation');
+			menu.showAtMouseEvent(evt);
+		});
+	}
+
+	/**
+	 * Renders group.criteria as a row of compact chips (nodeGroups.ts's
+	 * describeCriterion()), each expandable in place into its full
+	 * type-specific controls - every criterion must match (AND), see
+	 * nodeGroups.ts's docstring for why there's no OR/nesting here. User
+	 * feedback: every criterion always showing its full controls read as
+	 * cluttered once a group had more than one or two - a chip you click
+	 * to edit keeps the common case (scanning what's already set) compact.
+	 */
+	private renderCriteriaList(container: HTMLElement, group: NodeGroup): void {
+		container.empty();
+		if (group.criteria.length === 0) return; // no placeholder text - user feedback
+		const listEl = container.createDiv({ cls: 'clew-criteria-chips' });
+		group.criteria.forEach((criterion, index) => {
+			if (index === this.editingCriterionIndex) this.renderCriterionEditRow(listEl, group, index, criterion);
+			else this.renderCriterionChip(listEl, group, index, criterion);
+		});
+	}
+
+	/** A criterion collapsed to its plain-language summary (nodeGroups.ts's describeCriterion()) - click to expand its full controls in place (snapshotting it first so its own "Cancel" can revert - see criterionEditSnapshot's docstring), or the "x" to remove it directly without expanding first. */
+	private renderCriterionChip(container: HTMLElement, group: NodeGroup, index: number, criterion: GroupCriterion): void {
+		const chip = container.createDiv({ cls: 'clew-filter-pill clew-criterion-chip' });
+		setTooltip(chip, 'Click to edit');
+		chip.createSpan({ text: describeCriterion(criterion) });
+		chip.addEventListener('click', () => {
+			this.editingCriterionIndex = index;
+			this.criterionEditSnapshot = structuredClone(criterion);
+			this.renderColorAndSizePanel();
+		});
+
+		const removeButton = chip.createSpan({ cls: 'clew-filter-pill-remove' });
+		setIcon(removeButton, 'x');
+		setTooltip(removeButton, 'Remove');
+		removeButton.addEventListener('click', (evt) => {
+			evt.stopPropagation(); // otherwise also triggers the chip's own click-to-expand
+			group.criteria.splice(index, 1);
+			void this.plugin.saveSettings();
+			this.applyNodeGroups();
+			this.renderColorAndSizePanel();
+		});
+	}
+
+	/**
+	 * One criterion's full type-specific controls (see nodeGroups.ts's
+	 * GroupCriterion union), shown in place of its chip while
+	 * editingCriterionIndex points at it. "Done" persists and collapses
+	 * back to a chip (every field already applied live/saved as it
+	 * changed - "Done" here mirrors the group form's own "Done", a display
+	 * toggle, not a commit). "Cancel" reverts to criterionEditSnapshot
+	 * instead - see that field's own docstring for why a brand new
+	 * (never-had-a-snapshot) criterion gets removed instead of "reverted".
+	 */
+	private renderCriterionEditRow(container: HTMLElement, group: NodeGroup, index: number, criterion: GroupCriterion): void {
+		const editEl = container.createDiv({ cls: 'clew-criterion-edit' });
+		const applyLive = (): void => {
+			this.debouncedSaveNodeGroups();
+			this.applyNodeGroups();
+		};
+		const rerender = (): void => {
+			this.debouncedSaveNodeGroups();
+			this.applyNodeGroups();
+			this.renderColorAndSizePanel();
+		};
+		const finishEditing = (): void => {
+			this.editingCriterionIndex = null;
+			this.criterionEditSnapshot = null;
+			this.applyNodeGroups();
+			this.renderColorAndSizePanel();
+		};
+
+		// The type as its own heading line (not inline with the fields any
+		// more - user feedback: first line = heading, e.g. "Property", then
+		// the fields on the line(s) below), same "heading, then controls"
+		// shape as the group form's own "Group"/"Criteria" headings above.
+		editEl.createDiv({ cls: 'clew-criterion-type-heading', text: CRITERION_TYPE_LABELS[criterion.type] });
+
+		const controlsEl = editEl.createDiv({ cls: 'clew-criterion-controls' });
+
+		switch (criterion.type) {
+			case 'tag':
+				this.renderTagPills(controlsEl, criterion.tags, applyLive);
+				break;
+			case 'property': {
+				const keyDropdown = new DropdownComponent(controlsEl);
+				for (const key of this.colorAndSizeAvailableProperties) keyDropdown.addOption(key, key);
+				if (criterion.key && !this.colorAndSizeAvailableProperties.includes(criterion.key)) keyDropdown.addOption(criterion.key, criterion.key);
+				keyDropdown.setValue(criterion.key).onChange((value) => {
+					criterion.key = value;
+					applyLive();
+				});
+
+				new DropdownComponent(controlsEl)
+					.addOption('contains', 'Contains')
+					.addOption('equals', 'Equals')
+					.addOption('notEquals', 'Not equals')
+					.addOption('isEmpty', 'Is empty')
+					.addOption('isNotEmpty', 'Is not empty')
+					.setValue(criterion.operator)
+					.onChange((value) => {
+						criterion.operator = value as StringOperator;
+						rerender(); // the value field's visibility depends on the operator
+					});
+
+				if (criterion.operator !== 'isEmpty' && criterion.operator !== 'isNotEmpty') {
+					new TextComponent(controlsEl).setPlaceholder('Value').setValue(criterion.value).onChange((value) => {
+						criterion.value = value;
+						applyLive();
+					});
+				}
+				break;
+			}
+			case 'folder': {
+				const input = new TextComponent(controlsEl).setPlaceholder('Folder (includes subfolders)').setValue(criterion.folder);
+				input.inputEl.setAttribute('list', 'clew-color-size-folders');
+				input.onChange((value) => {
+					criterion.folder = value;
+					applyLive();
+				});
+				break;
+			}
+			case 'filename':
+				new TextComponent(controlsEl).setPlaceholder('Filename contains…').setValue(criterion.query).onChange((value) => {
+					criterion.query = value;
+					applyLive();
+				});
+				break;
+			case 'text':
+				new TextComponent(controlsEl).setPlaceholder('Title or content contains…').setValue(criterion.query).onChange((value) => {
+					criterion.query = value;
+					applyLive();
+				});
+				break;
+			case 'clusterFreshness':
+				controlsEl.createSpan({ cls: 'clew-criterion-label', text: 'in the' });
+				new DropdownComponent(controlsEl)
+					.addOption('stagnant', 'Most stagnant')
+					.addOption('fresh', 'Most recently active')
+					.setValue(criterion.bucket)
+					.onChange((value) => {
+						criterion.bucket = value as StalenessBucket;
+						applyLive();
+					});
+				controlsEl.createSpan({ cls: 'clew-criterion-label', text: 'half of clusters' });
+				break;
+		}
+
+		// Check/cancel always sit on their own line below the fields (user
+		// feedback), not inside controlsEl - a separate block-level row so
+		// they're never caught up in that container's own wrapping once
+		// several fields (e.g. a tag criterion's pills) wrap onto a second
+		// line themselves.
+		const actionsEl = editEl.createDiv({ cls: 'clew-criterion-edit-actions' });
+		new ExtraButtonComponent(actionsEl).setIcon('check').setTooltip('Done').onClick(finishEditing);
+		new ExtraButtonComponent(actionsEl).setIcon('x').setTooltip('Cancel').onClick(() => {
+			// A snapshot means this criterion existed before this edit
+			// session started (opened by clicking its chip) - revert to it
+			// rather than deleting, so "Cancel" actually means cancel, not
+			// delete (user feedback). null means it was just created by
+			// "+ add" this session, with nothing to revert to - removing it
+			// is the only sensible "cancel" then, rather than leaving an
+			// unconfigured chip behind.
+			if (this.criterionEditSnapshot) group.criteria[index] = this.criterionEditSnapshot;
+			else group.criteria.splice(index, 1);
+			void this.plugin.saveSettings();
+			finishEditing();
+		});
+	}
+
+	/** Selected tags as removable pills + a compact "+ tag…" add-select - same pattern as Filter's renderFilterTagRows(), inlined here since a `tag` criterion's `tags` array is scoped to just this one row, not a whole panel section. */
+	private renderTagPills(container: HTMLElement, tags: string[], onChange: () => void): void {
+		const pillsEl = container.createDiv({ cls: 'clew-filter-pills clew-criterion-tag-pills' });
+		const render = (): void => {
+			pillsEl.empty();
+			tags.forEach((tag, index) => {
+				const pill = pillsEl.createDiv({ cls: 'clew-filter-pill' });
+				pill.createSpan({ text: tag });
+				const removeButton = pill.createSpan({ cls: 'clew-filter-pill-remove' });
+				setIcon(removeButton, 'x');
+				setTooltip(removeButton, 'Remove');
+				removeButton.addEventListener('click', () => {
+					tags.splice(index, 1);
+					render();
+					onChange();
+				});
+			});
+			const remaining = this.colorAndSizeAvailableTags.filter((tag) => !tags.includes(tag));
+			if (remaining.length > 0) {
+				const addSelect = pillsEl.createEl('select', { cls: 'dropdown clew-filter-add-select' });
+				addSelect.createEl('option', { text: '+ tag…', value: '' });
+				for (const tag of remaining) addSelect.createEl('option', { text: tag, value: tag });
+				addSelect.value = '';
+				addSelect.addEventListener('change', () => {
+					if (!addSelect.value) return;
+					tags.push(addSelect.value);
+					render();
+					onChange();
+				});
+			}
+		};
+		render();
+	}
+
+	/** Reveals the Color & size panel or just hides it - every group/criterion edit is already saved as it happens (see debouncedSaveNodeGroups's docstring), so closing mid-edit has nothing left to discard; it just collapses any open edit form for next time. */
+	private toggleColorAndSizePanel(): void {
+		if (this.colorAndSizePanelEl.isShown()) {
+			this.colorAndSizePanelEl.hide();
+			this.editingGroupId = null;
+			this.editingCriterionIndex = null;
+			this.criterionEditSnapshot = null;
+			return;
+		}
+		this.renderColorAndSizePanel();
+		this.colorAndSizePanelEl.show();
 	}
 
 	private async openNote(vaultPath: string): Promise<void> {
@@ -1926,10 +2590,6 @@ function edgeKeysAlongPath(graph: Graph, path: string[]): string[] {
 	return keys;
 }
 
-function rgbToCss(rgb: [number, number, number]): string {
-	return `rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]})`;
-}
-
 /** Obsidian's ColorComponent (the Appearance panel's edge-color picker) only accepts hex - theme.ts's resolved colors are `rgb()` strings, so this converts for display. Already-hex input (a saved override) passes through unchanged. */
 function toHexColor(color: string): string {
 	const match = color.match(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/);
@@ -1940,23 +2600,4 @@ function toHexColor(color: string): string {
 
 function basename(vaultPath: string): string {
 	return vaultPath.split('/').pop()?.replace(/\.md$/, '') ?? vaultPath;
-}
-
-/**
- * Frontmatter values are usually a string, number, or boolean - stringified
- * directly. An array-valued property (e.g. a multi-value select/list) is
- * joined into one category rather than picking one value or producing
- * "[object Object]" - a reasonable, simple fallback, not a claim that it's
- * the "right" way to categorize a list. Any other object shape isn't
- * treated as colorable at all.
- */
-function toStringValue(raw: unknown): string | undefined {
-	if (Array.isArray(raw)) return raw.map((item) => toStringValue(item) ?? '').join(', ');
-	if (typeof raw === 'string') return raw;
-	if (typeof raw === 'number' || typeof raw === 'boolean') return raw.toString();
-	return undefined;
-}
-
-function toNumberValue(raw: unknown): number | undefined {
-	return typeof raw === 'number' ? raw : undefined;
 }

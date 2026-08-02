@@ -1,5 +1,6 @@
 import { Plugin, WorkspaceLeaf } from 'obsidian';
 import { DEFAULT_APPEARANCE_SETTINGS, ClewSettings } from './settings';
+import { EMPTY_FILTER_QUERY } from './graph/filter';
 import { CLEW_STANDALONE_GRAPH_VIEW, StandaloneGraphView } from './graph/standaloneGraphView';
 import { GraphPane } from './graph/graphPane';
 
@@ -16,7 +17,7 @@ export default class ClewPlugin extends Plugin {
 		});
 		this.addCommand({
 			id: 'open-graph',
-			name: 'Open graph',
+			name: 'Open graph view',
 			callback: () => void this.activateStandaloneGraphView(),
 		});
 
@@ -59,6 +60,8 @@ export default class ClewPlugin extends Plugin {
 			// than a blanket object-replace silently dropping it.
 			appearance: { ...DEFAULT_APPEARANCE_SETTINGS, ...loaded?.appearance },
 			pinnedPositions: { ...loaded?.pinnedPositions },
+			filterQuery: { ...EMPTY_FILTER_QUERY, ...loaded?.filterQuery },
+			nodeGroups: [...(loaded?.nodeGroups ?? [])],
 		};
 	}
 

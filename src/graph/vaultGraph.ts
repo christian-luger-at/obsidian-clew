@@ -172,9 +172,10 @@ export const DEFAULT_SIZE_OPTIONS: SizeByDegreeOptions = {
  * labels first when zoomed out - without this, a vault-scale graph is an
  * undifferentiated blob of same-sized dots with every label overlapping.
  *
- * Exported so GraphPane can re-apply it when a user-chosen size-by-property
- * encoding (visualEncoding.ts, doc section 3.1) is cleared back to default -
- * this is the actual default it's reverting to, not a duplicate formula.
+ * Exported so GraphPane can re-establish this baseline on every paint before
+ * a node group's own size override (graph/nodeGroups.ts), if any, overlays
+ * on top - this is the actual default a note reverts to once it no longer
+ * matches a group with a size override, not a duplicate formula.
  *
  * Options are user-tunable (Settings tab) - GitHub follow-up to user
  * feedback comparing Clew's graph against Obsidian's own core Graph View

@@ -9,21 +9,21 @@
 	inset: 0;
 }
 
-/* Positions the icon rail (.clew-toolbar) and the search input side by
-   side, top-right - a plain flex row, not itself styled as a panel, so
-   the search input isn't forced into the rail's own background/border.
-   row-reverse (not the DOM order itself) puts the rail flush against the
-   right edge with search to its left - toolbarEl is the first child
-   (see graphPane.ts) so a plain row would put it innermost instead. */
+/* Positions the icon rail (.clew-toolbar) and the filter panel
+   (.clew-filter-panel), top-right - a flex column so the panel drops
+   straight down below the rail rather than sharing a corner with the
+   appearance panel (user feedback: it doesn't need to match Appearance's
+   own bottom-right position). align-items: flex-end keeps both children
+   right-aligned even though the panel is wider than the icon rail. */
 .clew-topbar {
 	position: absolute;
 	top: var(--size-4-2);
 	right: var(--size-4-2);
 	z-index: 10;
 	display: flex;
-	flex-direction: row-reverse;
-	align-items: flex-start;
-	gap: var(--size-4-2);
+	flex-direction: column;
+	align-items: flex-end;
+	gap: var(--size-4-1);
 }
 
 /* A vertical icon rail rather than a horizontal row of text buttons - see
@@ -46,16 +46,21 @@
 	color: var(--text-on-accent);
 }
 
-/* Same floating-panel treatment as .clew-toolbar/.clew-legend/
-   .clew-appearance-panel - holds the text-search row, the Highlight/Filter
-   mode toggle, and the tag/property/staleness/link-count filter rows (see
-   graphPane.ts's constructor and search.ts). */
-.clew-search-panel {
-	display: flex;
-	flex-direction: column;
-	gap: var(--size-4-2);
-	width: 260px;
-	padding: var(--size-4-2);
+/* Drops down from the icon rail (a flex-column child of .clew-topbar,
+   see there) rather than floating in its own absolutely-positioned
+   bottom-right corner like .clew-appearance-panel - user feedback: it
+   doesn't need to match Appearance's position. max-height: 70vh (not a
+   percentage of the panel's own auto-sized flex parent, which wouldn't
+   resolve) keeps it from running off the bottom of a tall vault's worth
+   of tags/properties. Reuses .clew-appearance-panel-header for its own
+   title+close-button row (same class, see graphPane.ts's
+   renderFilterPanel()) rather than a near-duplicate rule here. */
+.clew-filter-panel {
+	width: 300px;
+	max-width: calc(100vw - var(--size-4-4));
+	max-height: 70vh;
+	overflow-y: auto;
+	padding: var(--size-4-3);
 	background: var(--background-primary);
 	border: 1px solid var(--background-modifier-border);
 	border-radius: var(--radius-m);
@@ -63,71 +68,341 @@
 }
 
 /* Obsidian's own `.search-input-container input` rule sets width: 100% -
-   more specific than a bare `.clew-search-input` class, so the fixed width
-   has to live on the wrapper (which that rule then fills) instead. */
-.clew-search-panel .search-input-container {
+   more specific than a bare `.clew-filter-text-input` class, so the fixed
+   width has to live on the wrapper (which that rule then fills) instead. */
+.clew-filter-panel .search-input-container {
 	width: 100%;
 }
 
-.clew-search-mode-toggle {
+.clew-filter-empty-note {
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+	margin: 0;
+}
+
+/* Selected tags as removable pills wrapping in one flowing row, instead
+   of a full Setting row (dropdown + remove button) per tag - user
+   feedback: one tag per line took up far too much space. */
+.clew-filter-pills {
 	display: flex;
+	flex-wrap: wrap;
+	gap: var(--size-4-1);
+	margin-bottom: var(--size-4-1);
+}
+
+.clew-filter-pill {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--size-4-1);
+	padding: 2px var(--size-4-1) 2px var(--size-4-2);
+	background: var(--background-modifier-hover);
+	border-radius: 999px;
+	font-size: var(--font-ui-smaller);
+	line-height: 1.6;
+}
+
+.clew-filter-pill-remove {
+	display: flex;
+	cursor: pointer;
+	color: var(--text-muted);
+}
+
+.clew-filter-pill-remove:hover {
+	color: var(--text-normal);
+}
+
+.clew-filter-pill-remove svg {
+	width: 10px;
+	height: 10px;
+}
+
+/* The "+ Add tag…" picker - a plain <select> rather than another Setting
+   row, sized to its content (not stretched full-width the way a Setting's
+   .setting-item-control > select would be) since it's the whole control,
+   not one of several sharing a row. */
+.clew-filter-add-select {
+	width: auto;
+	max-width: 100%;
+	font-size: var(--font-ui-smaller);
+}
+
+/* The "+ Add property" trigger (renderFilterPanel()) - a plain small
+   button rather than a full-width Setting row wrapping an addButton(),
+   which cost a whole row of padding for a single control - same
+   complaint as the tag rows above. Reused as-is for the Color & size
+   panel's "+ new group" button. */
+.clew-filter-add-button {
+	margin-top: var(--size-4-1);
+	font-size: var(--font-ui-smaller);
+}
+
+/* A little wider than the base .clew-filter-panel (shared via the second
+   class on the same element, see graphPane.ts's constructor) - group rows
+   pack a reorder pair + toggle + swatch + name + edit/delete into one line,
+   and the edit form's criterion rows can carry two side-by-side controls
+   (e.g. a property's key dropdown + value text, or the two staleness
+   bounds) - both are cramped at the Filter panel's own 300px. */
+.clew-color-size-panel {
+	width: 360px;
+}
+
+/* One group's collapsed row (renderGroupRow()) - plain flex row rather
+   than a Setting (which would cost a name/control split this doesn't
+   need), same reasoning as the Filter panel's tag pills. */
+.clew-group-row {
+	display: flex;
+	align-items: center;
+	gap: var(--size-4-1);
+	padding: var(--size-4-1) 0;
+	border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.clew-group-row:last-child {
+	border-bottom: none;
+}
+
+.clew-group-swatch {
+	flex-shrink: 0;
+	width: 10px;
+	height: 10px;
+	border-radius: 50%;
+}
+
+.clew-group-name {
+	flex: 1 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: var(--font-ui-small);
+}
+
+/* A group's full edit form (renderGroupEditForm()) - set apart from the
+   collapsed rows around it with its own background/rounding, same
+   reasoning .clew-appearance-panel itself is set apart from the bare
+   canvas behind it, so it reads as "you're now editing this one" rather
+   than blending into the row list. */
+.clew-group-edit {
+	margin: var(--size-4-1) 0;
+	padding: var(--size-4-2);
+	background: var(--background-secondary);
+	border-radius: var(--radius-s);
+}
+
+/* The type as its own heading line at the top of a criterion's edit
+   controls (renderCriterionEditRow()) - user feedback: first line = a
+   heading (e.g. "Property"), then the fields below it, rather than the
+   type name sitting inline to the left of the fields on one row. */
+.clew-criterion-type-heading {
+	margin-bottom: var(--size-4-1);
+	font-size: var(--font-ui-smaller);
+	font-weight: var(--font-medium);
+	color: var(--text-normal);
+}
+
+/* The type-specific controls, on their own line below
+   .clew-criterion-type-heading - a wrapping flex row since some criteria
+   (e.g. property: key + operator + value, or a tag criterion's pills)
+   carry several fields. */
+.clew-criterion-controls {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
 	gap: var(--size-4-1);
 }
 
-.clew-search-mode-toggle button {
-	flex: 1;
+.clew-criterion-controls select.dropdown {
+	flex: 0 0 auto;
+	width: auto;
+	min-width: 4em;
 }
 
-.clew-search-mode-toggle button.is-active {
-	background-color: var(--interactive-accent);
-	color: var(--text-on-accent);
+.clew-criterion-controls input[type='text'],
+.clew-criterion-controls input[type='range'] {
+	flex: 1 1 auto;
+	min-width: 70px;
 }
 
-/* Appearance-panel Settings (Tag/Property/staleness/link-count rows) are
-   comfortable at that panel's own generous width - cramped at this one's
-   260px otherwise, since Setting's default layout puts name and control
-   side by side. Stacking name above control instead keeps every row
-   readable without widening the whole panel just for these four rows. */
-.clew-search-panel .setting-item {
+.clew-criterion-label {
+	font-size: var(--font-ui-smaller);
+	color: var(--text-muted);
+	white-space: nowrap;
+}
+
+/* Check/cancel for a criterion being edited - always their own line below
+   the fields (user feedback), not sharing a row with .clew-criterion-controls
+   (where they'd otherwise get caught up in that row's own wrapping once
+   several fields wrap onto a second line). */
+.clew-criterion-edit-actions {
+	display: flex;
+	gap: var(--size-4-1);
+	margin-top: var(--size-4-1);
+}
+
+/* All of a group's criteria (renderCriteriaList()) - a wrapping row of
+   chips (see .clew-criterion-chip below), with the one currently being
+   edited (.clew-criterion-edit) forced onto its own full-width line via
+   flex-basis so it reads as expanded "in place" rather than crammed
+   between its neighboring chips. */
+.clew-criteria-chips {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--size-4-1);
+}
+
+/* A single criterion collapsed to its plain-language summary
+   (nodeGroups.ts's describeCriterion()) - reuses .clew-filter-pill's look
+   (same rounded shape as Filter's own tag pills) plus a pointer cursor and
+   hover state, since clicking one is how you edit it - user feedback: a
+   group with several criteria, each always showing its full controls, was
+   "unübersichtlich" (cluttered/unclear); a row of compact chips you expand
+   on demand reads as a short, scannable summary instead. */
+.clew-criterion-chip {
+	cursor: pointer;
+}
+
+.clew-criterion-chip:hover {
+	background: var(--background-modifier-hover);
+}
+
+/* The one criterion currently expanded into its full controls
+   (renderCriterionEditRow()) - set apart with its own background/border so
+   it clearly reads as "now editing this one", not just another chip in the
+   row (the chip list's own flex-basis: 100% on this element only handles
+   the layout/line-break, not the appearance). */
+.clew-criterion-edit {
+	flex: 1 1 100%;
+	padding: var(--size-4-1) var(--size-4-2);
+	background: var(--background-primary);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-s);
+}
+
+/* Every plain (non-Setting) row directly inside a group's edit form - the
+   color+name row and the criteria chips - needs the same left inset a
+   Setting's own text gets, or it sits visibly left of "Criteria"/"Group"
+   (both Settings). Obsidian's own `.setting-item` rule adds its *own*
+   `padding: var(--size-4-4)` on top of `.clew-group-edit`'s outer padding
+   - a plain div here only ever got the outer padding, landing exactly
+   `--size-4-4` (16px) left of any Setting's text (confirmed by measuring
+   both in a real-CSS repro - user feedback: "sollten bündig mit dem Text
+   'Criteria' ... sein"). Giving these rows that same left padding, rather
+   than removing it from every `.setting-item` instead, keeps Obsidian's
+   own Setting styling (including its per-item background/border)
+   completely untouched. */
+.clew-group-name-row,
+.clew-group-criteria {
+	padding-left: var(--size-4-4);
+}
+
+/* The color+name row under the "Group" heading (renderGroupEditForm()) -
+   a plain flex row, not a Setting, so there's no "Name" label (redundant
+   right under the heading) and no Setting name/control split reserving
+   space for one - user feedback. The color swatch stays its own natural
+   size, the title field stretches to fill the rest of the row. */
+.clew-group-name-row {
+	display: flex;
+	align-items: center;
+	gap: var(--size-4-1);
+	margin: var(--size-4-1) 0;
+}
+
+.clew-group-name-row input[type='text'] {
+	flex: 1 1 auto;
+	min-width: 0;
+}
+
+/* "+ add" (renderGroupEditForm()) - `margin-left`, not `padding-left` like
+   .clew-group-name-row/.clew-group-criteria above: those are plain divs
+   with no visible box of their own, so nudging their *content* right reads
+   identically to nudging the whole element. A button has its own visible
+   border/background though - padding-left alone left that box flush at the
+   form's own left edge with just its label text nudged inward, reading as
+   not-aligned-at-all rather than merely off by 16px (user feedback: "zu
+   weit links und nicht ausgerichtet"). A margin instead moves the button's
+   whole box to line up with "Criteria" above it. */
+.clew-group-edit > .clew-filter-add-button {
+	margin-left: var(--size-4-4);
+}
+
+/* The `tag` criterion's own pill picker - reuses .clew-filter-pills'
+   wrap/gap, just without the bottom margin that made sense as a whole
+   panel section (renderFilterTagRows()) but not as one inline row here. */
+.clew-criterion-tag-pills {
+	flex: 1 1 auto;
+	margin-bottom: 0;
+}
+
+/* Filter panel's own tag/property rows and the staleness/link-count
+   fields are comfortable at the appearance panel's own generous width -
+   cramped with Setting's default side-by-side name+control layout
+   otherwise. Stacking name above control instead keeps every row readable
+   without needing to widen the whole panel just for these. Scoped to
+   `.clew-compact-settings` (only the Filter panel has that class, not
+   `.clew-color-size-panel`) rather than every `.clew-filter-panel` - user
+   feedback: Color & size's own top-level fields ("Group", "Size") looked
+   inconsistent with Appearance's plain side-by-side Setting layout once
+   they inherited this stacking too; its own criterion rows aren't Settings
+   at all any more, so they never needed this in the first place. */
+.clew-compact-settings .setting-item {
 	flex-direction: column;
 	align-items: flex-start;
 	padding: var(--size-4-1) 0;
 }
 
-.clew-search-panel .setting-item-info {
+.clew-compact-settings .setting-item-info {
 	padding-right: 0;
 }
 
-.clew-search-panel .setting-item-control {
+.clew-compact-settings .setting-item-control {
 	width: 100%;
 	justify-content: stretch;
 	gap: var(--size-4-1);
 }
 
 /* min-width: 0 lets a flex item shrink below its content's natural size
-   when needed - without it, the "Property" row's <select> (dropdown +
+   when needed - without it, a property-filter row's <select> (dropdown +
    value text input sharing one row) refused to shrink at all and instead
    forced the *text input* down to nothing, rather than the two sharing
    space proportionally. */
-.clew-search-panel .setting-item-control > * {
+.clew-compact-settings .setting-item-control > * {
 	flex: 1 1 0;
 	min-width: 0;
 }
 
 /* The dropdown only needs to show its selected option, not grow/shrink
-   like the free-text value input next to it (Property row) - flex-shrink:
-   0 (not just a smaller flex-basis) guarantees it always sizes to its
-   content instead of "(None)"/a tag name truncating under space pressure,
-   with the value input (flex: 1 1 0 above) absorbing all the free space.
-   `width: auto` overrides Obsidian's own `.setting-item-control
-   select.dropdown { width: var(--dropdown-fitted-width, inherit); }` -
-   with that variable unset, `inherit` literally took the parent flex
-   container's own width, stretching the dropdown to fill the whole row
-   and squeezing the value input next to it down to nothing. */
-.clew-search-panel .setting-item-control > select {
+   like the free-text value input next to it - flex-shrink: 0 (not just a
+   smaller flex-basis) guarantees it always sizes to its content instead
+   of "(Choose)"/a tag or property name truncating under space pressure,
+   with the value input (flex: 1 1 0 above, property rows only) absorbing
+   all the free space. `width: auto` overrides Obsidian's own
+   `.setting-item-control select.dropdown { width:
+   var(--dropdown-fitted-width, inherit); }` - with that variable unset,
+   `inherit` literally took the parent flex container's own width,
+   stretching the dropdown to fill the whole row and squeezing anything
+   next to it down to nothing. */
+.clew-compact-settings .setting-item-control > select {
 	flex: 0 0 auto;
 	width: auto;
 	min-width: 5.5em;
+}
+
+/* A tag/property-filter row's "remove" button (addExtraButton) shouldn't
+   stretch/shrink like the dropdown and text input next to it - it's a
+   small fixed-size icon button, not a field. */
+.clew-compact-settings .setting-item-control > .clickable-icon {
+	flex: 0 0 auto;
+}
+
+/* Obsidian's own `input[type="color"]` rule sets a small fixed swatch
+   size - the generic `flex: 1 1 0` above would otherwise force-grow it to
+   fill the row like a text field, stretching the swatch into a wide bar
+   instead of a small square. Same reasoning for `.checkbox-container` (a
+   toggle) - it's a small fixed-size switch, not a field either. */
+.clew-compact-settings .setting-item-control > input[type='color'],
+.clew-compact-settings .setting-item-control > .checkbox-container {
+	flex: 0 0 auto;
 }
 
 .clew-path-panel {
