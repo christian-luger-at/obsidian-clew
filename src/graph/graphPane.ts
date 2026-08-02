@@ -11,6 +11,7 @@ import { computeCircularLayout } from './circularLayout';
 import { findPaths, PathResult } from './pathfinding';
 import { PathfindingModal } from './pathfindingModal';
 import { RadialLayoutModal } from './radialLayoutModal';
+import { LayoutMode, LAYOUT_MODE_LABELS, LayoutModal } from './layoutModal';
 import { ConfirmModal } from './confirmModal';
 import { exportPathToCanvas } from './canvasExport';
 import { computeCommunityStats, detectCommunities, staleness } from './stagnation';
@@ -50,21 +51,6 @@ const MIN_FIT_EXTENT = 32;
  * dimProgress for the animation this drives.
  */
 const HOVER_DIM_TRANSITION_MS = 200;
-
-/**
- * 'force' is the only mode with live physics (ForceAtlas2) and the only one
- * dragging (setupNodeDragging) or pinning (finishDrag) works against - the
- * other three lay the whole graph out fresh from a pure function each time,
- * with no per-node "leave this one alone" concept.
- */
-type LayoutMode = 'force' | 'hierarchical' | 'radial' | 'circular';
-
-const LAYOUT_MODE_LABELS: Record<LayoutMode, string> = {
-	force: 'Force',
-	hierarchical: 'Hierarchical',
-	radial: 'Radial',
-	circular: 'Circular',
-};
 
 /** A persistent label at the start of every Color & size criterion row (renderCriterionRow()) - user feedback: once a folder/filename/text criterion had a value typed in, its placeholder-only hint disappeared and every free-text row looked identical. */
 const CRITERION_TYPE_LABELS: Record<GroupCriterionType, string> = {
@@ -354,6 +340,8 @@ export class GraphPane {
 	// Reassigned on every renderColorAndSizePanel() call, same reasoning as
 	// filterTagsContainerEl above.
 	private colorAndSizeGroupsContainerEl!: HTMLElement;
+	/** Index (into plugin.settings.nodeGroups) of the group row currently being dragged - see setupGroupRowDrag()'s docstring. null outside an active drag. */
+	private draggedGroupIndex: number | null = null;
 	/** id of the group currently expanded into its edit form - null when every group is shown collapsed. Editing operates directly on the real object in plugin.settings.nodeGroups (see debouncedSaveNodeGroups's docstring) - there's no separate draft/Save/Cancel step any more (user feedback: every change should just save immediately). */
 	private editingGroupId: string | null = null;
 	/** Debounces the disk write for node-group edits (name/color/criteria/etc. change on every keystroke) - the live graph apply (applyNodeGroups()) stays instant, only the write to disk is coalesced. Same pattern as debouncedSaveFilterQuery above. */
@@ -458,7 +446,14 @@ export class GraphPane {
 		// active toolbar toggles get, since the tooltip already says which
 		// mode is active.
 		this.layoutButton = iconButton('layout-grid', `Layout: ${LAYOUT_MODE_LABELS.force}`);
-		this.layoutButton.addEventListener('click', (evt) => this.openLayoutMenu(evt));
+		this.layoutButton.addEventListener('click', () => this.openLayoutModal());
+
+		// Panning/zooming away with no way back was a real gap - the camera
+		// only got reset automatically as a side effect of switching layouts
+		// (resetCameraAndRefresh(), used by every setXLayout() method below),
+		// never on its own.
+		const centerButton = iconButton('maximize', 'Reset view');
+		centerButton.addEventListener('click', () => void this.resetCameraAndRefresh());
 
 		// Tucked behind its own icon (like Find path is behind its icon,
 		// opening a modal) rather than an always-visible input - user
@@ -475,16 +470,6 @@ export class GraphPane {
 		this.filterButton = iconButton('filter', 'Filter…');
 		this.filterButton.addEventListener('click', () => this.toggleFilterPanel());
 
-		const findPathButton = iconButton('route', 'Find path…');
-		findPathButton.addEventListener('click', () => this.openPathfindingModal());
-
-		// Panning/zooming away with no way back was a real gap - the camera
-		// only got reset automatically as a side effect of switching layouts
-		// (resetCameraAndRefresh(), used by every setXLayout() method below),
-		// never on its own.
-		const centerButton = iconButton('maximize', 'Reset view');
-		centerButton.addEventListener('click', () => void this.resetCameraAndRefresh());
-
 		// Doc section 3.1 / GitHub issue #1: user-defined named groups of
 		// notes (see nodeGroups.ts), each with its own color/size and one or
 		// more matching criteria - replaced the old "pick one frontmatter
@@ -494,6 +479,9 @@ export class GraphPane {
 		// the Work folder" as one visual group).
 		this.colorAndSizeButton = iconButton('palette', 'Color & size…');
 		this.colorAndSizeButton.addEventListener('click', () => this.toggleColorAndSizePanel());
+
+		const findPathButton = iconButton('route', 'Find path…');
+		findPathButton.addEventListener('click', () => this.openPathfindingModal());
 
 		this.appearanceButton = iconButton('sliders-horizontal', 'Appearance…');
 		this.appearanceButton.addEventListener('click', () => this.toggleAppearancePanel());
@@ -1150,57 +1138,30 @@ export class GraphPane {
 	}
 
 	/**
-	 * Builds and opens the "Layout" dropdown (Obsidian's own Menu API) fresh
-	 * each time, rather than a persistent DOM structure - it's only a few
-	 * items and this way "is hierarchical too large for this graph" is
-	 * always read straight from the current graph, not tracked as separate
-	 * instance state that could drift out of sync with it.
+	 * Opens the "Layout" dialog (layoutModal.ts) fresh each time, rather than
+	 * a persistent DOM structure - it's only a few options and this way "is
+	 * hierarchical too large for this graph" is always read straight from
+	 * the current graph, not tracked as separate instance state that could
+	 * drift out of sync with it. Replaced an earlier dropdown menu (user
+	 * feedback: picking a layout should come with an explanation of what
+	 * each one is for) - see LayoutModal's own docstring for why radial
+	 * routes to openRadialLayoutModal() instead of being just another
+	 * onSelect case.
 	 */
-	private openLayoutMenu(evt: MouseEvent): void {
-		const menu = new Menu();
+	private openLayoutModal(): void {
 		const tooLargeForHierarchical = (this.graph?.order ?? 0) > HIERARCHICAL_LAYOUT_NODE_LIMIT;
-
-		menu.addItem((item) =>
-			item
-				.setTitle(LAYOUT_MODE_LABELS.force)
-				.setChecked(this.layoutMode === 'force')
-				.onClick(() => {
-					if (this.layoutMode !== 'force') this.setForceLayout();
-				}),
-		);
-		menu.addItem((item) =>
-			item
-				.setTitle(
-					tooLargeForHierarchical
-						? `${LAYOUT_MODE_LABELS.hierarchical} (too many notes)`
-						: LAYOUT_MODE_LABELS.hierarchical,
-				)
-				.setChecked(this.layoutMode === 'hierarchical')
-				.setDisabled(tooLargeForHierarchical)
-				.onClick(() => {
-					if (this.layoutMode !== 'hierarchical') this.setHierarchicalLayout();
-				}),
-		);
-		// Always opens the picker, even while already active - that's how
-		// you re-center on a different focus note (radialLayout.ts rings
-		// the graph out from one chosen note, so picking a layout alone
-		// isn't enough information to actually run it).
-		menu.addItem((item) =>
-			item
-				.setTitle(`${LAYOUT_MODE_LABELS.radial}…`)
-				.setChecked(this.layoutMode === 'radial')
-				.onClick(() => this.openRadialLayoutModal()),
-		);
-		menu.addItem((item) =>
-			item
-				.setTitle(LAYOUT_MODE_LABELS.circular)
-				.setChecked(this.layoutMode === 'circular')
-				.onClick(() => {
-					if (this.layoutMode !== 'circular') this.setCircularLayout();
-				}),
-		);
-
-		menu.showAtMouseEvent(evt);
+		new LayoutModal(
+			this.app,
+			this.layoutMode,
+			tooLargeForHierarchical,
+			(mode) => {
+				if (mode === this.layoutMode) return;
+				if (mode === 'force') this.setForceLayout();
+				else if (mode === 'hierarchical') this.setHierarchicalLayout();
+				else if (mode === 'circular') this.setCircularLayout();
+			},
+			() => this.openRadialLayoutModal(),
+		).open();
 	}
 
 	/**
@@ -2135,20 +2096,18 @@ export class GraphPane {
 
 		groups.forEach((group, index) => {
 			if (this.editingGroupId === group.id) this.renderGroupEditForm(group);
-			else this.renderGroupRow(group, index, groups.length);
+			else this.renderGroupRow(group, index);
 		});
 	}
 
-	/** A group's collapsed row - reorder arrows, an always-live enabled toggle (see nodeGroups.ts's docstring on why order is the match-precedence rule), a static color swatch, its name, and edit/delete - deliberately plain elements (not a full Setting per row) rather than the padding a Setting row costs, same reasoning Filter's tag pills used. */
-	private renderGroupRow(group: NodeGroup, index: number, total: number): void {
+	/** A group's collapsed row - a drag handle (reordering directly controls match precedence, see nodeGroups.ts's docstring), an always-live enabled toggle, a static color swatch, its name, and edit/delete - deliberately plain elements (not a full Setting per row) rather than the padding a Setting row costs, same reasoning Filter's tag pills used. */
+	private renderGroupRow(group: NodeGroup, index: number): void {
 		const row = this.colorAndSizeGroupsContainerEl.createDiv({ cls: 'clew-group-row' });
+		row.setAttribute('draggable', 'true');
 
-		new ExtraButtonComponent(row).setIcon('chevron-up').setTooltip('Move up').setDisabled(index === 0).onClick(() => this.moveGroup(index, -1));
-		new ExtraButtonComponent(row)
-			.setIcon('chevron-down')
-			.setTooltip('Move down')
-			.setDisabled(index === total - 1)
-			.onClick(() => this.moveGroup(index, 1));
+		const handle = row.createSpan({ cls: 'clew-group-drag-handle' });
+		setIcon(handle, 'grip-vertical');
+		setTooltip(handle, 'Drag to reorder');
 
 		row.createSpan({ cls: 'clew-group-swatch' }).style.backgroundColor = group.color;
 		row.createSpan({ cls: 'clew-group-name', text: group.name });
@@ -2156,7 +2115,7 @@ export class GraphPane {
 		new ExtraButtonComponent(row).setIcon('pencil').setTooltip('Edit').onClick(() => this.toggleEditingGroup(group.id));
 		new ExtraButtonComponent(row).setIcon('trash').setTooltip('Delete').onClick(() => this.deleteGroup(group.id));
 
-		// After delete, not near the reorder arrows (user feedback) - the
+		// After delete, not near the drag handle (user feedback) - the
 		// enable toggle is the row's own "is this active" state, not part
 		// of the reorder/edit/delete action cluster.
 		new ToggleComponent(row).setValue(group.enabled).onChange((value) => {
@@ -2164,14 +2123,55 @@ export class GraphPane {
 			void this.plugin.saveSettings();
 			this.applyNodeGroups();
 		});
+
+		this.setupGroupRowDrag(row, index);
 	}
 
-	/** Swaps a group with its neighbor - the only reordering UI (no drag-and-drop), directly controlling match precedence (see nodeGroups.ts's docstring). */
-	private moveGroup(index: number, delta: number): void {
+	/**
+	 * Whole-row HTML5 drag-and-drop (not just the handle - `draggable` on the
+	 * row keeps the drag image showing the full row, same as most list UIs;
+	 * the handle exists so hovering it, not the whole row, is what signals
+	 * "you can drag this") - replaced the previous up/down arrow buttons
+	 * entirely (user feedback), directly reordering `plugin.settings.nodeGroups`,
+	 * which controls match precedence (see nodeGroups.ts's docstring).
+	 * Dropping always means "move the dragged group to just before this
+	 * one" - simpler and more predictable than also detecting which half of
+	 * the target row the pointer is over.
+	 */
+	private setupGroupRowDrag(row: HTMLElement, index: number): void {
+		row.addEventListener('dragstart', (evt) => {
+			this.draggedGroupIndex = index;
+			row.addClass('is-dragging');
+			// Firefox refuses to start a drag at all without data actually
+			// set on the DataTransfer - the value itself is unused, reorderGroup
+			// reads this.draggedGroupIndex instead (renderNodeGroupList()
+			// rebuilds every row from scratch mid-drag on hover, which would
+			// otherwise lose data stashed only in the dragstart event).
+			evt.dataTransfer?.setData('text/plain', String(index));
+		});
+		row.addEventListener('dragend', () => {
+			row.removeClass('is-dragging');
+			this.draggedGroupIndex = null;
+			this.colorAndSizeGroupsContainerEl.findAll('.clew-group-row').forEach((el) => el.removeClass('is-drag-over'));
+		});
+		row.addEventListener('dragover', (evt) => {
+			if (this.draggedGroupIndex === null || this.draggedGroupIndex === index) return;
+			evt.preventDefault(); // required for 'drop' to fire at all
+			row.addClass('is-drag-over');
+		});
+		row.addEventListener('dragleave', () => row.removeClass('is-drag-over'));
+		row.addEventListener('drop', (evt) => {
+			evt.preventDefault();
+			if (this.draggedGroupIndex === null || this.draggedGroupIndex === index) return;
+			this.reorderGroup(this.draggedGroupIndex, index);
+		});
+	}
+
+	/** Moves the group at `from` to just before the group at `to`'s current (pre-move) position - see setupGroupRowDrag()'s docstring for why "before", not "onto", is the drop semantic. */
+	private reorderGroup(from: number, to: number): void {
 		const groups = this.plugin.settings.nodeGroups;
-		const target = index + delta;
-		if (target < 0 || target >= groups.length) return;
-		[groups[index], groups[target]] = [groups[target]!, groups[index]!];
+		const [moved] = groups.splice(from, 1);
+		groups.splice(from < to ? to - 1 : to, 0, moved!);
 		void this.plugin.saveSettings();
 		this.applyNodeGroups();
 		this.renderNodeGroupList();
@@ -2322,8 +2322,9 @@ export class GraphPane {
 		const criteriaEl = formEl.createDiv({ cls: 'clew-group-criteria' });
 		this.renderCriteriaList(criteriaEl, group);
 
-		// A single button opening a type-picker menu (same pattern as
-		// openLayoutMenu()'s toolbar button) rather than a separate type
+		// A single button opening a type-picker menu (same Menu-based pattern
+		// the "Layout" toolbar button used before it became a dialog - see
+		// openLayoutModal()) rather than a separate type
 		// dropdown + "add" button next to it - user feedback: picking a
 		// type, then having to also click a second control to actually add
 		// it, was an extra step for what's really one action ("add a

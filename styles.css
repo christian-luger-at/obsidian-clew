@@ -46,6 +46,23 @@
 	color: var(--text-on-accent);
 }
 
+/* Obsidian's own `.clickable-icon.is-active:hover` rule (three classes:
+   clickable-icon, is-active, hover) is *more specific* than
+   `.clew-toolbar button.is-active` above (two classes + one element - the
+   element tier doesn't count toward the class tier that decides this), so
+   on hover it was winning and swapping the solid `--interactive-accent`
+   fill for the much fainter `--background-modifier-active-hover` (a ~10%
+   accent tint) while our `color: var(--text-on-accent)` (white) stayed
+   put - a white icon on a barely-there pale-purple background, i.e.
+   exactly the "kaum sichtbar beim Hovern" user feedback (with a
+   screenshot of the Color & size toolbar button specifically). Matching
+   Obsidian's own selector's specificity (three classes) here, not just
+   one more than our base rule, is what actually wins the cascade. */
+.clew-toolbar button.is-active:hover {
+	background-color: var(--interactive-accent);
+	color: var(--text-on-accent);
+}
+
 /* Drops down from the icon rail (a flex-column child of .clew-topbar,
    see there) rather than floating in its own absolutely-positioned
    bottom-right corner like .clew-appearance-panel - user feedback: it
@@ -72,6 +89,22 @@
    width has to live on the wrapper (which that rule then fills) instead. */
 .clew-filter-panel .search-input-container {
 	width: 100%;
+}
+
+/* Obsidian's own default `.clickable-icon:hover` only swaps in a very
+   subtle background tint and leaves the icon's own color at
+   `--icon-color-hover` (== `--text-muted`, unchanged from its non-hover
+   color) - against this panel's own background that reads as barely any
+   feedback at all (user feedback, with a screenshot: an icon "kaum
+   sichtbar" on hover, even after the drag-handle-specific fix in an
+   earlier round). Darkening (or lightening, in dark mode) the icon itself
+   to `--text-normal` on hover - not just its background - gives a real,
+   unambiguous contrast jump. Scoped to every `.clickable-icon` in this
+   panel (Filter's own remove buttons included, not just Color & size's
+   pencil/trash) rather than one icon at a time, since the underlying
+   cause is the same everywhere it's used here. */
+.clew-filter-panel .clickable-icon:hover {
+	color: var(--text-normal);
 }
 
 .clew-filter-empty-note {
@@ -159,6 +192,39 @@
 
 .clew-group-row:last-child {
 	border-bottom: none;
+}
+
+.clew-group-row.is-dragging {
+	opacity: 0.5;
+}
+
+/* Drop target feedback while dragging a row over another one - a top
+   border (drops always insert *before* the row being hovered, see
+   setupGroupRowDrag()'s docstring) rather than a background highlight,
+   which would be easy to miss under a cursor that's also hovering. */
+.clew-group-row.is-drag-over {
+	border-top: 2px solid var(--interactive-accent);
+}
+
+/* The whole row is draggable (setupGroupRowDrag()), not just this handle -
+   it exists so hovering *it* specifically, not the whole row, is what
+   signals "drag to reorder" via the grab cursor and its own hover
+   highlight, same visual language as the row's other icon buttons
+   (pencil/trash) even though it isn't a real .clickable-icon (nothing to
+   click, only to drag). */
+.clew-group-drag-handle {
+	display: flex;
+	align-items: center;
+	flex-shrink: 0;
+	padding: var(--size-2-2) var(--size-2-3);
+	border-radius: var(--clickable-icon-radius);
+	color: var(--icon-color);
+	cursor: grab;
+}
+
+.clew-group-drag-handle:hover {
+	color: var(--text-normal);
+	background-color: var(--background-modifier-hover);
 }
 
 .clew-group-swatch {
@@ -514,4 +580,79 @@
 
 .clew-modal-error:empty {
 	display: none;
+}
+
+/* LayoutModal's option list - a "radio card" per layout (whole row
+   clickable, not a Setting with a small button off to the side) - user
+   feedback that the earlier per-row-button version "fühlen sich nicht gut
+   an" (didn't feel good): a tiny click target disconnected from the name/
+   description text that's the actual reason to pick a row, plus a
+   disabled "Active" button that read as broken rather than as a selection
+   indicator. */
+.clew-layout-option-list {
+	display: flex;
+	flex-direction: column;
+	gap: var(--size-4-1);
+}
+
+.clew-layout-option {
+	display: flex;
+	align-items: center;
+	gap: var(--size-4-3);
+	padding: var(--size-4-3);
+	border: 1px solid transparent;
+	border-radius: var(--radius-s);
+	cursor: pointer;
+}
+
+.clew-layout-option:hover:not(.is-disabled) {
+	background: var(--background-modifier-hover);
+}
+
+/* Accent border + tinted background instead of a disabled button - the
+   selection state lives on the row itself, not on a control inside it. */
+.clew-layout-option.is-active {
+	border-color: var(--interactive-accent);
+	background: var(--background-modifier-active-hover);
+}
+
+.clew-layout-option.is-disabled {
+	cursor: not-allowed;
+	opacity: 0.5;
+}
+
+.clew-layout-option-text {
+	flex: 1 1 auto;
+	min-width: 0;
+}
+
+.clew-layout-option-name {
+	font-weight: var(--font-medium);
+}
+
+.clew-layout-option-desc {
+	margin-top: var(--size-4-1);
+	color: var(--text-muted);
+	font-size: var(--font-ui-small);
+}
+
+.clew-layout-option-trailing {
+	display: flex;
+	flex: 0 0 auto;
+	align-items: center;
+	gap: var(--size-4-1);
+	color: var(--text-muted);
+}
+
+.clew-layout-option.is-active .clew-layout-option-trailing {
+	color: var(--interactive-accent);
+}
+
+.clew-layout-option-check {
+	display: flex;
+}
+
+.clew-layout-option-hint {
+	font-size: var(--font-ui-smaller);
+	white-space: nowrap;
 }

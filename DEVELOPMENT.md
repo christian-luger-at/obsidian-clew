@@ -288,24 +288,36 @@ manual copy step. Then open `test-vault` in Obsidian and check:
   starting positions, not the physics run itself, are seeded), but the
   overall arrangement and which notes end up near each other should be
   stable.
-- **Layout selection**: a single "Layout: Force" toolbar button (its own
-  label always shows the current mode) opens a dropdown menu (Obsidian's
-  own Menu API) with Force / Hierarchical / Radial… / Circular - exactly
-  one should show as checked, matching the button's label. Click
-  "Hierarchical" - `Hub` and its linked notes should arrange top-to-bottom
-  by link direction instead of the force-directed scatter (button briefly
-  shows "Computing…" first, see `hierarchicalLayout.ts` for why this is
-  synchronous rather than instant). Click "Force" - should return to the
-  force layout, restarting from the same deterministic starting positions
-  as before (not wherever the hierarchical layout left the nodes), and is
-  the only way back to force now (picking an already-active layout from
-  the menu should do nothing, not toggle it off - matches ordinary
-  radio-button behavior). On a vault with more than
+- **Layout selection** (`layoutModal.ts`): a single "Layout: Force" toolbar
+  button (its own tooltip always shows the current mode) opens a dialog -
+  not a dropdown menu (user feedback: picking a layout should come with an
+  explanation of what each one is actually for, not just a bare name), and
+  not a per-row "Active"/"Use" button either (user feedback that felt off:
+  a tiny click target at the row's edge, disconnected from the name/
+  description that's the actual reason to pick it, plus a disabled
+  "Active" button that read as broken) - each of the four options is one
+  whole clickable row: hover highlights it, the active one gets an accent
+  border/background and a checkmark (not a disabled button), every other
+  enabled row shows a plain chevron. Click anywhere on the "Hierarchical"
+  row - the dialog should close and `Hub` and its linked notes should
+  arrange top-to-bottom by link direction instead of the force-directed
+  scatter (briefly shows "Computing…" first, see `hierarchicalLayout.ts`
+  for why this is synchronous rather than instant). Reopen the dialog -
+  "Hierarchical" should now show the accent border + checkmark; click
+  "Force" - should return to the force layout, restarting from the same
+  deterministic starting positions as before (not wherever the
+  hierarchical layout left the nodes). On a vault with more than
   `HIERARCHICAL_LAYOUT_NODE_LIMIT` (1,000) notes - e.g. `spike-vault` -
-  "Hierarchical" should show as disabled in the menu with "(too many
-  notes)" appended to its label: dagre's layout algorithm doesn't scale to
-  vault-sized graphs (confirmed empirically: still incomplete after 60s at
-  10,000 nodes).
+  "Hierarchical"'s row should be visibly dimmed, not clickable, and its
+  description should get "(Too many notes for this layout.)" appended:
+  dagre's layout algorithm doesn't scale to vault-sized graphs (confirmed
+  empirically: still incomplete after 60s at 10,000 nodes). **Radial**:
+  its row always shows a "Choose note…"/"Choose a different note…" hint
+  (not a checkmark, even while it's the active layout) and clicking it
+  always opens the existing note-picker dialog (`radialLayoutModal.ts`) -
+  that's how you re-center on a different focus note, since picking
+  "radial" alone isn't enough information to actually run it (same
+  behavior the old menu had for its radial item).
 - **Theme-aware colors**: switch Settings → Appearance between light and
   dark, and (if available) a community theme - the graph's colors
   (default node, cover-image node, edges) should follow the switch without
@@ -329,7 +341,8 @@ manual copy step. Then open `test-vault` in Obsidian and check:
   nudging its *content* with padding, but a button has its own visible
   box, so it needs its whole box shifted with a margin instead). It opens
   a small menu (Tag / Property / Folder / Filename / Text / Stagnation,
-  same pattern as the "Layout" toolbar button's own menu) - pick
+  the same Menu-based pattern the "Layout" toolbar button used before it
+  became its own explanatory dialog) - pick
   "Property" and the new criterion opens directly in its expanded
   controls (not yet a chip, since it still needs configuring), reading top
   to bottom as **heading, then fields, then actions**: a "Property" label
@@ -383,12 +396,45 @@ manual copy step. Then open `test-vault` in Obsidian and check:
   the small "x" next to the "Group" heading itself, at the top.
   **Precedence**: create a second group ("Status B", a different color,
   the same `status` equals `done` criterion) - only the *first* group in
-  the list (topmost) should win for those notes; use the ↑/↓ reorder
-  arrows to move "Status B" above "Status A" and the notes should switch
-  to its color instead, confirming order is the precedence rule. **Enable
-  toggle**: toggling a group's switch off (on its collapsed row, no need
-  to open the edit form) should immediately stop it affecting the graph,
-  and drop the palette icon's highlight if it was the last enabled group.
+  the list (topmost) should win for those notes; **drag "Status B" above
+  "Status A"** by its grip handle (left end of the row) - dropping on
+  another row always moves the dragged group to just before it, and the
+  notes should switch to "Status B"'s color, confirming order is the
+  precedence rule (drag-and-drop replaced the earlier ↑/↓ arrow buttons -
+  user feedback). The dragged row should visibly dim while dragging, and
+  the row you're hovering over while dragging should get a top border
+  showing where it'll drop. Every group row icon (the grip handle, edit
+  pencil, delete trash) should darken (or lighten, in dark mode) clearly on
+  hover - Obsidian's own default `.clickable-icon:hover` only adds a very
+  subtle background tint and leaves the icon's own color unchanged, which
+  user feedback (with a screenshot) called still "kaum sichtbar" even after
+  an earlier round's drag-handle-only fix; every `.clickable-icon` in the
+  Filter/Color & size panels now also darkens to `--text-normal` on hover,
+  not just its background. Separately, an earlier version's ↑/↓ arrows went
+  nearly invisible on hover specifically at the top/bottom of the list,
+  because a *disabled* button (the arrow with nowhere further to move) gets
+  no hover feedback at all in Obsidian's own button styling (just a
+  permanently low opacity); removing the disabled boundary case entirely
+  (every row is always fully draggable, nothing to disable) fixes
+  this structurally rather than patching around it. **Enable toggle**:
+  toggling a group's switch off (on its collapsed row, no need to open the
+  edit form) should immediately stop it affecting the graph, and drop the
+  palette icon's highlight if it was the last enabled group. **Toolbar
+  palette icon stays solid on hover**: with at least one group enabled (so
+  the palette toolbar icon has its solid `--interactive-accent` fill, white
+  icon), hover it - it must stay a solid, high-contrast fill, not fade to a
+  barely-visible pale tint. A real CSS specificity bug caused exactly that
+  fade (user feedback, with a screenshot, pointing specifically at this
+  icon and not the panel's own edit/delete icons - a separate issue from
+  the panel-icon fix above): Obsidian's own `.clickable-icon.is-active:hover`
+  selector (three classes) is more specific than our
+  `.clew-toolbar button.is-active` (two classes plus one element - the
+  element doesn't count toward the class tier that decides this), so on
+  hover it silently won and swapped the solid fill for
+  `--background-modifier-active-hover` (a ~10% accent tint) while the icon
+  stayed white - a white icon on a near-white background. Fixed by adding
+  a `.clew-toolbar button.is-active:hover` rule that matches Obsidian's own
+  three-class specificity instead of just one-upping the non-hover rule.
   **Delete**: should show a confirmation dialog first ("Delete group?" /
   group name in the message) - cancelling it must leave the group
   untouched; confirming should immediately un-color its matched notes
@@ -492,8 +538,8 @@ manual copy step. Then open `test-vault` in Obsidian and check:
   fraction of a second, no camera jump/re-settle (cheap repaint, not a
   layout restart). Drag "Gravity" or "Scaling ratio" - the force layout
   should visibly restart and re-settle with the new spread. Pick "Circular"
-  from the "Layout" menu, then drag "Circular layout radius" - the ring
-  should resize live; pick "Radial…" (pick a focus note first) and drag
+  from the "Layout" dialog, then drag "Circular layout radius" - the ring
+  should resize live; pick "Radial" (choose a focus note) and drag
   "Radial ring spacing" - same live effect, centered on the same focus note
   without re-prompting. Drag "Label size threshold" - labels should
   appear/disappear at the current zoom level without a camera reset. Click
