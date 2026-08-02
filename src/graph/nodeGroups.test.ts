@@ -194,8 +194,8 @@ describe('describeCriterion', () => {
 		expect(describeCriterion({ type: 'text', query: 'roadmap' })).toBe('Text: roadmap');
 	});
 
-	it('describes an unconfigured clusterFreshness criterion by its bucket', () => {
-		expect(describeCriterion({ type: 'clusterFreshness', bucket: 'stagnant' })).toBe('Stagnation: most stagnant half');
-		expect(describeCriterion({ type: 'clusterFreshness', bucket: 'fresh' })).toBe('Stagnation: most active half');
+	it('describes a clusterFreshness criterion by its bucket', () => {
+		expect(describeCriterion({ type: 'clusterFreshness', bucket: 'stagnant' })).toBe('Activity: inactive area of the vault');
+		expect(describeCriterion({ type: 'clusterFreshness', bucket: 'fresh' })).toBe('Activity: active area of the vault');
 	});
 });

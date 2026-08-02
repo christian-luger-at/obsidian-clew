@@ -228,18 +228,28 @@ manual copy step. Then open `test-vault` in Obsidian and check:
 - **Find path**, anything → `Island X` or `Island Y`: should report "no path
   found" (a first-class result, not an error) - `Island X`/`Island Y` are a
   deliberately disconnected two-note component.
-- **Cluster freshness** (a "Stagnation" criterion on a node group - see
+- **Cluster freshness** (an "Activity" criterion on a node group - see
   "Color & size" below and `nodeGroups.ts`): create a group with a single
-  Stagnation criterion set to "Most stagnant" - `Old Cluster A/B/C`
-  (backdated ~200 days) should join the group; `Medium Age A/B` (~45 days)
-  and everything fresher should not, since they're in the fresher half of
-  clusters present. Switch the dropdown to "Most recently active" - now the
-  fresher clusters should join instead and the old ones should drop out.
-  This is a plain two-way choice (a note's cluster is in the stalest half
-  present, or the freshest half - see `StalenessBucket` in `nodeGroups.ts`),
-  not a numeric threshold - two earlier attempts (a raw 0-1 ratio, then a
-  labeled 0-100% range) were both user feedback'd as still not
-  understandable.
+  Activity criterion, reading "Notes in [an inactive area of the vault]" -
+  `Old Cluster A/B/C` (backdated ~200 days) should join the group; `Medium
+  Age A/B` (~45 days) and everything fresher should not, since they're in
+  the fresher half of clusters present. Switch the dropdown to "an active
+  area of the vault" - now the fresher clusters should join instead and the
+  old ones should drop out. This is a plain two-way choice (a note's
+  cluster is in the stalest half present, or the freshest half - see
+  `StalenessBucket` in `nodeGroups.ts`), not a numeric threshold - two
+  earlier attempts (a raw 0-1 ratio, then a labeled 0-100% range) were both
+  user feedback'd as still not understandable. Renamed from "Stagnation" to
+  "Activity", and reworded "in the [Most stagnant] half of clusters" to
+  "Notes in [an inactive area of the vault]", in a later round - user
+  feedback: even the binary version was still not understandable, not
+  because a two-way choice is inherently confusing but because of
+  "cluster"/"half" jargon with no obvious vault-editing meaning. Hover the
+  "Activity" heading (while a criterion of this type is expanded) - a
+  tooltip should explain the underlying mechanism (neighborhoods of
+  tightly-linked notes, compared by overall recency) in one sentence,
+  rather than a permanent line of text under the heading (every other
+  criterion type manages without one).
 - **`With Cover`** should render its frontmatter `cover` image as the node,
   not a plain dot.
 - **`Isolated`** (no links at all) should still render with degree 0 and be

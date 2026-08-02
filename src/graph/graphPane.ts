@@ -59,7 +59,14 @@ const CRITERION_TYPE_LABELS: Record<GroupCriterionType, string> = {
 	folder: 'Folder',
 	filename: 'Filename',
 	text: 'Text',
-	clusterFreshness: 'Stagnation',
+	// "Activity", not "Stagnation" - user feedback: the criterion's own
+	// controls (renderCriterionEditRow()'s clusterFreshness case) plus this
+	// heading were still not understandable, specifically because of
+	// "cluster"/"half" jargon, not because a binary choice is inherently
+	// confusing (see StalenessBucket's docstring in nodeGroups.ts for the
+	// full history) - "Activity" names the axis (active vs. inactive)
+	// rather than presupposing "stagnant" as the default framing.
+	clusterFreshness: 'Activity',
 };
 
 /** Parses the filter panel's number inputs (staleDays/minDegree) - empty/invalid/negative all mean "criterion off" (null), same as the field never being touched, rather than a confusing 0-vs-unset distinction the UI would otherwise need to expose separately. */
@@ -2356,7 +2363,7 @@ export class GraphPane {
 			addCriterionOption('folder', 'Folder');
 			addCriterionOption('filename', 'Filename');
 			addCriterionOption('text', 'Text (name & content)');
-			addCriterionOption('clusterFreshness', 'Stagnation');
+			addCriterionOption('clusterFreshness', 'Activity');
 			menu.showAtMouseEvent(evt);
 		});
 	}
@@ -2435,7 +2442,22 @@ export class GraphPane {
 		// more - user feedback: first line = heading, e.g. "Property", then
 		// the fields on the line(s) below), same "heading, then controls"
 		// shape as the group form's own "Group"/"Criteria" headings above.
-		editEl.createDiv({ cls: 'clew-criterion-type-heading', text: CRITERION_TYPE_LABELS[criterion.type] });
+		const typeHeadingEl = editEl.createDiv({ cls: 'clew-criterion-type-heading', text: CRITERION_TYPE_LABELS[criterion.type] });
+		// Only "Activity" gets a tooltip explaining its mechanism - every
+		// other type is self-evident from its own controls (a tag picker,
+		// a folder path, ...), but "an inactive/active area of the vault"
+		// (this criterion's dropdown, below) still begs the question of
+		// what decides that without at least one sentence of explanation -
+		// a tooltip here rather than a permanent line of text under the
+		// heading, since every other criterion type manages without one and
+		// user feedback has consistently pushed for keeping this list
+		// compact (see e.g. the removed size-multiplier description text).
+		if (criterion.type === 'clusterFreshness') {
+			setTooltip(
+				typeHeadingEl,
+				'Notes are grouped into tightly-linked neighborhoods, then compared by how recently each neighborhood was edited overall.',
+			);
+		}
 
 		const controlsEl = editEl.createDiv({ cls: 'clew-criterion-controls' });
 
@@ -2494,16 +2516,24 @@ export class GraphPane {
 				});
 				break;
 			case 'clusterFreshness':
-				controlsEl.createSpan({ cls: 'clew-criterion-label', text: 'in the' });
+				// "Notes in [an inactive/active area of the vault]" - not
+				// "in the most stagnant half of clusters" (an earlier
+				// version) - user feedback: still not understandable, not
+				// because a binary choice is inherently confusing (an even
+				// earlier numeric/percentage version was already simplified
+				// to this one for exactly that reason - see
+				// StalenessBucket's docstring in nodeGroups.ts) but because
+				// of "cluster"/"half" jargon with no obvious vault-editing
+				// meaning. Same mechanism, described without naming it.
+				controlsEl.createSpan({ cls: 'clew-criterion-label', text: 'Notes in' });
 				new DropdownComponent(controlsEl)
-					.addOption('stagnant', 'Most stagnant')
-					.addOption('fresh', 'Most recently active')
+					.addOption('stagnant', 'An inactive area of the vault')
+					.addOption('fresh', 'An active area of the vault')
 					.setValue(criterion.bucket)
 					.onChange((value) => {
 						criterion.bucket = value as StalenessBucket;
 						applyLive();
 					});
-				controlsEl.createSpan({ cls: 'clew-criterion-label', text: 'half of clusters' });
 				break;
 		}
 

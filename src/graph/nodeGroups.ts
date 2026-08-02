@@ -36,7 +36,15 @@ export type StringOperator = 'contains' | 'equals' | 'notEquals' | 'isEmpty' | '
  * rather than a numeric 0-1 (or 0-100%) threshold, which user feedback
  * said was still not understandable regardless of how it was presented
  * (a raw ratio, then a labeled percentage range) - see stagnation.ts's
- * staleness() for the underlying continuous value this buckets.
+ * staleness() for the underlying continuous value this buckets. The values
+ * themselves ('stagnant'/'fresh') are internal only - user feedback said
+ * even the binary version still wasn't understandable as presented in the
+ * UI, not because of the two-way choice itself but because of the words
+ * "cluster" and "half" (jargon with no obvious vault-editing meaning); see
+ * graphPane.ts's renderCriterionEditRow() and this module's
+ * describeCriterion() for the actual user-facing wording ("an inactive/
+ * active area of the vault"), which describes the same mechanism without
+ * naming it.
  */
 export type StalenessBucket = 'stagnant' | 'fresh';
 
@@ -260,6 +268,6 @@ export function describeCriterion(criterion: GroupCriterion): string {
 		case 'text':
 			return `Text: ${criterion.query || '(none)'}`;
 		case 'clusterFreshness':
-			return criterion.bucket === 'stagnant' ? 'Stagnation: most stagnant half' : 'Stagnation: most active half';
+			return criterion.bucket === 'stagnant' ? 'Activity: inactive area of the vault' : 'Activity: active area of the vault';
 	}
 }
