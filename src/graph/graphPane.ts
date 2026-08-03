@@ -2407,14 +2407,17 @@ export class GraphPane {
 				}),
 			);
 		};
+		// Ordered by expected usage frequency, most common first (user
+		// feedback) - not alphabetical, not by GroupCriterionType's own
+		// declaration order.
+		addOption('text', 'Text (name & content)');
 		addOption('tag', 'Tag');
 		addOption('property', 'Property');
 		addOption('folder', 'Folder');
 		addOption('filename', 'Filename');
-		addOption('text', 'Text (name & content)');
 		addOption('staleDays', 'Not edited at least (days)');
-		addOption('minLinks', 'Minimum number of links');
 		addOption('clusterFreshness', 'Activity');
+		addOption('minLinks', 'Minimum number of links');
 		menu.showAtMouseEvent(evt);
 	}
 
