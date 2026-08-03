@@ -1345,16 +1345,31 @@ export class GraphPane {
 		// synchronously, so fitting the camera right after is fitting the
 		// real result), ForceAtlas2 relaxes asynchronously over
 		// SETTLE_DURATION_MS starting from the tight deterministic seed
-		// scatter just reset above - calling resetCameraAndRefresh()
-		// synchronously here (an earlier version of this) fit/locked the
-		// camera to that seed's tiny bounding box, not the spread-out
+		// scatter just reset above - calling resetCameraAndRefresh() only
+		// once, synchronously here (an earlier version of this) fit/locked
+		// the camera to that seed's tiny bounding box, not the spread-out
 		// settled layout, so the graph looked "wrong" (cramped into a
 		// corner or oddly zoomed) until something else (a manual "Reset
-		// view" click, made well after settling) recomputed the fit -
-		// reported as "switching back to Force looks completely different
-		// until I hit Reset View". onSettled fires once the physics run
-		// actually finishes, so the fit reflects the real result.
-		this.layout = runLayout(this.graph, { ...this.layoutOptions(SETTLE_DURATION_MS), onSettled: () => void this.resetCameraAndRefresh() });
+		// view" click, made well after settling) recomputed the fit.
+		// Only fitting once at the *end* (onSettled) instead had the
+		// opposite problem - user feedback: "die Anzeige ist zuerst sehr
+		// klein und braucht 2 sec, um die richtige Grösse zu haben" - the
+		// camera stayed frozen at whatever the *previous* layout had framed
+		// for the entire settle, while nodes visibly spread out underneath
+		// it, then jumped to the correct framing all at once. Refitting
+		// repeatedly while it settles (instant snaps, `duration: 0` - an
+		// animated tween restarting every tick would fight itself and look
+		// worse, not better) tracks the growing extent live instead; the
+		// final onSettled fit still uses the default animated reset, so the
+		// very last adjustment reads as a deliberate settle, not a snap.
+		const refitIntervalId = window.setInterval(() => void this.resetCameraAndRefresh(true), 150);
+		this.layout = runLayout(this.graph, {
+			...this.layoutOptions(SETTLE_DURATION_MS),
+			onSettled: () => {
+				window.clearInterval(refitIntervalId);
+				void this.resetCameraAndRefresh();
+			},
+		});
 	}
 
 	/**
@@ -1412,11 +1427,16 @@ export class GraphPane {
 	 * showing that final "still moving, edges hidden" frame indefinitely.
 	 * Explicitly refreshing once the animation's promise resolves guarantees
 	 * one more paint against the now-idle camera state.
+	 *
+	 * `instant` (duration: 0) skips the tween - setForceLayout() calls this
+	 * repeatedly while ForceAtlas2 settles to keep the camera tracking the
+	 * growing extent live, and a real animated tween restarting on every one
+	 * of those ticks would fight itself instead of looking smooth.
 	 */
-	private async resetCameraAndRefresh(): Promise<void> {
+	private async resetCameraAndRefresh(instant = false): Promise<void> {
 		const bbox = this.fittedBBox();
 		if (bbox) this.renderer?.setCustomBBox(bbox);
-		await this.renderer?.getCamera().animatedReset();
+		await this.renderer?.getCamera().animatedReset(instant ? { duration: 0 } : undefined);
 		this.renderer?.refresh();
 	}
 

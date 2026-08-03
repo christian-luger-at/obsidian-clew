@@ -359,6 +359,16 @@ manual copy step. Then open `test-vault` in Obsidian and check:
   starting positions, not the physics run itself, are seeded), but the
   overall arrangement and which notes end up near each other should be
   stable.
+- **Switching to Force layout** (from Hierarchical/Radial/Circular, or
+  reopening the graph view): the camera should visibly track the graph as
+  it spreads out from its tight deterministic seed over the ~2s settle,
+  not stay frozen at the *previous* layout's framing until a single jump
+  at the very end (a real bug this exact scenario caught - user feedback:
+  "die Anzeige ist zuerst sehr klein und braucht 2 sec, um die richtige
+  Grösse zu haben" - `setForceLayout()` used to fit the camera only once,
+  in `onSettled`, so the previous layout's zoom stayed on screen for the
+  entire settle while nodes visibly grew underneath it). Should read as a
+  smooth zoom-out, not a stutter or a flash of the wrong framing.
 - **Layout selection** (`layoutModal.ts`): a single "Layout: Force" toolbar
   button (its own tooltip always shows the current mode) opens a dialog -
   not a dropdown menu (user feedback: picking a layout should come with an
