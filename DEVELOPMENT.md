@@ -263,10 +263,16 @@ manual copy step. Then open `test-vault` in Obsidian and check:
   die gesamte Logik für erstellen/editieren/löschen von Filtern (wie in
   Color & Size)") - "+ new filter" creates a named, immediately-enabled,
   empty-criteria `FilterPreset` and opens it in edit mode; its row shows
-  the name + an enable toggle + edit (pencil)/delete (trash), no color
-  swatch or drag handle (a filter has neither a color nor does order
-  matter - see below). Its edit form is the group edit form minus the
-  color picker and "Scale size" toggle: a name field, then the exact same
+  the same drag handle + name + edit (pencil)/delete (trash) + enable
+  toggle as a Color & size group's row, minus the color swatch (a filter
+  has no color). **Drag to reorder** (user feedback: "Drag & Drop in
+  Liste fehlt"): drag a filter row above/below another - the list order
+  should persist (reload the plugin/restart Obsidian to confirm), but
+  since several enabled filters combine with OR (see below), reordering
+  must have *no effect* on which notes are shown - unlike a node group's
+  own drag-to-reorder, which does control color precedence. Its edit form
+  is the group edit form minus the color picker and "Scale size" toggle:
+  a name field, then the exact same
   "Criteria" chip list + "+ add" menu Color & size uses (including
   `Not edited at least (days)`/`Minimum number of links`/`Activity`, not
   just the original text/tag/property set), AND'd within one filter, same

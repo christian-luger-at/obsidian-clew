@@ -358,6 +358,8 @@ export class GraphPane {
 	// below - the exact same list/edit-form architecture, just for
 	// FilterPreset instead of NodeGroup, see filter.ts's docstring).
 	private filterListContainerEl!: HTMLElement;
+	/** Index (into plugin.settings.filterPresets) of the filter row currently being dragged - same role as draggedGroupIndex below, see setupGroupRowDrag()'s docstring. Reordering filters has no effect on which notes match (OR across filters, see filter.ts's docstring) - it's purely a user-organization convenience, same drag-and-drop UI as Color & size for consistency (user feedback). */
+	private draggedFilterIndex: number | null = null;
 	/** Debounces the disk write (not the live filter apply, which stays instant) - filter criteria/name changes on every keystroke, and persisting on every single one would spam disk writes for no benefit. Same pattern as debouncedSaveNodeGroups. */
 	private readonly debouncedSaveFilterPresets = debounce(() => void this.plugin.saveSettings(), 250);
 	/** id of the filter currently expanded into its edit form - null when every filter is shown collapsed. Same role as editingGroupId below, for filter.ts's FilterPreset list instead of nodeGroups. */
@@ -1747,15 +1749,21 @@ export class GraphPane {
 			this.filterListContainerEl.createEl('p', { text: 'No filters yet.', cls: 'clew-filter-empty-note' });
 		}
 
-		presets.forEach((preset) => {
+		presets.forEach((preset, index) => {
 			if (this.editingFilterId === preset.id) this.renderFilterEditForm(preset);
-			else this.renderFilterRow(preset);
+			else this.renderFilterRow(preset, index);
 		});
 	}
 
-	/** A filter's collapsed row - same shape as a Color & size group's row (renderGroupRow()) minus the drag handle (order doesn't affect an OR-combination, see filter.ts's docstring) and color swatch (a filter has no color). */
-	private renderFilterRow(preset: FilterPreset): void {
+	/** A filter's collapsed row - same shape as a Color & size group's row (renderGroupRow()), including the drag handle (user feedback), minus the color swatch (a filter has no color). Reordering is purely a user-organization convenience here - see draggedFilterIndex's docstring for why it doesn't affect matching. */
+	private renderFilterRow(preset: FilterPreset, index: number): void {
 		const row = this.filterListContainerEl.createDiv({ cls: 'clew-group-row' });
+		row.setAttribute('draggable', 'true');
+
+		const handle = row.createSpan({ cls: 'clew-group-drag-handle' });
+		setIcon(handle, 'grip-vertical');
+		setTooltip(handle, 'Drag to reorder');
+
 		row.createSpan({ cls: 'clew-group-name', text: preset.name });
 
 		new ExtraButtonComponent(row).setIcon('pencil').setTooltip('Edit').onClick(() => this.toggleEditingFilter(preset.id));
@@ -1766,6 +1774,42 @@ export class GraphPane {
 			void this.plugin.saveSettings();
 			this.applyFilters();
 		});
+
+		this.setupFilterRowDrag(row, index);
+	}
+
+	/** Whole-row HTML5 drag-and-drop for the filter list - same mechanics as setupGroupRowDrag(), just reordering plugin.settings.filterPresets (and with no effect on which notes match, unlike a node group's drag - see draggedFilterIndex's docstring). */
+	private setupFilterRowDrag(row: HTMLElement, index: number): void {
+		row.addEventListener('dragstart', (evt) => {
+			this.draggedFilterIndex = index;
+			row.addClass('is-dragging');
+			evt.dataTransfer?.setData('text/plain', String(index));
+		});
+		row.addEventListener('dragend', () => {
+			row.removeClass('is-dragging');
+			this.draggedFilterIndex = null;
+			this.filterListContainerEl.findAll('.clew-group-row').forEach((el) => el.removeClass('is-drag-over'));
+		});
+		row.addEventListener('dragover', (evt) => {
+			if (this.draggedFilterIndex === null || this.draggedFilterIndex === index) return;
+			evt.preventDefault(); // required for 'drop' to fire at all
+			row.addClass('is-drag-over');
+		});
+		row.addEventListener('dragleave', () => row.removeClass('is-drag-over'));
+		row.addEventListener('drop', (evt) => {
+			evt.preventDefault();
+			if (this.draggedFilterIndex === null || this.draggedFilterIndex === index) return;
+			this.reorderFilter(this.draggedFilterIndex, index);
+		});
+	}
+
+	/** Moves the filter at `from` to just before the filter at `to`'s current (pre-move) position - see setupGroupRowDrag()'s docstring for why "before", not "onto", is the drop semantic. */
+	private reorderFilter(from: number, to: number): void {
+		const presets = this.plugin.settings.filterPresets;
+		const [moved] = presets.splice(from, 1);
+		presets.splice(from < to ? to - 1 : to, 0, moved!);
+		void this.plugin.saveSettings();
+		this.renderFilterList();
 	}
 
 	/**
