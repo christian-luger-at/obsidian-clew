@@ -1482,6 +1482,15 @@ export class GraphPane {
 
 		this.layout?.stop();
 		this.layout = runLayout(this.graph, this.layoutOptions(DRAG_SETTLE_DURATION_MS));
+
+		// The Appearance panel's own "Pinned node positions" count/"Clear
+		// all" button (renderAppearancePanel()) only reads
+		// plugin.settings.pinnedPositions at render time - without this, a
+		// note dragged while that panel was already open left it showing a
+		// stale count until closed and reopened (user feedback: "funktioniert
+		// nicht immer - nur wenn eine Notiz vor dem Öffnen des
+		// Appearance-Dialogs verschoben wurde").
+		if (this.appearancePanelEl.isShown()) this.renderAppearancePanel();
 	}
 
 	/**

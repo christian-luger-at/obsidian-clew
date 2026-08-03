@@ -534,7 +534,13 @@ manual copy step. Then open `test-vault` in Obsidian and check:
   "Pinned node positions" section should show how many notes have a
   pinned position, with a "Clear all" button that actually clears them
   (verify a previously dragged note goes back to its normal position
-  after using it).
+  after using it). **With the Appearance panel already open**, drag a
+  note - the count and "Clear all"'s enabled state must update
+  immediately, not only after closing and reopening the panel (a real bug
+  this exact scenario caught - user feedback: "funktioniert nicht immer,
+  nur wenn eine Notiz vor dem Öffnen des Appearance-Dialogs verschoben
+  wurde"; `finishDrag()` persisted the pin but never re-rendered the
+  already-open panel, which only reads `pinnedPositions` at render time).
 - **Click a node** (GitHub issue #10): should open that note in the editor,
   same as clicking a node in Obsidian's own core Graph View. Should still
   work after dragging some other node around.
