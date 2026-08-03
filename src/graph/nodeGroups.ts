@@ -25,7 +25,7 @@
 
 export const MAX_NODE_GROUPS = 10;
 
-export type GroupCriterionType = 'clusterFreshness' | 'text' | 'folder' | 'filename' | 'tag' | 'property';
+export type GroupCriterionType = 'clusterFreshness' | 'text' | 'folder' | 'filename' | 'tag' | 'property' | 'staleDays' | 'minLinks';
 
 /** How a `property` criterion compares the frontmatter value to `value` - user feedback: raw substring-only matching couldn't express "status is exactly done" vs. "status is not done" vs. "has no status set at all". */
 export type StringOperator = 'contains' | 'equals' | 'notEquals' | 'isEmpty' | 'isNotEmpty';
@@ -85,7 +85,19 @@ export interface PropertyCriterion {
 	value: string;
 }
 
-export type GroupCriterion = ClusterFreshnessCriterion | TextCriterion | FolderCriterion | FilenameCriterion | TagCriterion | PropertyCriterion;
+/** Note not edited in at least `days` days - same mechanism as filter.ts's FilterQuery.staleDays. */
+export interface StaleDaysCriterion {
+	type: 'staleDays';
+	days: number;
+}
+
+/** Note has at least `count` links (graph degree) - same mechanism as filter.ts's FilterQuery.minDegree. */
+export interface MinLinksCriterion {
+	type: 'minLinks';
+	count: number;
+}
+
+export type GroupCriterion = ClusterFreshnessCriterion | TextCriterion | FolderCriterion | FilenameCriterion | TagCriterion | PropertyCriterion | StaleDaysCriterion | MinLinksCriterion;
 
 export interface NodeGroup {
 	id: string;
@@ -123,6 +135,10 @@ export interface NodeGroupFacts {
 	frontmatter: Record<string, unknown>;
 	/** 0-1, see stagnation.ts's staleness() - null if cluster stats haven't been computed (no enabled group needs them, see needsClusterFreshness()). */
 	clusterStaleness: number | null;
+	/** File modification time (ms since epoch) - backs the `staleDays` criterion, same source as filter.ts's NoteFilterFacts.mtime. */
+	mtime: number;
+	/** Link count (graph.degree()) - backs the `minLinks` criterion, same source as filter.ts's NoteFilterFacts.degree. */
+	degree: number;
 }
 
 // Same 10 colors visualEncoding.ts used to auto-assign by category -
@@ -190,6 +206,14 @@ function matchesCriterion(facts: NodeGroupFacts, criterion: GroupCriterion): boo
 			if (criterion.operator === 'equals') return value === target;
 			return value !== target; // notEquals
 		}
+		case 'staleDays': {
+			const cutoff = Date.now() - criterion.days * 24 * 60 * 60 * 1000;
+			// mtime *after* the cutoff means it was edited more recently than
+			// "days ago" - i.e. NOT stale enough, so it fails the criterion.
+			return facts.mtime <= cutoff;
+		}
+		case 'minLinks':
+			return facts.degree >= criterion.count;
 	}
 }
 
@@ -269,5 +293,9 @@ export function describeCriterion(criterion: GroupCriterion): string {
 			return `Text: ${criterion.query || '(none)'}`;
 		case 'clusterFreshness':
 			return criterion.bucket === 'stagnant' ? 'Activity: inactive area of the vault' : 'Activity: active area of the vault';
+		case 'staleDays':
+			return `Not edited in ${criterion.days}+ days`;
+		case 'minLinks':
+			return `${criterion.count}+ links`;
 	}
 }

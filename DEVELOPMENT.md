@@ -476,6 +476,13 @@ manual copy step. Then open `test-vault` in Obsidian and check:
   block each - the whole criteria list should read as noticeably more
   compact than a typical Settings screen (user feedback: the UI wasn't
   "clean enough").
+- **Color & size criteria - staleness/links**: `staleDays` ("Not edited at
+  least (days)") and `minLinks` ("Minimum number of links") - same
+  mechanism as the Filter panel's own "Not edited in at least (days)" /
+  "Minimum number of links" fields (`filter.ts`'s `staleDays`/`minDegree`),
+  just as a group criterion instead of a filter. Create a group with a
+  `staleDays` criterion of e.g. 30 and confirm only notes whose mtime is
+  30+ days old join it; same for `minLinks` against `graph.degree()`.
 - **Drag to pin a node** (force layout only): drag any note - its
   *neighbors* should visibly shift/readjust for a second or two after you
   release it (ForceAtlas2 briefly re-settling around the now-fixed

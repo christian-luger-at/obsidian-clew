@@ -9,6 +9,8 @@ function facts(overrides: Partial<NodeGroupFacts> = {}): NodeGroupFacts {
 		tags: [],
 		frontmatter: {},
 		clusterStaleness: null,
+		mtime: 0,
+		degree: 0,
 		...overrides,
 	};
 }
@@ -110,6 +112,24 @@ describe('matchesGroup', () => {
 		});
 	});
 
+	describe('staleDays criterion', () => {
+		it('matches notes not edited within the last N days', () => {
+			const g = group({ criteria: [{ type: 'staleDays', days: 30 }] });
+			const now = Date.now();
+			expect(matchesGroup(facts({ mtime: now - 40 * 24 * 60 * 60 * 1000 }), g)).toBe(true);
+			expect(matchesGroup(facts({ mtime: now - 10 * 24 * 60 * 60 * 1000 }), g)).toBe(false);
+		});
+	});
+
+	describe('minLinks criterion', () => {
+		it('matches notes with at least the given link count', () => {
+			const g = group({ criteria: [{ type: 'minLinks', count: 3 }] });
+			expect(matchesGroup(facts({ degree: 3 }), g)).toBe(true);
+			expect(matchesGroup(facts({ degree: 5 }), g)).toBe(true);
+			expect(matchesGroup(facts({ degree: 2 }), g)).toBe(false);
+		});
+	});
+
 	it('ANDs across every criterion', () => {
 		const g = group({
 			criteria: [
@@ -197,5 +217,10 @@ describe('describeCriterion', () => {
 	it('describes a clusterFreshness criterion by its bucket', () => {
 		expect(describeCriterion({ type: 'clusterFreshness', bucket: 'stagnant' })).toBe('Activity: inactive area of the vault');
 		expect(describeCriterion({ type: 'clusterFreshness', bucket: 'fresh' })).toBe('Activity: active area of the vault');
+	});
+
+	it('describes staleDays/minLinks criteria', () => {
+		expect(describeCriterion({ type: 'staleDays', days: 30 })).toBe('Not edited in 30+ days');
+		expect(describeCriterion({ type: 'minLinks', count: 3 })).toBe('3+ links');
 	});
 });

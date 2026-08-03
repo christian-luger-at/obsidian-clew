@@ -67,6 +67,8 @@ const CRITERION_TYPE_LABELS: Record<GroupCriterionType, string> = {
 	// full history) - "Activity" names the axis (active vs. inactive)
 	// rather than presupposing "stagnant" as the default framing.
 	clusterFreshness: 'Activity',
+	staleDays: 'Not edited at least',
+	minLinks: 'Minimum number of links',
 };
 
 /** Parses the filter panel's number inputs (staleDays/minDegree) - empty/invalid/negative all mean "criterion off" (null), same as the field never being touched, rather than a confusing 0-vs-unset distinction the UI would otherwise need to expose separately. */
@@ -1037,6 +1039,8 @@ export class GraphPane {
 				tags: (cache ? getAllTags(cache) : null) ?? [],
 				frontmatter: cache?.frontmatter ?? {},
 				clusterStaleness: clusterStalenessByNode?.get(file.path) ?? null,
+				mtime: this.mtimeByPath.get(file.path) ?? file.stat.mtime,
+				degree: this.graph?.degree(file.path) ?? 0,
 			});
 		}
 		return result;
@@ -2244,6 +2248,10 @@ export class GraphPane {
 				return { type, tags: [] };
 			case 'property':
 				return { type, key: this.colorAndSizeAvailableProperties[0] ?? '', operator: 'contains', value: '' };
+			case 'staleDays':
+				return { type, days: 30 };
+			case 'minLinks':
+				return { type, count: 1 };
 		}
 	}
 
@@ -2363,6 +2371,8 @@ export class GraphPane {
 			addCriterionOption('folder', 'Folder');
 			addCriterionOption('filename', 'Filename');
 			addCriterionOption('text', 'Text (name & content)');
+			addCriterionOption('staleDays', 'Not edited at least (days)');
+			addCriterionOption('minLinks', 'Minimum number of links');
 			addCriterionOption('clusterFreshness', 'Activity');
 			menu.showAtMouseEvent(evt);
 		});
@@ -2535,6 +2545,26 @@ export class GraphPane {
 						applyLive();
 					});
 				break;
+			case 'staleDays': {
+				const input = new TextComponent(controlsEl).setValue(String(criterion.days));
+				input.inputEl.type = 'number';
+				input.inputEl.min = '0';
+				input.onChange((value) => {
+					criterion.days = parsePositiveInt(value) ?? 0;
+					applyLive();
+				});
+				break;
+			}
+			case 'minLinks': {
+				const input = new TextComponent(controlsEl).setValue(String(criterion.count));
+				input.inputEl.type = 'number';
+				input.inputEl.min = '0';
+				input.onChange((value) => {
+					criterion.count = parsePositiveInt(value) ?? 0;
+					applyLive();
+				});
+				break;
+			}
 		}
 
 		// Check/cancel always sit on their own line below the fields (user
