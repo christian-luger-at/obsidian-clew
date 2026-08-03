@@ -60,6 +60,7 @@ export default class ClewPlugin extends Plugin {
 			appearance: { ...DEFAULT_APPEARANCE_SETTINGS, ...loaded?.appearance },
 			pinnedPositions: { ...loaded?.pinnedPositions },
 			filterPresets: [...(loaded?.filterPresets ?? [])],
+			filterCombineMode: loaded?.filterCombineMode ?? 'or',
 			nodeGroups: [...(loaded?.nodeGroups ?? [])],
 		};
 	}

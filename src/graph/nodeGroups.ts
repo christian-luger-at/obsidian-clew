@@ -230,11 +230,10 @@ function matchesCriterion(facts: NodeGroupFacts, criterion: GroupCriterion): boo
 
 /**
  * Every criterion must match (AND) - see this module's docstring. Shared
- * by matchesGroup() below and filter.ts's matchesQuery(), which reuses the
- * exact same GroupCriterion/NodeGroupFacts types for its own (ungrouped,
- * single flat list) query - "filter" and "color & size group" are the same
- * matching mechanism applied two different ways (hide vs. color), not two
- * separate implementations to keep in sync.
+ * by matchesGroup() below and filter.ts's own matching (which reuses the
+ * exact same GroupCriterion/NodeGroupFacts types) - "filter" and "color &
+ * size group" are the same matching mechanism applied two different ways
+ * (hide vs. color), not two separate implementations to keep in sync.
  */
 export function matchesAllCriteria(facts: NodeGroupFacts, criteria: GroupCriterion[]): boolean {
 	return criteria.every((criterion) => matchesCriterion(facts, criterion));

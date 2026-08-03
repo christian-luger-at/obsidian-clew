@@ -16,7 +16,7 @@ import { ConfirmModal } from './confirmModal';
 import { exportPathToCanvas } from './canvasExport';
 import { computeCommunityStats, detectCommunities, staleness } from './stagnation';
 import { readThemeColors, ThemeColors, blendToward } from './theme';
-import { evaluateFilters, FilterPreset, isAnyFilterEnabled, MAX_FILTER_PRESETS } from './filter';
+import { evaluateFilters, FilterCombineMode, FilterPreset, isAnyFilterEnabled, MAX_FILTER_PRESETS } from './filter';
 import {
 	CriteriaOwner,
 	DEFAULT_GROUP_COLORS,
@@ -1747,6 +1747,26 @@ export class GraphPane {
 		setTooltip(closeButton, 'Close');
 		closeButton.addEventListener('click', () => this.toggleFilterPanel());
 
+		// How several *enabled* filters combine - one level above each
+		// filter's own criteria (which always AND, same as a node group's -
+		// see filter.ts's docstring) - user feedback: "Das ist auf der
+		// falschen Ebene [...] soll für die Kombination von ganzen Filtern
+		// gelten", after an earlier version put this choice on each
+		// filter's own criteria instead. A single control for the whole
+		// panel, not per-filter - it describes how the *list* combines, not
+		// any one filter's own behavior.
+		new Setting(this.filterPanelEl).setName('Show a note if it matches').addDropdown((dropdown) =>
+			dropdown
+				.addOption('or', 'At least one filter')
+				.addOption('and', 'Every filter')
+				.setValue(this.plugin.settings.filterCombineMode)
+				.onChange((value) => {
+					this.plugin.settings.filterCombineMode = value as FilterCombineMode;
+					void this.plugin.saveSettings();
+					this.applyFilters();
+				}),
+		);
+
 		// Shared by every `folder` criterion row's text input, own id per
 		// panel (see CriteriaEditorContext's folderDatalistId docstring) so
 		// this and Color & size's own datalist never collide if both panels
@@ -2004,7 +2024,7 @@ export class GraphPane {
 		this.panelEl.hide();
 		this.pathResultActive = false;
 
-		const matches = evaluateFilters(this.buildCriteriaFacts(), presets);
+		const matches = evaluateFilters(this.buildCriteriaFacts(), presets, this.plugin.settings.filterCombineMode);
 		const visibleEdges = new Set(graph.edges().filter((edge) => graph.extremities(edge).every((node) => matches.has(node))));
 		this.renderer?.setSetting('nodeReducer', (node, attr) => ({ ...attr, hidden: !matches.has(node) }));
 		this.renderer?.setSetting('edgeReducer', (edge, attr) => ({ ...attr, hidden: !visibleEdges.has(edge) }));

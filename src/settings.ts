@@ -1,4 +1,4 @@
-import { FilterPreset } from './graph/filter';
+import { FilterCombineMode, FilterPreset } from './graph/filter';
 import { NodeGroup } from './graph/nodeGroups';
 
 export interface PinnedPosition {
@@ -137,6 +137,15 @@ export interface ClewSettings {
 	 * isAnyFilterEnabled()), independent of the panel being open.
 	 */
 	filterPresets: FilterPreset[];
+	/**
+	 * How several *enabled* filters combine - "any" (OR, the default) or
+	 * "all" (AND) - see filter.ts's docstring for the full reasoning. A
+	 * single global choice, not per-filter (user feedback: "Das ist auf der
+	 * falschen Ebene [...] soll für die Kombination von ganzen Filtern
+	 * gelten" - an earlier version put an AND/OR choice on each filter's
+	 * own criteria instead, one level too low).
+	 */
+	filterCombineMode: FilterCombineMode;
 	/**
 	 * User-defined "Color & size" node groups (see graph/nodeGroups.ts) -
 	 * saved state, same reasoning as filterQuery/pinnedPositions above: a

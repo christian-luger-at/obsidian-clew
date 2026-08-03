@@ -268,22 +268,33 @@ manual copy step. Then open `test-vault` in Obsidian and check:
   has no color). **Drag to reorder** (user feedback: "Drag & Drop in
   Liste fehlt"): drag a filter row above/below another - the list order
   should persist (reload the plugin/restart Obsidian to confirm), but
-  since several enabled filters combine with OR (see below), reordering
-  must have *no effect* on which notes are shown - unlike a node group's
-  own drag-to-reorder, which does control color precedence. Its edit form
-  is the group edit form minus the color picker and "Scale size" toggle:
-  a name field, then the exact same
+  since several enabled filters combine per "Combine filters" (see below),
+  not by their own order, reordering must have *no effect* on which notes
+  are shown - unlike a node group's own drag-to-reorder, which does
+  control color precedence. Its edit form is the group edit form minus the
+  color picker and "Scale size" toggle: a name field, then the exact same
   "Criteria" chip list + "+ add" menu Color & size uses (including
   `Not edited at least (days)`/`Minimum number of links`/`Activity`, not
-  just the original text/tag/property set), AND'd within one filter, same
-  as a node group's own criteria. **Multiple filters (OR)**: create a
-  second filter, enable both - a note should show if it matches *either*
-  enabled filter (user feedback, choosing OR over "only one filter active"
-  or "AND across filters" so several saved filters behave like a small
-  library of alternative searches); disabling one should immediately drop
-  its notes from the shown set unless the other filter also matches them.
-  Deleting a filter (with a confirm dialog, same as deleting a node group)
-  should immediately stop it affecting the graph. **No legend entry**
+  just the original text/tag/property set), always AND'd within one filter
+  (same as a node group's own criteria - no per-filter AND/OR choice, see
+  below for why that choice lives one level up instead).
+  **"Show a note if it matches": At least one filter vs. Every filter**
+  (a panel-level dropdown, above the filter list, not per-filter - user
+  feedback: "Das ist auf der falschen Ebene [...] soll für die Kombination
+  von ganzen Filtern gelten", after an earlier version put an AND/OR
+  choice on each filter's own criteria instead, one level too low - and a
+  later wording pass, "Combine filters"/"Any enabled filter"/"All enabled
+  filters", still didn't read well): create two filters whose criteria no
+  single note satisfies both of (e.g. one filters on a `Tag` no note has,
+  the other on a `Filename` every note matches), enable both - with "At
+  least one filter" (the default) both filters' matches show (OR); switch
+  to "Every filter" - now nothing shows, since no note matches *both*
+  filters (AND). Disabling one filter with "Every filter" selected should
+  make the graph reflect just the remaining enabled filter (an AND across
+  a *single* enabled
+  filter is a no-op). Deleting a filter (with a confirm dialog, same as
+  deleting a node group) should immediately stop it affecting the graph
+  either way. **No legend entry**
   (user feedback: "Legende weg") - a filter's own name/chips are already
   the label, same reasoning node groups already have for skipping the
   legend. **Persistence**: set up a filter, close the panel (the "x" or
