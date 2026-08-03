@@ -73,7 +73,7 @@
    title+close-button row (same class, see graphPane.ts's
    renderFilterPanel()) rather than a near-duplicate rule here. */
 .clew-filter-panel {
-	width: 300px;
+	width: 360px;
 	max-width: calc(100vw - var(--size-4-4));
 	max-height: 70vh;
 	overflow-y: auto;
@@ -82,13 +82,6 @@
 	border: 1px solid var(--background-modifier-border);
 	border-radius: var(--radius-m);
 	box-shadow: var(--shadow-s);
-}
-
-/* Obsidian's own `.search-input-container input` rule sets width: 100% -
-   more specific than a bare `.clew-filter-text-input` class, so the fixed
-   width has to live on the wrapper (which that rule then fills) instead. */
-.clew-filter-panel .search-input-container {
-	width: 100%;
 }
 
 /* Obsidian's own default `.clickable-icon:hover` only swaps in a very
@@ -169,16 +162,6 @@
 	font-size: var(--font-ui-smaller);
 }
 
-/* A little wider than the base .clew-filter-panel (shared via the second
-   class on the same element, see graphPane.ts's constructor) - group rows
-   pack a reorder pair + toggle + swatch + name + edit/delete into one line,
-   and the edit form's criterion rows can carry two side-by-side controls
-   (e.g. a property's key dropdown + value text, or the two staleness
-   bounds) - both are cramped at the Filter panel's own 300px. */
-.clew-color-size-panel {
-	width: 360px;
-}
-
 /* One group's collapsed row (renderGroupRow()) - plain flex row rather
    than a Setting (which would cost a name/control split this doesn't
    need), same reasoning as the Filter panel's tag pills. */
@@ -253,6 +236,15 @@
 	padding: var(--size-4-2);
 	background: var(--background-secondary);
 	border-radius: var(--radius-s);
+}
+
+/* Filter's "Name" field (renderFilterEditForm()) - Obsidian's default
+   Setting text input sizes to a fixed ~250px regardless of the row's own
+   width, which read as needlessly cramped/short at this panel's 360px -
+   user feedback ("Field must be longer"). Stretches it to fill the rest
+   of the row instead. */
+.clew-group-edit .setting-item-control input[type='text'] {
+	width: 100%;
 }
 
 /* The type as its own heading line at the top of a criterion's edit
@@ -398,77 +390,6 @@
 .clew-criterion-tag-pills {
 	flex: 1 1 auto;
 	margin-bottom: 0;
-}
-
-/* Filter panel's own tag/property rows and the staleness/link-count
-   fields are comfortable at the appearance panel's own generous width -
-   cramped with Setting's default side-by-side name+control layout
-   otherwise. Stacking name above control instead keeps every row readable
-   without needing to widen the whole panel just for these. Scoped to
-   `.clew-compact-settings` (only the Filter panel has that class, not
-   `.clew-color-size-panel`) rather than every `.clew-filter-panel` - user
-   feedback: Color & size's own top-level fields ("Group", "Size") looked
-   inconsistent with Appearance's plain side-by-side Setting layout once
-   they inherited this stacking too; its own criterion rows aren't Settings
-   at all any more, so they never needed this in the first place. */
-.clew-compact-settings .setting-item {
-	flex-direction: column;
-	align-items: flex-start;
-	padding: var(--size-4-1) 0;
-}
-
-.clew-compact-settings .setting-item-info {
-	padding-right: 0;
-}
-
-.clew-compact-settings .setting-item-control {
-	width: 100%;
-	justify-content: stretch;
-	gap: var(--size-4-1);
-}
-
-/* min-width: 0 lets a flex item shrink below its content's natural size
-   when needed - without it, a property-filter row's <select> (dropdown +
-   value text input sharing one row) refused to shrink at all and instead
-   forced the *text input* down to nothing, rather than the two sharing
-   space proportionally. */
-.clew-compact-settings .setting-item-control > * {
-	flex: 1 1 0;
-	min-width: 0;
-}
-
-/* The dropdown only needs to show its selected option, not grow/shrink
-   like the free-text value input next to it - flex-shrink: 0 (not just a
-   smaller flex-basis) guarantees it always sizes to its content instead
-   of "(Choose)"/a tag or property name truncating under space pressure,
-   with the value input (flex: 1 1 0 above, property rows only) absorbing
-   all the free space. `width: auto` overrides Obsidian's own
-   `.setting-item-control select.dropdown { width:
-   var(--dropdown-fitted-width, inherit); }` - with that variable unset,
-   `inherit` literally took the parent flex container's own width,
-   stretching the dropdown to fill the whole row and squeezing anything
-   next to it down to nothing. */
-.clew-compact-settings .setting-item-control > select {
-	flex: 0 0 auto;
-	width: auto;
-	min-width: 5.5em;
-}
-
-/* A tag/property-filter row's "remove" button (addExtraButton) shouldn't
-   stretch/shrink like the dropdown and text input next to it - it's a
-   small fixed-size icon button, not a field. */
-.clew-compact-settings .setting-item-control > .clickable-icon {
-	flex: 0 0 auto;
-}
-
-/* Obsidian's own `input[type="color"]` rule sets a small fixed swatch
-   size - the generic `flex: 1 1 0` above would otherwise force-grow it to
-   fill the row like a text field, stretching the swatch into a wide bar
-   instead of a small square. Same reasoning for `.checkbox-container` (a
-   toggle) - it's a small fixed-size switch, not a field either. */
-.clew-compact-settings .setting-item-control > input[type='color'],
-.clew-compact-settings .setting-item-control > .checkbox-container {
-	flex: 0 0 auto;
 }
 
 .clew-path-panel {

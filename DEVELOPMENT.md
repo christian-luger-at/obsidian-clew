@@ -258,37 +258,44 @@ manual copy step. Then open `test-vault` in Obsidian and check:
   single-note community, so a `clusterFreshness` criterion can match it too.
 - **Filter** (funnel icon, opens a panel that drops down directly below the
   icon rail - not positioned like "Appearance…", with its own "x" to
-  close): typing `Topic` in the text field should hide every note *except*
-  `Topic A`, `Topic A - Detail 1/2`, `Topic B`, `Topic B - Detail 1`, and
-  `Topic C`, plus every edge touching a hidden note - no dimming, always a
-  hard hide (no Highlight mode). Clearing the text field should restore
-  the normal view. **Tags**: selected tags should render as small,
-  removable pills wrapping in one row (not one dropdown row per tag);
-  picking `#project` from the "+ add tag…" select, then `#todo` from it
-  again, should add both as pills and reset the select back to its
-  placeholder each time - a note with *either* tag should show (OR).
-  Clicking a pill's "x" should remove just that tag. **Properties**: click
-  "+ add property" twice, set one row to `status` contains `done` and
-  another to `priority` contains `5` - only notes matching *both* rows
-  should show (AND across rows); removing a row (the "x" button) should
-  immediately drop that constraint. **Persistence**: set any criterion,
-  close the panel (the "x" or the filter icon again) - the filter icon
-  should stay highlighted and the graph should stay filtered; reopen the
-  panel - every control should still show what you set. Reload the plugin
-  (or restart Obsidian) - the filter should still be applied and the panel
-  should still remember it (see settings.ts's ClewSettings.filterQuery -
-  it's saved, not just session state). "Clear filter" (bottom of the
-  panel) should reset everything and un-highlight the icon. Opening "Find
-  path", or enabling/editing a node group in "Color & size…", should *not*
-  clear a saved filter - the filter is a baseline the path/group reducer
-  temporarily paints over. **Hover while filtering**: with a
-  filter active, hover a *visible* (matching) node - every currently-
-  hidden node/edge must stay hidden throughout the hover, not flash back
-  into view (a real bug this exact scenario caught: the hover reducer's
-  "everyone else" branch was reading raw graph attributes instead of the
-  filter's own reducer output, silently dropping `hidden`). Opening
-  "Appearance…" while the filter panel is open (or vice versa) should
-  leave both open now - they no longer share a corner.
+  close): same create/edit/delete/enable list architecture as "Color &
+  size" (see `filter.ts`'s docstring for why - user feedback: "es fehlt
+  die gesamte Logik für erstellen/editieren/löschen von Filtern (wie in
+  Color & Size)") - "+ new filter" creates a named, immediately-enabled,
+  empty-criteria `FilterPreset` and opens it in edit mode; its row shows
+  the name + an enable toggle + edit (pencil)/delete (trash), no color
+  swatch or drag handle (a filter has neither a color nor does order
+  matter - see below). Its edit form is the group edit form minus the
+  color picker and "Scale size" toggle: a name field, then the exact same
+  "Criteria" chip list + "+ add" menu Color & size uses (including
+  `Not edited at least (days)`/`Minimum number of links`/`Activity`, not
+  just the original text/tag/property set), AND'd within one filter, same
+  as a node group's own criteria. **Multiple filters (OR)**: create a
+  second filter, enable both - a note should show if it matches *either*
+  enabled filter (user feedback, choosing OR over "only one filter active"
+  or "AND across filters" so several saved filters behave like a small
+  library of alternative searches); disabling one should immediately drop
+  its notes from the shown set unless the other filter also matches them.
+  Deleting a filter (with a confirm dialog, same as deleting a node group)
+  should immediately stop it affecting the graph. **No legend entry**
+  (user feedback: "Legende weg") - a filter's own name/chips are already
+  the label, same reasoning node groups already have for skipping the
+  legend. **Persistence**: set up a filter, close the panel (the "x" or
+  the filter icon again) - the filter icon should stay highlighted
+  whenever any filter is enabled; reopen the panel - the filter list
+  should still be there. Reload the plugin (or restart Obsidian) - enabled
+  filters should still apply (see settings.ts's ClewSettings.filterPresets
+  - saved, not just session state). Opening "Find path", or enabling/
+  editing a node group in "Color & size…", should *not* clear saved
+  filters - they're a baseline the path/group reducer temporarily paints
+  over. **Hover while filtering**: with a filter active, hover a *visible*
+  (matching) node - every currently-hidden node/edge must stay hidden
+  throughout the hover, not flash back into view (a real bug this exact
+  scenario caught: the hover reducer's "everyone else" branch was reading
+  raw graph attributes instead of the filter's own reducer output,
+  silently dropping `hidden`). Opening "Appearance…" while the filter
+  panel is open (or vice versa) should leave both open now - they no
+  longer share a corner.
 - **Deterministic layout**: close and reopen the graph view (or reload the
   plugin) a few times - each note should *start* the force layout from the
   same position every time, so the settled result looks recognizably the

@@ -99,7 +99,21 @@ export interface MinLinksCriterion {
 
 export type GroupCriterion = ClusterFreshnessCriterion | TextCriterion | FolderCriterion | FilenameCriterion | TagCriterion | PropertyCriterion | StaleDaysCriterion | MinLinksCriterion;
 
-export interface NodeGroup {
+/**
+ * The common shape every enable-toggleable, criteria-matched list entry
+ * needs - both NodeGroup (Color & size) and filter.ts's FilterPreset
+ * satisfy this structurally, so needsContentSearch()/needsClusterFreshness()
+ * below (and GraphPane's own content/cluster-staleness caching) can treat a
+ * vault's node groups and filter presets as one combined list instead of
+ * checking each separately.
+ */
+export interface CriteriaOwner {
+	enabled: boolean;
+	/** AND across every criterion - see this module's docstring. */
+	criteria: GroupCriterion[];
+}
+
+export interface NodeGroup extends CriteriaOwner {
 	id: string;
 	name: string;
 	color: string;
@@ -113,9 +127,6 @@ export interface NodeGroup {
 	 * signal entirely for the whole group.
 	 */
 	sizeMultiplier: number | null;
-	enabled: boolean;
-	/** AND across every criterion - see this module's docstring. */
-	criteria: GroupCriterion[];
 }
 
 export interface NodeGroupFacts {
@@ -217,10 +228,22 @@ function matchesCriterion(facts: NodeGroupFacts, criterion: GroupCriterion): boo
 	}
 }
 
-/** A group with no criteria yet matches nothing - a half-built group shouldn't silently paint the whole graph one color. Every criterion must match (AND) - see this module's docstring. */
-export function matchesGroup(facts: NodeGroupFacts, group: NodeGroup): boolean {
+/**
+ * Every criterion must match (AND) - see this module's docstring. Shared
+ * by matchesGroup() below and filter.ts's matchesQuery(), which reuses the
+ * exact same GroupCriterion/NodeGroupFacts types for its own (ungrouped,
+ * single flat list) query - "filter" and "color & size group" are the same
+ * matching mechanism applied two different ways (hide vs. color), not two
+ * separate implementations to keep in sync.
+ */
+export function matchesAllCriteria(facts: NodeGroupFacts, criteria: GroupCriterion[]): boolean {
+	return criteria.every((criterion) => matchesCriterion(facts, criterion));
+}
+
+/** A group/preset with no criteria yet matches nothing - a half-built one shouldn't silently paint the whole graph one color or match every note. Takes any CriteriaOwner (NodeGroup or filter.ts's FilterPreset), not just NodeGroup - see that interface's docstring. */
+export function matchesGroup(facts: NodeGroupFacts, group: Pick<CriteriaOwner, 'criteria'>): boolean {
 	if (group.criteria.length === 0) return false;
-	return group.criteria.every((criterion) => matchesCriterion(facts, criterion));
+	return matchesAllCriteria(facts, group.criteria);
 }
 
 /**
@@ -243,14 +266,14 @@ export function evaluateGroups(factsByNode: Map<string, NodeGroupFacts>, groups:
 	return result;
 }
 
-/** Whether any enabled group has at least one `text` criterion - GraphPane only pays for reading every note's body content (a real I/O cost) when this is true. */
-export function needsContentSearch(groups: NodeGroup[]): boolean {
-	return groups.some((g) => g.enabled && g.criteria.some((c) => c.type === 'text'));
+/** Whether any enabled group/preset (node groups and filter presets combined - see CriteriaOwner) has at least one `text` criterion - GraphPane only pays for reading every note's body content (a real I/O cost) when this is true. */
+export function needsContentSearch(owners: CriteriaOwner[]): boolean {
+	return owners.some((o) => o.enabled && o.criteria.some((c) => c.type === 'text'));
 }
 
-/** Whether any enabled group has at least one `clusterFreshness` criterion - GraphPane only pays for Louvain community detection (a real computational cost) when this is true. */
-export function needsClusterFreshness(groups: NodeGroup[]): boolean {
-	return groups.some((g) => g.enabled && g.criteria.some((c) => c.type === 'clusterFreshness'));
+/** Whether any enabled group/preset has at least one `clusterFreshness` criterion - GraphPane only pays for Louvain community detection (a real computational cost) when this is true. */
+export function needsClusterFreshness(owners: CriteriaOwner[]): boolean {
+	return owners.some((o) => o.enabled && o.criteria.some((c) => c.type === 'clusterFreshness'));
 }
 
 const STRING_OPERATOR_LABELS: Record<StringOperator, string> = {

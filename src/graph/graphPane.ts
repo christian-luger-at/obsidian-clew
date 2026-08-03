@@ -16,8 +16,9 @@ import { ConfirmModal } from './confirmModal';
 import { exportPathToCanvas } from './canvasExport';
 import { computeCommunityStats, detectCommunities, staleness } from './stagnation';
 import { readThemeColors, ThemeColors, blendToward } from './theme';
-import { EMPTY_FILTER_QUERY, evaluateQuery, FilterQuery, isEmptyQuery, NoteFilterFacts } from './filter';
+import { evaluateFilters, FilterPreset, isAnyFilterEnabled, MAX_FILTER_PRESETS } from './filter';
 import {
+	CriteriaOwner,
 	DEFAULT_GROUP_COLORS,
 	describeCriterion,
 	evaluateGroups,
@@ -71,12 +72,36 @@ const CRITERION_TYPE_LABELS: Record<GroupCriterionType, string> = {
 	minLinks: 'Minimum number of links',
 };
 
-/** Parses the filter panel's number inputs (staleDays/minDegree) - empty/invalid/negative all mean "criterion off" (null), same as the field never being touched, rather than a confusing 0-vs-unset distinction the UI would otherwise need to expose separately. */
+/** Parses a criterion's number inputs (staleDays/minLinks) - empty/invalid/negative all mean "0", same as the field never being touched. */
 function parsePositiveInt(value: string): number | null {
 	const trimmed = value.trim();
 	if (trimmed === '') return null;
 	const parsed = Number(trimmed);
 	return Number.isFinite(parsed) && parsed >= 0 ? Math.floor(parsed) : null;
+}
+
+/**
+ * Lets renderCriteriaList()/renderCriterionChip()/renderCriterionEditRow()/
+ * openAddCriterionMenu() stay agnostic to *which* criteria list they're
+ * editing - a Color & size group's own criteria (see groupCriteriaContext())
+ * or Filter's single flat list (see filterCriteriaContext()). Both panels
+ * edit the exact same GroupCriterion shapes (see filter.ts's docstring for
+ * why), so the criteria-list UI itself only needs a place to read/write
+ * from, not two near-identical copies of the same rendering code.
+ */
+interface CriteriaEditorContext {
+	criteria: GroupCriterion[];
+	/** Index of the criterion currently expanded into its full controls - null when every criterion is shown as a chip. */
+	editingIndex: number | null;
+	setEditingIndex(index: number | null): void;
+	/** A copy of the criterion at editingIndex, taken the moment it was expanded - see criterionEditSnapshot's own docstring on GraphPane for the full reasoning (null means "just created by + add, Cancel removes it" rather than "revert to this"). */
+	snapshot: GroupCriterion | null;
+	setSnapshot(snapshot: GroupCriterion | null): void;
+	/** Persists the owning list (debounced) and re-applies it live (color/size or hide, depending on the panel) - does not re-render the panel itself, see rerenderPanel(). */
+	onChange(): void;
+	rerenderPanel(): void;
+	/** id of the `folder` criterion's `<datalist>` of suggestions - each panel renders its own (see renderColorAndSizePanel()/renderFilterPanel()) so two floating panels open at once never share a DOM id. */
+	folderDatalistId: string;
 }
 
 /** Debounces the expensive part of an appearance slider's onChange (disk write + live re-render/re-layout) - a slider fires on every 'input' tick while dragging, and persisting + restarting ForceAtlas2 on every single tick would both spam disk writes and make the graph flicker instead of tuning smoothly. */
@@ -329,20 +354,17 @@ export class GraphPane {
 	private readonly filterButton: HTMLButtonElement;
 	private readonly filterPanelEl: HTMLElement;
 	// Reassigned on every renderFilterPanel() call (rebuilt from scratch
-	// each time the panel opens, same as appearancePanelEl/
-	// renderAppearancePanel()) - not `readonly`, and no need to also keep
-	// direct references to the text/staleDays/minDegree inputs the way an
-	// earlier version did, since nothing outside renderFilterPanel() needs
-	// to reach into them individually any more (clearing now happens by
-	// resetting plugin.settings.filterQuery and re-rendering, not by
-	// imperatively resetting each control).
-	private filterTagsContainerEl!: HTMLElement;
-	private filterPropertiesContainerEl!: HTMLElement;
-	/** Every distinct tag/frontmatter-property-key across the current file set - refreshed alongside the graph in refreshFilterOptions(), read by renderFilterTagRows()/renderFilterPropertyRows() when (re)building their controls. */
-	private filterAvailableTags: string[] = [];
-	private filterAvailableProperties: string[] = [];
-	/** Debounces the disk write (not the live filter apply, which stays instant) - filter criteria change on every keystroke/checkbox click, and persisting on every single one would spam disk writes for no benefit (see settings.ts's ClewSettings.filterQuery). */
-	private readonly debouncedSaveFilterQuery = debounce(() => void this.plugin.saveSettings(), 250);
+	// each time the panel opens, same as colorAndSizeGroupsContainerEl
+	// below - the exact same list/edit-form architecture, just for
+	// FilterPreset instead of NodeGroup, see filter.ts's docstring).
+	private filterListContainerEl!: HTMLElement;
+	/** Debounces the disk write (not the live filter apply, which stays instant) - filter criteria/name changes on every keystroke, and persisting on every single one would spam disk writes for no benefit. Same pattern as debouncedSaveNodeGroups. */
+	private readonly debouncedSaveFilterPresets = debounce(() => void this.plugin.saveSettings(), 250);
+	/** id of the filter currently expanded into its edit form - null when every filter is shown collapsed. Same role as editingGroupId below, for filter.ts's FilterPreset list instead of nodeGroups. */
+	private editingFilterId: string | null = null;
+	/** The Filter panel's own editingCriterionIndex/criterionEditSnapshot - see those fields' docstrings below. A separate pair from Color & size's, scoped to whichever filter is being edited (editingFilterId) - both panels can otherwise be mid-edit independently (e.g. switching panels without finishing an edit). */
+	private editingFilterCriterionIndex: number | null = null;
+	private filterCriterionEditSnapshot: GroupCriterion | null = null;
 	private readonly layoutButton: HTMLButtonElement;
 	private readonly colorAndSizeButton: HTMLButtonElement;
 	private readonly colorAndSizePanelEl: HTMLElement;
@@ -378,10 +400,10 @@ export class GraphPane {
 	 * "reverting" to a blank criterion that would just sit there unconfigured.
 	 */
 	private criterionEditSnapshot: GroupCriterion | null = null;
-	/** Every distinct tag/frontmatter-property-key/folder across the current file set, for the group-criteria dropdowns - refreshed alongside the graph in refreshColorAndSizeOptions(), same reasoning as filterAvailableTags/filterAvailableProperties above. */
-	private colorAndSizeAvailableTags: string[] = [];
-	private colorAndSizeAvailableProperties: string[] = [];
-	private colorAndSizeAvailableFolders: string[] = [];
+	/** Every distinct tag/frontmatter-property-key/folder across the current file set, for criterion dropdowns - shared by Color & size and Filter, since both edit the exact same GroupCriterion shapes (see filter.ts's docstring); refreshed alongside the graph in refreshCriteriaOptions(). */
+	private availableTags: string[] = [];
+	private availableProperties: string[] = [];
+	private availableFolders: string[] = [];
 	/** Lowercased "title\ncontent" per note path - only populated when at least one enabled group has a `text` criterion (see nodeGroups.ts's needsContentSearch()); refreshed by refreshNoteContentCache(). Reading every note's body is a real I/O cost, so this stays empty (and unused) otherwise. */
 	private noteContentCache = new Map<string, string>();
 	private readonly appearanceButton: HTMLButtonElement;
@@ -501,9 +523,9 @@ export class GraphPane {
 		// without overlapping. Empty shells here - contents are (re)built
 		// fresh every time they open, same reasoning as
 		// renderAppearancePanel().
-		this.filterPanelEl = topbarEl.createDiv({ cls: 'clew-filter-panel clew-compact-settings' });
+		this.filterPanelEl = topbarEl.createDiv({ cls: 'clew-filter-panel' });
 		this.filterPanelEl.hide();
-		this.colorAndSizePanelEl = topbarEl.createDiv({ cls: 'clew-filter-panel clew-color-size-panel' });
+		this.colorAndSizePanelEl = topbarEl.createDiv({ cls: 'clew-filter-panel' });
 		this.colorAndSizePanelEl.hide();
 
 		// Top-left - opposite the top-right icon rail/filter panel, so it
@@ -539,8 +561,7 @@ export class GraphPane {
 
 		this.files = files;
 		this.mtimeByPath = new Map(files.map((file) => [file.path, file.stat.mtime]));
-		this.refreshFilterOptions();
-		this.refreshColorAndSizeOptions();
+		this.refreshCriteriaOptions();
 		this.graph = buildVaultGraph(this.app, files, {
 			directed: false,
 			pinnedPositions: this.plugin.settings.pinnedPositions,
@@ -998,7 +1019,7 @@ export class GraphPane {
 			degreeGrowth: appearance.nodeDegreeGrowth,
 		});
 
-		const groupByNode = evaluateGroups(this.buildNodeGroupFacts(), this.plugin.settings.nodeGroups);
+		const groupByNode = evaluateGroups(this.buildCriteriaFacts(), this.plugin.settings.nodeGroups);
 
 		for (const [node, group] of groupByNode) {
 			if (group.sizeMultiplier === null) continue;
@@ -1017,17 +1038,22 @@ export class GraphPane {
 	}
 
 	/**
-	 * Gathers per-note facts once per paint (not cached across calls - see
-	 * buildFilterFacts()'s identical reasoning) for nodeGroups.ts's pure
-	 * evaluateGroups() to match against. `content` and `clusterStaleness`
-	 * are the two facts real I/O/computation backs - both stay at their
-	 * empty/null default unless an enabled group actually needs them (see
-	 * nodeGroups.ts's needsContentSearch()/needsClusterFreshness()), so a
-	 * vault with no `text` or `clusterFreshness` criteria in use never pays
+	 * Gathers per-note facts once per call (not cached across calls - a
+	 * vault refresh or filter/group edit can happen between them, and
+	 * re-scanning is cheap relative to a metadataCache lookup per file) for
+	 * nodeGroups.ts's pure evaluateGroups()/matchesGroup() to match against
+	 * - shared by paintVisualEncoding() (Color & size) and applyFilter()
+	 * (Filter), since both now match the exact same GroupCriterion shapes
+	 * against the exact same facts (see filter.ts's docstring). `content`
+	 * and `clusterStaleness` are the two facts real I/O/computation backs -
+	 * both stay at their empty/null default unless a group or filter
+	 * actually needs them (see nodeGroups.ts's needsContentSearch()/
+	 * needsClusterFreshness() and this file's allCriteriaOwners()), so a
+	 * vault with no `text`/`clusterFreshness` criteria in use never pays
 	 * for either.
 	 */
-	private buildNodeGroupFacts(): Map<string, NodeGroupFacts> {
-		const clusterStalenessByNode = needsClusterFreshness(this.plugin.settings.nodeGroups) ? this.computeClusterStaleness() : null;
+	private buildCriteriaFacts(): Map<string, NodeGroupFacts> {
+		const clusterStalenessByNode = needsClusterFreshness(this.allCriteriaOwners()) ? this.computeClusterStaleness() : null;
 		const result = new Map<string, NodeGroupFacts>();
 		for (const file of this.files) {
 			const cache = this.app.metadataCache.getFileCache(file);
@@ -1063,6 +1089,11 @@ export class GraphPane {
 		return result;
 	}
 
+	/** Node groups and filter presets combined - see nodeGroups.ts's CriteriaOwner docstring for why needsContentSearch()/needsClusterFreshness() can treat both lists as one for buildCriteriaFacts()'s/refreshCriteriaContent()'s "does anything currently active need this" checks. */
+	private allCriteriaOwners(): CriteriaOwner[] {
+		return [...this.plugin.settings.nodeGroups, ...this.plugin.settings.filterPresets];
+	}
+
 	/**
 	 * GitHub issue #13: a small always-visible key explaining what the
 	 * current node/edge colors mean - without it, the graph's coloring
@@ -1073,22 +1104,17 @@ export class GraphPane {
 	 * button `is-active` classes) right where the state changes.
 	 *
 	 * Reflects what's actually painted right now, not merely which piece of
-	 * state happens to be set: the filter overwrites whatever reducer a
-	 * shown path result set, so it takes precedence here too. Node groups
-	 * (Color & size) deliberately have no legend entry of their own - user
-	 * feedback - a group's own name (shown right in its row in the Color &
-	 * size panel) is already the label.
+	 * state happens to be set. Neither the filter nor node groups (Color &
+	 * size) get a legend entry of their own - user feedback - a filter's
+	 * active criteria (shown right in its own panel as chips) and a
+	 * group's own name (shown right in its row in the Color & size panel)
+	 * are already the label; while a filter is active, this just falls
+	 * through to whatever (if anything) a shown path result would show,
+	 * same as it did before the filter existed.
 	 */
 	private renderLegend(): void {
 		this.legendEl.empty();
 
-		if (!isEmptyQuery(this.plugin.settings.filterQuery)) {
-			// Everything not shown here is hidden entirely (see
-			// applyFilter()) - nothing left to explain a "dimmed" swatch
-			// for, unlike when this still had a Highlight mode.
-			this.addLegendItem(this.theme.matchColor, 'Shown');
-			return;
-		}
 		if (this.pathResultActive) {
 			this.addLegendItem(this.theme.primaryPathColor, 'Shortest path');
 			this.addLegendItem(this.theme.altPathColor, 'Alternative path');
@@ -1679,12 +1705,15 @@ export class GraphPane {
 
 	/**
 	 * Rebuilt from scratch each time the panel opens (not built once and
-	 * left standing) so it always reflects plugin.settings.filterQuery,
-	 * same reasoning as renderAppearancePanel() - notably after "Clear
-	 * filter" below, where every control needs to visibly jump back rather
-	 * than silently disagree with the value it just wrote. Grouped by
-	 * topic (Text / Tags / Properties / Activity) the same way the
-	 * Appearance panel groups Nodes/Edges/Physics - user feedback.
+	 * left standing), same list/edit-form architecture as Color & size's
+	 * renderColorAndSizePanel() (create/edit/delete/enable, no separate
+	 * Save step) - user feedback: "es fehlt die gesamte Logik für
+	 * erstellen/editieren/löschen von Filtern (wie in Color & Size)". Each
+	 * filter's own criteria use the exact same chip/edit-row UI a group's
+	 * criteria do (renderCriteriaList()/openAddCriterionMenu()); unlike a
+	 * group, a filter has no color/size, and several enabled filters
+	 * combine with OR rather than "first match wins" (see filter.ts's
+	 * docstring), so there's no drag-to-reorder here either.
 	 */
 	private renderFilterPanel(): void {
 		this.filterPanelEl.empty();
@@ -1695,212 +1724,171 @@ export class GraphPane {
 		setTooltip(closeButton, 'Close');
 		closeButton.addEventListener('click', () => this.toggleFilterPanel());
 
-		const query = this.plugin.settings.filterQuery;
+		// Shared by every `folder` criterion row's text input, own id per
+		// panel (see CriteriaEditorContext's folderDatalistId docstring) so
+		// this and Color & size's own datalist never collide if both panels
+		// are open at once.
+		const datalist = this.filterPanelEl.createEl('datalist', { attr: { id: 'clew-filter-folders' } });
+		for (const folder of this.availableFolders) datalist.createEl('option', { value: folder });
 
-		// `search-input-container` is Obsidian's own class (used by its
-		// Quick Switcher, Settings search, etc.) - it draws the magnifying-
-		// glass icon via a themed `:before` pseudo-element and applies the
-		// matching input padding, so this criterion gets an icon consistent
-		// with the rest of Obsidian's UI for free, no custom icon markup
-		// needed. No heading above it (unlike Tags/Properties/Activity
-		// below) - it's the one always-present, primary criterion, same
-		// spot a plain search box would occupy.
-		const filterTextWrapperEl = this.filterPanelEl.createDiv({ cls: 'search-input-container' });
-		const textInput = filterTextWrapperEl.createEl('input', {
-			type: 'search',
-			placeholder: 'Title contains…',
-			cls: 'clew-filter-text-input',
-		});
-		textInput.value = query.text;
-		textInput.addEventListener('input', () => this.updateFilterQuery({ text: textInput.value }));
+		this.filterListContainerEl = this.filterPanelEl.createDiv({ cls: 'clew-group-list' });
+		this.renderFilterList();
 
-		new Setting(this.filterPanelEl).setName('Tags').setHeading();
-		this.filterTagsContainerEl = this.filterPanelEl.createDiv({ cls: 'clew-filter-tags' });
-		this.renderFilterTagRows();
+		const addButton = this.filterPanelEl.createEl('button', { text: '+ new filter', cls: 'clew-filter-add-button' });
+		addButton.disabled = this.plugin.settings.filterPresets.length >= MAX_FILTER_PRESETS || this.editingFilterId !== null;
+		addButton.addEventListener('click', () => this.startCreatingFilter());
+	}
 
-		new Setting(this.filterPanelEl).setName('Properties').setHeading();
-		this.filterPropertiesContainerEl = this.filterPanelEl.createDiv({ cls: 'clew-filter-properties' });
-		this.renderFilterPropertyRows();
-		const addPropertyButton = this.filterPanelEl.createEl('button', {
-			text: '+ add property',
-			cls: 'clew-filter-add-button',
-		});
-		addPropertyButton.disabled = this.filterAvailableProperties.length === 0;
-		addPropertyButton.addEventListener('click', () => {
-			const properties = [...this.plugin.settings.filterQuery.properties, { key: this.filterAvailableProperties[0] ?? '', value: '' }];
-			this.updateFilterQuery({ properties });
-			this.renderFilterPropertyRows();
-		});
+	private renderFilterList(): void {
+		this.filterListContainerEl.empty();
+		const presets = this.plugin.settings.filterPresets;
 
-		new Setting(this.filterPanelEl).setName('Activity').setHeading();
-		new Setting(this.filterPanelEl).setName('Not edited in at least (days)').addText((text) => {
-			text.setValue(query.staleDays === null ? '' : String(query.staleDays));
-			text.inputEl.type = 'number';
-			text.inputEl.min = '0';
-			text.onChange((value) => this.updateFilterQuery({ staleDays: parsePositiveInt(value) }));
-		});
-		// "Min links" (the old name) read as unclear on its own - "links to
-		// what?" - user feedback.
-		new Setting(this.filterPanelEl).setName('Minimum number of links').addText((text) => {
-			text.setValue(query.minDegree === null ? '' : String(query.minDegree));
-			text.inputEl.type = 'number';
-			text.inputEl.min = '0';
-			text.onChange((value) => this.updateFilterQuery({ minDegree: parsePositiveInt(value) }));
-		});
+		if (presets.length === 0) {
+			this.filterListContainerEl.createEl('p', { text: 'No filters yet.', cls: 'clew-filter-empty-note' });
+		}
 
-		new Setting(this.filterPanelEl)
-			.setName('Clear filter')
-			.addButton((button) =>
+		presets.forEach((preset) => {
+			if (this.editingFilterId === preset.id) this.renderFilterEditForm(preset);
+			else this.renderFilterRow(preset);
+		});
+	}
+
+	/** A filter's collapsed row - same shape as a Color & size group's row (renderGroupRow()) minus the drag handle (order doesn't affect an OR-combination, see filter.ts's docstring) and color swatch (a filter has no color). */
+	private renderFilterRow(preset: FilterPreset): void {
+		const row = this.filterListContainerEl.createDiv({ cls: 'clew-group-row' });
+		row.createSpan({ cls: 'clew-group-name', text: preset.name });
+
+		new ExtraButtonComponent(row).setIcon('pencil').setTooltip('Edit').onClick(() => this.toggleEditingFilter(preset.id));
+		new ExtraButtonComponent(row).setIcon('trash').setTooltip('Delete').onClick(() => this.deleteFilter(preset.id));
+
+		new ToggleComponent(row).setValue(preset.enabled).onChange((value) => {
+			preset.enabled = value;
+			void this.plugin.saveSettings();
+			this.applyFilter();
+		});
+	}
+
+	/**
+	 * The full edit form for `preset` - same shape as a Color & size
+	 * group's own edit form (renderGroupEditForm()) minus the color picker
+	 * and "Scale size" toggle/slider, which don't apply to a filter (see
+	 * filter.ts's docstring). Every field mutates `preset` directly,
+	 * persists (debouncedSaveFilterPresets) and re-applies (applyFilter())
+	 * right away - no separate Save/Cancel step, same reasoning as node
+	 * groups.
+	 */
+	private renderFilterEditForm(preset: FilterPreset): void {
+		const formEl = this.filterListContainerEl.createDiv({ cls: 'clew-group-edit' });
+
+		new Setting(formEl)
+			.setName('Filter')
+			.setHeading()
+			.addExtraButton((button) =>
 				button
-					.setButtonText('Clear')
-					.setDisabled(isEmptyQuery(query))
-					.onClick(() => {
-						this.plugin.settings.filterQuery = EMPTY_FILTER_QUERY;
-						void this.plugin.saveSettings();
-						this.applyFilter();
-						this.renderFilterPanel();
-					}),
+					.setIcon('x')
+					.setTooltip('Close')
+					.onClick(() => this.toggleEditingFilter(preset.id)),
 			);
+
+		new Setting(formEl).setName('Name').addText((text) =>
+			text.setValue(preset.name).onChange((value) => {
+				preset.name = value;
+				this.debouncedSaveFilterPresets();
+			}),
+		);
+
+		new Setting(formEl).setName('Criteria').setDesc('A note matches this filter if it matches every criterion below.').setHeading();
+		const criteriaEl = formEl.createDiv({ cls: 'clew-group-criteria' });
+		this.renderCriteriaList(criteriaEl, this.filterCriteriaContext(preset));
+
+		const addCriterionButton = formEl.createEl('button', { text: '+ add', cls: 'clew-filter-add-button' });
+		addCriterionButton.addEventListener('click', (evt) => this.openAddCriterionMenu(evt, this.filterCriteriaContext(preset)));
 	}
 
-	/** Merges a partial change into the saved query (one field at a time - every filter control's onChange calls this with just its own field), persists it, and re-evaluates - see filter.ts's FilterQuery and settings.ts's ClewSettings.filterQuery. */
-	private updateFilterQuery(partial: Partial<FilterQuery>): void {
-		this.plugin.settings.filterQuery = { ...this.plugin.settings.filterQuery, ...partial };
-		this.debouncedSaveFilterQuery();
+	/** Creates a new filter, saves it immediately, and opens it in edit mode - same reasoning as startCreatingGroup(): no separate Save step, it exists (and is persisted) from the moment it's created, even before any criteria are added (an empty-criteria filter just doesn't match anything yet). */
+	private startCreatingFilter(): void {
+		if (this.plugin.settings.filterPresets.length >= MAX_FILTER_PRESETS) return;
+		const preset: FilterPreset = {
+			id: `filter-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+			name: `Filter ${this.plugin.settings.filterPresets.length + 1}`,
+			enabled: true,
+			criteria: [],
+		};
+		this.plugin.settings.filterPresets.push(preset);
+		void this.plugin.saveSettings();
+		this.editingFilterId = preset.id;
+		this.editingFilterCriterionIndex = null;
+		this.filterCriterionEditSnapshot = null;
 		this.applyFilter();
+		this.renderFilterPanel();
+	}
+
+	/** Expands a filter's row into its edit form, or collapses it if it's already the one open - same reasoning as toggleEditingGroup(): every field already persists as it changes, so this is purely a display toggle. */
+	private toggleEditingFilter(id: string): void {
+		this.editingFilterId = this.editingFilterId === id ? null : id;
+		this.editingFilterCriterionIndex = null;
+		this.filterCriterionEditSnapshot = null;
+		this.renderFilterPanel();
+	}
+
+	private deleteFilter(id: string): void {
+		const preset = this.plugin.settings.filterPresets.find((p) => p.id === id);
+		if (!preset) return;
+		new ConfirmModal(this.app, 'Delete filter?', `"${preset.name}" and its criteria will be permanently deleted.`, 'Delete', () => {
+			this.plugin.settings.filterPresets = this.plugin.settings.filterPresets.filter((p) => p.id !== id);
+			void this.plugin.saveSettings();
+			if (this.editingFilterId === id) {
+				this.editingFilterId = null;
+				this.editingFilterCriterionIndex = null;
+				this.filterCriterionEditSnapshot = null;
+			}
+			this.applyFilter();
+			this.renderFilterPanel();
+		}).open();
 	}
 
 	/**
-	 * (Re)builds the tag-filter UI from filterQuery.tags - selected tags
-	 * render as removable pills wrapping in a single flow, with a compact
-	 * "+ Add tag" `<select>` underneath (choosing an option adds it and
-	 * immediately resets to the placeholder) rather than a `Setting` row
-	 * per tag - user feedback: one dropdown+remove-button row per tag, plus
-	 * a separate "+ add tag filter" button below, took up far too much
-	 * vertical space for what's often 2-3 tags. A note matching *any*
-	 * selected tag is enough (OR - see filter.ts's docstring for why
-	 * tags/properties use different combination rules).
+	 * Bridges one filter's own criteria + editing state into the same
+	 * CriteriaEditorContext shape a Color & size group's criteria use (see
+	 * groupCriteriaContext()) - lets renderCriteriaList()/
+	 * renderCriterionChip()/renderCriterionEditRow()/openAddCriterionMenu()
+	 * stay agnostic to which panel called them.
 	 */
-	private renderFilterTagRows(): void {
-		this.filterTagsContainerEl.empty();
-		const tags = this.plugin.settings.filterQuery.tags;
-
-		if (tags.length > 0) {
-			const pillsEl = this.filterTagsContainerEl.createDiv({ cls: 'clew-filter-pills' });
-			tags.forEach((tag, index) => {
-				const pill = pillsEl.createDiv({ cls: 'clew-filter-pill' });
-				pill.createSpan({ text: tag });
-				const removeButton = pill.createSpan({ cls: 'clew-filter-pill-remove' });
-				setIcon(removeButton, 'x');
-				setTooltip(removeButton, 'Remove');
-				removeButton.addEventListener('click', () => {
-					const nextTags = this.plugin.settings.filterQuery.tags.filter((_, i) => i !== index);
-					this.updateFilterQuery({ tags: nextTags });
-					this.renderFilterTagRows();
-				});
-			});
-		}
-
-		const remaining = this.filterAvailableTags.filter((tag) => !tags.includes(tag));
-		if (remaining.length === 0) {
-			if (tags.length === 0) this.filterTagsContainerEl.createEl('p', { text: 'No tags in this vault.', cls: 'clew-filter-empty-note' });
-			return;
-		}
-		const addSelect = this.filterTagsContainerEl.createEl('select', { cls: 'dropdown clew-filter-add-select' });
-		addSelect.createEl('option', { text: '+ add tag…', value: '' });
-		for (const tag of remaining) addSelect.createEl('option', { text: tag, value: tag });
-		addSelect.value = '';
-		// Resets to the placeholder after every pick (rather than staying
-		// on the just-picked tag) so the same control can immediately add
-		// another one, and so it never looks like it still "shows" a tag
-		// that's now living in the pills above instead.
-		addSelect.addEventListener('change', () => {
-			const value = addSelect.value;
-			if (!value) return;
-			const nextTags = [...this.plugin.settings.filterQuery.tags, value];
-			this.updateFilterQuery({ tags: nextTags });
-			this.renderFilterTagRows();
-		});
+	private filterCriteriaContext(preset: FilterPreset): CriteriaEditorContext {
+		return {
+			criteria: preset.criteria,
+			editingIndex: this.editingFilterCriterionIndex,
+			setEditingIndex: (index) => {
+				this.editingFilterCriterionIndex = index;
+			},
+			snapshot: this.filterCriterionEditSnapshot,
+			setSnapshot: (snapshot) => {
+				this.filterCriterionEditSnapshot = snapshot;
+			},
+			onChange: () => {
+				this.debouncedSaveFilterPresets();
+				this.applyFilter();
+				void this.refreshCriteriaContent();
+			},
+			rerenderPanel: () => this.renderFilterPanel(),
+			folderDatalistId: 'clew-filter-folders',
+		};
 	}
 
-	/**
-	 * (Re)builds the property-filter rows from filterQuery.properties - each
-	 * row is its own key dropdown + value text + remove button, so unlike
-	 * the single-property version this replaced, several can be active at
-	 * once (AND across rows - see filter.ts). Called from renderFilterPanel()
-	 * and every add/remove.
-	 */
-	private renderFilterPropertyRows(): void {
-		this.filterPropertiesContainerEl.empty();
-		this.plugin.settings.filterQuery.properties.forEach((property, index) => {
-			new Setting(this.filterPropertiesContainerEl)
-				.addDropdown((dropdown) => {
-					dropdown.addOption('', '(Choose)');
-					for (const key of this.filterAvailableProperties) dropdown.addOption(key, key);
-					dropdown.setValue(property.key);
-					dropdown.onChange((value) => {
-						const properties = [...this.plugin.settings.filterQuery.properties];
-						properties[index] = { ...properties[index]!, key: value };
-						this.updateFilterQuery({ properties });
-					});
-				})
-				.addText((text) => {
-					text.setPlaceholder('Value').setValue(property.value);
-					text.onChange((value) => {
-						const properties = [...this.plugin.settings.filterQuery.properties];
-						properties[index] = { ...properties[index]!, value };
-						this.updateFilterQuery({ properties });
-					});
-				})
-				.addExtraButton((button) =>
-					button
-						.setIcon('x')
-						.setTooltip('Remove')
-						.onClick(() => {
-							const properties = this.plugin.settings.filterQuery.properties.filter((_, i) => i !== index);
-							this.updateFilterQuery({ properties });
-							this.renderFilterPropertyRows();
-						}),
-				);
-		});
-	}
-
-	/**
-	 * Gathers per-note facts once per query change (not cached across calls -
-	 * this.files/graph can change between them, and re-scanning is cheap
-	 * relative to a metadataCache lookup per file) for filter.ts's pure
-	 * evaluateQuery() to match against. tags comes from Obsidian's own
-	 * getAllTags() - combines frontmatter `tags:` and inline #tags into one
-	 * normalized list (leading '#'), rather than reimplementing that here.
-	 */
-	private buildFilterFacts(): Map<string, NoteFilterFacts> {
-		const result = new Map<string, NoteFilterFacts>();
-		for (const file of this.files) {
-			const cache = this.app.metadataCache.getFileCache(file);
-			result.set(file.path, {
-				label: file.basename,
-				tags: (cache ? getAllTags(cache) : null) ?? [],
-				frontmatter: cache?.frontmatter ?? {},
-				mtime: this.mtimeByPath.get(file.path) ?? file.stat.mtime,
-				degree: this.graph?.degree(file.path) ?? 0,
-			});
-		}
-		return result;
-	}
-
-	/** Reflects whether a filter is currently *set* (not whether its panel is open) - see filterButton's own docstring in the constructor. */
+	/** Reflects whether any filter is currently *enabled* (not whether the panel is open, or whether an enabled filter actually matched anything) - see filterButton's own docstring in the constructor. */
 	private updateFilterButtonState(): void {
-		this.filterButton.toggleClass('is-active', !isEmptyQuery(this.plugin.settings.filterQuery));
+		this.filterButton.toggleClass('is-active', isAnyFilterEnabled(this.plugin.settings.filterPresets));
 	}
 
 	/**
-	 * Re-evaluates the saved query against every note and hides every
-	 * non-matching node/edge - called on every criterion change, not just
-	 * text input, so e.g. adding a tag row updates the graph immediately
-	 * too, and from setFiles()/refreshTheme() so the filter keeps applying
+	 * Re-evaluates every enabled filter against every note (OR across
+	 * filters - see filter.ts's docstring) and hides every non-matching
+	 * node/edge - called on every filter/criterion change, not just a
+	 * toggle, so e.g. adding a criterion updates the graph immediately
+	 * too, and from setFiles()/refreshTheme() so filters keep applying
 	 * across a vault refresh or theme switch instead of silently dropping
-	 * (it's saved state now, not transient - see settings.ts's
-	 * ClewSettings.filterQuery). "nur die passenden Knoten anzeigen" - an
+	 * (they're saved state now, not transient - see settings.ts's
+	 * ClewSettings.filterPresets). "nur die passenden Knoten anzeigen" - an
 	 * edge only stays visible when *both* extremities match - showing a
 	 * match's edge to a hidden neighbor would look broken and defeats
 	 * "only show what matches" anyway. The match set is precomputed as a
@@ -1913,9 +1901,9 @@ export class GraphPane {
 		this.updateFilterButtonState();
 		if (!this.graph) return;
 		const graph = this.graph;
-		const query = this.plugin.settings.filterQuery;
+		const presets = this.plugin.settings.filterPresets;
 
-		if (isEmptyQuery(query)) {
+		if (!isAnyFilterEnabled(presets)) {
 			this.clearHighlight();
 			this.renderLegend();
 			return;
@@ -1931,7 +1919,7 @@ export class GraphPane {
 		this.panelEl.hide();
 		this.pathResultActive = false;
 
-		const matches = evaluateQuery(this.buildFilterFacts(), query);
+		const matches = evaluateFilters(this.buildCriteriaFacts(), presets);
 		const visibleEdges = new Set(graph.edges().filter((edge) => graph.extremities(edge).every((node) => matches.has(node))));
 		this.renderer?.setSetting('nodeReducer', (node, attr) => ({ ...attr, hidden: !matches.has(node) }));
 		this.renderer?.setSetting('edgeReducer', (edge, attr) => ({ ...attr, hidden: !visibleEdges.has(edge) }));
@@ -1939,61 +1927,17 @@ export class GraphPane {
 	}
 
 	/**
-	 * Repopulates filterAvailableTags/filterAvailableProperties from the
-	 * current file set, drops any selected tag that no longer exists in
-	 * the new file set (silently keeping a query criterion the UI can't
-	 * even show as selected would be worse), and re-renders the panel if
-	 * it's currently open - called from setFiles(), same trigger as
-	 * refreshColorAndSizeOptions()'s own property/folder discovery, since
-	 * both depend on "every frontmatter key/tag across the currently loaded
-	 * notes". A
-	 * property row whose key has disappeared is left as-is (still a valid
-	 * row, just pointing at a property no notes currently have - matching
-	 * zero notes rather than needing to guess whether the user wants it
-	 * removed).
-	 */
-	private refreshFilterOptions(): void {
-		const tags = new Set<string>();
-		const properties = new Set<string>();
-		for (const file of this.files) {
-			const cache = this.app.metadataCache.getFileCache(file);
-			for (const tag of (cache ? getAllTags(cache) : null) ?? []) tags.add(tag);
-			for (const key of Object.keys(cache?.frontmatter ?? {})) properties.add(key);
-		}
-
-		this.filterAvailableTags = [...tags].sort();
-		this.filterAvailableProperties = [...properties].sort();
-
-		const stillValidTags = this.plugin.settings.filterQuery.tags.filter((tag) => tags.has(tag));
-		if (stillValidTags.length !== this.plugin.settings.filterQuery.tags.length) {
-			this.plugin.settings.filterQuery = { ...this.plugin.settings.filterQuery, tags: stillValidTags };
-			void this.plugin.saveSettings();
-		}
-
-		if (this.filterPanelEl.isShown()) this.renderFilterPanel();
-	}
-
-	/** Reveals the filter panel (behind its own icon, like Find path is behind a modal) or just hides it - the filter itself (see applyFilter()) keeps running either way, since it's saved state now, not something closing the panel should reset. */
-	private toggleFilterPanel(): void {
-		if (this.filterPanelEl.isShown()) {
-			this.filterPanelEl.hide();
-			return;
-		}
-		this.renderFilterPanel();
-		this.filterPanelEl.show();
-		this.filterPanelEl.querySelector<HTMLInputElement>('.clew-filter-text-input')?.focus();
-	}
-
-	/**
-	 * Repopulates colorAndSizeAvailableTags/Properties/Folders from the
-	 * current file set - called from setFiles(), same trigger and reasoning
-	 * as refreshFilterOptions(). Unlike that method, doesn't prune stale
-	 * values out of existing group criteria: a saved group's criterion is a
+	 * Repopulates availableTags/availableProperties/availableFolders from
+	 * the current file set and re-renders whichever of Filter/Color & size
+	 * is currently open - called from setFiles(). Shared by both panels
+	 * (see this file's availableTags docstring) since Filter and Color &
+	 * size criteria are the exact same GroupCriterion shapes now. Doesn't
+	 * prune stale values out of existing criteria: a saved criterion is a
 	 * deliberate choice, and silently rewriting it out from under the user
 	 * just because a tag momentarily isn't present in the currently loaded
 	 * file set would be more surprising than leaving it matching zero notes.
 	 */
-	private refreshColorAndSizeOptions(): void {
+	private refreshCriteriaOptions(): void {
 		const tags = new Set<string>();
 		const properties = new Set<string>();
 		const folders = new Set<string>();
@@ -2005,11 +1949,25 @@ export class GraphPane {
 			if (folder !== '' && folder !== '/') folders.add(folder);
 		}
 
-		this.colorAndSizeAvailableTags = [...tags].sort();
-		this.colorAndSizeAvailableProperties = [...properties].sort();
-		this.colorAndSizeAvailableFolders = [...folders].sort();
+		this.availableTags = [...tags].sort();
+		this.availableProperties = [...properties].sort();
+		this.availableFolders = [...folders].sort();
 
+		if (this.filterPanelEl.isShown()) this.renderFilterPanel();
 		if (this.colorAndSizePanelEl.isShown()) this.renderColorAndSizePanel();
+	}
+
+	/** Reveals the filter panel (behind its own icon, like Find path is behind a modal) or just hides it - the filter itself (see applyFilter()) keeps running either way, since it's saved state now, not something closing the panel should reset. */
+	private toggleFilterPanel(): void {
+		if (this.filterPanelEl.isShown()) {
+			this.filterPanelEl.hide();
+			this.editingFilterId = null;
+			this.editingFilterCriterionIndex = null;
+			this.filterCriterionEditSnapshot = null;
+			return;
+		}
+		this.renderFilterPanel();
+		this.filterPanelEl.show();
 	}
 
 	/** Reflects whether any node group is currently *enabled* (not whether the panel is open, or whether an enabled group actually matched anything) - see colorAndSizeButton's own docstring in the constructor. */
@@ -2037,9 +1995,15 @@ export class GraphPane {
 		this.renderLegend();
 	}
 
-	/** The async half of applyNodeGroups() - refreshes (or clears) noteContentCache to match whether any enabled group currently needs it, repainting again only when that cache actually changed. */
-	private async refreshNodeGroupContent(): Promise<void> {
-		if (needsContentSearch(this.plugin.settings.nodeGroups)) {
+	/**
+	 * The async half of applyNodeGroups()/filterCriteriaContext()'s onChange
+	 * - refreshes (or clears) noteContentCache to match whether any enabled
+	 * group *or the filter* currently needs it (see filter.ts's docstring
+	 * for why both now share the exact same `text` criterion), repainting
+	 * both again only when that cache actually changed.
+	 */
+	private async refreshCriteriaContent(): Promise<void> {
+		if (needsContentSearch(this.allCriteriaOwners())) {
 			await this.refreshNoteContentCache();
 		} else if (this.noteContentCache.size > 0) {
 			this.noteContentCache = new Map();
@@ -2047,13 +2011,13 @@ export class GraphPane {
 			return;
 		}
 		this.repaintNodeGroups();
+		this.applyFilter();
 	}
 
 	/**
-	 * The group-based analogue of applyFilter() - call after ANY change to
-	 * plugin.settings.nodeGroups (add/edit/delete/reorder/enable-toggle -
-	 * every field in the edit form calls this too, since there's no
-	 * separate Save step any more - user feedback) or from
+	 * Call after ANY change to plugin.settings.nodeGroups (add/edit/delete/
+	 * reorder/enable-toggle - every field in the edit form calls this too,
+	 * since there's no separate Save step any more - user feedback) or from
 	 * setFiles()/refreshTheme(), so groups keep applying across a vault
 	 * refresh or theme switch instead of silently dropping (they're saved
 	 * state, not transient). Repaints immediately with whatever's already
@@ -2064,7 +2028,7 @@ export class GraphPane {
 	 */
 	private applyNodeGroups(): void {
 		this.repaintNodeGroups();
-		void this.refreshNodeGroupContent();
+		void this.refreshCriteriaContent();
 	}
 
 	/**
@@ -2087,7 +2051,7 @@ export class GraphPane {
 		// dropdown - user feedback: a vault can have many folders, a rigid
 		// dropdown doesn't scale the way it does for tags/properties.
 		const datalist = this.colorAndSizePanelEl.createEl('datalist', { attr: { id: 'clew-color-size-folders' } });
-		for (const folder of this.colorAndSizeAvailableFolders) datalist.createEl('option', { value: folder });
+		for (const folder of this.availableFolders) datalist.createEl('option', { value: folder });
 
 		this.colorAndSizeGroupsContainerEl = this.colorAndSizePanelEl.createDiv({ cls: 'clew-group-list' });
 		this.renderNodeGroupList();
@@ -2247,12 +2211,74 @@ export class GraphPane {
 			case 'tag':
 				return { type, tags: [] };
 			case 'property':
-				return { type, key: this.colorAndSizeAvailableProperties[0] ?? '', operator: 'contains', value: '' };
+				return { type, key: this.availableProperties[0] ?? '', operator: 'contains', value: '' };
 			case 'staleDays':
 				return { type, days: 30 };
 			case 'minLinks':
 				return { type, count: 1 };
 		}
+	}
+
+	/** Bridges a group's own criteria + editing state into CriteriaEditorContext - see that interface's docstring. */
+	private groupCriteriaContext(group: NodeGroup): CriteriaEditorContext {
+		return {
+			criteria: group.criteria,
+			editingIndex: this.editingCriterionIndex,
+			setEditingIndex: (index) => {
+				this.editingCriterionIndex = index;
+			},
+			snapshot: this.criterionEditSnapshot,
+			setSnapshot: (snapshot) => {
+				this.criterionEditSnapshot = snapshot;
+			},
+			onChange: () => {
+				this.debouncedSaveNodeGroups();
+				this.applyNodeGroups();
+			},
+			rerenderPanel: () => this.renderColorAndSizePanel(),
+			folderDatalistId: 'clew-color-size-folders',
+		};
+	}
+
+	/**
+	 * The "+ add" menu shared by a Color & size group's criteria and
+	 * Filter's own criteria (see CriteriaEditorContext's docstring) - same
+	 * Menu-based pattern the "Layout" toolbar button used before it became
+	 * a dialog (see openLayoutModal()) rather than a separate type
+	 * dropdown + "add" button next to it - user feedback: picking a type,
+	 * then having to also click a second control to actually add it, was
+	 * an extra step for what's really one action ("add a criterion of this
+	 * type").
+	 */
+	private openAddCriterionMenu(evt: MouseEvent, ctx: CriteriaEditorContext): void {
+		const menu = new Menu();
+		const addOption = (type: GroupCriterionType, label: string): void => {
+			menu.addItem((item) =>
+				item.setTitle(label).onClick(() => {
+					ctx.criteria.push(this.blankCriterion(type));
+					// Opens straight into its expanded controls rather than
+					// showing as an unconfigured chip first - it needs setting
+					// up right away, and there's nothing useful a collapsed
+					// "(none picked)" chip would show in the meantime.
+					// snapshot stays null - see CriteriaEditorContext's docstring
+					// for why that's what makes this criterion's "Cancel" remove
+					// it outright instead of "reverting" it to blank.
+					ctx.setEditingIndex(ctx.criteria.length - 1);
+					ctx.setSnapshot(null);
+					ctx.onChange();
+					ctx.rerenderPanel();
+				}),
+			);
+		};
+		addOption('tag', 'Tag');
+		addOption('property', 'Property');
+		addOption('folder', 'Folder');
+		addOption('filename', 'Filename');
+		addOption('text', 'Text (name & content)');
+		addOption('staleDays', 'Not edited at least (days)');
+		addOption('minLinks', 'Minimum number of links');
+		addOption('clusterFreshness', 'Activity');
+		menu.showAtMouseEvent(evt);
 	}
 
 	/**
@@ -2335,7 +2361,7 @@ export class GraphPane {
 		// nodeGroups.ts's docstring).
 		new Setting(formEl).setName('Criteria').setDesc('A note must match every criterion below.').setHeading();
 		const criteriaEl = formEl.createDiv({ cls: 'clew-group-criteria' });
-		this.renderCriteriaList(criteriaEl, group);
+		this.renderCriteriaList(criteriaEl, this.groupCriteriaContext(group));
 
 		// A single button opening a type-picker menu (same Menu-based pattern
 		// the "Layout" toolbar button used before it became a dialog - see
@@ -2345,67 +2371,39 @@ export class GraphPane {
 		// it, was an extra step for what's really one action ("add a
 		// criterion of this type").
 		const addCriterionButton = formEl.createEl('button', { text: '+ add', cls: 'clew-filter-add-button' });
-		addCriterionButton.addEventListener('click', (evt) => {
-			const menu = new Menu();
-			const addCriterionOption = (type: GroupCriterionType, label: string): void => {
-				menu.addItem((item) =>
-					item.setTitle(label).onClick(() => {
-						group.criteria.push(this.blankCriterion(type));
-						// Opens straight into its expanded controls rather than
-						// showing as an unconfigured chip first - it needs setting
-						// up right away, and there's nothing useful a collapsed
-						// "(none picked)" chip would show in the meantime.
-						// criterionEditSnapshot stays null - see its own docstring
-						// for why that's what makes this criterion's "Cancel"
-						// remove it outright instead of "reverting" it to blank.
-						this.editingCriterionIndex = group.criteria.length - 1;
-						this.criterionEditSnapshot = null;
-						void this.plugin.saveSettings();
-						this.applyNodeGroups();
-						this.renderColorAndSizePanel();
-					}),
-				);
-			};
-			addCriterionOption('tag', 'Tag');
-			addCriterionOption('property', 'Property');
-			addCriterionOption('folder', 'Folder');
-			addCriterionOption('filename', 'Filename');
-			addCriterionOption('text', 'Text (name & content)');
-			addCriterionOption('staleDays', 'Not edited at least (days)');
-			addCriterionOption('minLinks', 'Minimum number of links');
-			addCriterionOption('clusterFreshness', 'Activity');
-			menu.showAtMouseEvent(evt);
-		});
+		addCriterionButton.addEventListener('click', (evt) => this.openAddCriterionMenu(evt, this.groupCriteriaContext(group)));
 	}
 
 	/**
-	 * Renders group.criteria as a row of compact chips (nodeGroups.ts's
+	 * Renders ctx.criteria as a row of compact chips (nodeGroups.ts's
 	 * describeCriterion()), each expandable in place into its full
 	 * type-specific controls - every criterion must match (AND), see
 	 * nodeGroups.ts's docstring for why there's no OR/nesting here. User
 	 * feedback: every criterion always showing its full controls read as
-	 * cluttered once a group had more than one or two - a chip you click
-	 * to edit keeps the common case (scanning what's already set) compact.
+	 * cluttered once a list had more than one or two - a chip you click to
+	 * edit keeps the common case (scanning what's already set) compact.
+	 * Shared by Color & size's per-group criteria and Filter's own single
+	 * list - see CriteriaEditorContext's docstring.
 	 */
-	private renderCriteriaList(container: HTMLElement, group: NodeGroup): void {
+	private renderCriteriaList(container: HTMLElement, ctx: CriteriaEditorContext): void {
 		container.empty();
-		if (group.criteria.length === 0) return; // no placeholder text - user feedback
+		if (ctx.criteria.length === 0) return; // no placeholder text - user feedback
 		const listEl = container.createDiv({ cls: 'clew-criteria-chips' });
-		group.criteria.forEach((criterion, index) => {
-			if (index === this.editingCriterionIndex) this.renderCriterionEditRow(listEl, group, index, criterion);
-			else this.renderCriterionChip(listEl, group, index, criterion);
+		ctx.criteria.forEach((criterion, index) => {
+			if (index === ctx.editingIndex) this.renderCriterionEditRow(listEl, ctx, index, criterion);
+			else this.renderCriterionChip(listEl, ctx, index, criterion);
 		});
 	}
 
-	/** A criterion collapsed to its plain-language summary (nodeGroups.ts's describeCriterion()) - click to expand its full controls in place (snapshotting it first so its own "Cancel" can revert - see criterionEditSnapshot's docstring), or the "x" to remove it directly without expanding first. */
-	private renderCriterionChip(container: HTMLElement, group: NodeGroup, index: number, criterion: GroupCriterion): void {
+	/** A criterion collapsed to its plain-language summary (nodeGroups.ts's describeCriterion()) - click to expand its full controls in place (snapshotting it first so its own "Cancel" can revert - see CriteriaEditorContext's docstring), or the "x" to remove it directly without expanding first. */
+	private renderCriterionChip(container: HTMLElement, ctx: CriteriaEditorContext, index: number, criterion: GroupCriterion): void {
 		const chip = container.createDiv({ cls: 'clew-filter-pill clew-criterion-chip' });
 		setTooltip(chip, 'Click to edit');
 		chip.createSpan({ text: describeCriterion(criterion) });
 		chip.addEventListener('click', () => {
-			this.editingCriterionIndex = index;
-			this.criterionEditSnapshot = structuredClone(criterion);
-			this.renderColorAndSizePanel();
+			ctx.setEditingIndex(index);
+			ctx.setSnapshot(structuredClone(criterion));
+			ctx.rerenderPanel();
 		});
 
 		const removeButton = chip.createSpan({ cls: 'clew-filter-pill-remove' });
@@ -2413,39 +2411,34 @@ export class GraphPane {
 		setTooltip(removeButton, 'Remove');
 		removeButton.addEventListener('click', (evt) => {
 			evt.stopPropagation(); // otherwise also triggers the chip's own click-to-expand
-			group.criteria.splice(index, 1);
-			void this.plugin.saveSettings();
-			this.applyNodeGroups();
-			this.renderColorAndSizePanel();
+			ctx.criteria.splice(index, 1);
+			ctx.onChange();
+			ctx.rerenderPanel();
 		});
 	}
 
 	/**
 	 * One criterion's full type-specific controls (see nodeGroups.ts's
 	 * GroupCriterion union), shown in place of its chip while
-	 * editingCriterionIndex points at it. "Done" persists and collapses
-	 * back to a chip (every field already applied live/saved as it
-	 * changed - "Done" here mirrors the group form's own "Done", a display
-	 * toggle, not a commit). "Cancel" reverts to criterionEditSnapshot
-	 * instead - see that field's own docstring for why a brand new
-	 * (never-had-a-snapshot) criterion gets removed instead of "reverted".
+	 * ctx.editingIndex points at it. "Done" persists and collapses back to
+	 * a chip (every field already applied live/saved as it changed -
+	 * "Done" here mirrors the group form's own "Done", a display toggle,
+	 * not a commit). "Cancel" reverts to ctx.snapshot instead - see
+	 * CriteriaEditorContext's docstring for why a brand new (never-had-a-
+	 * snapshot) criterion gets removed instead of "reverted".
 	 */
-	private renderCriterionEditRow(container: HTMLElement, group: NodeGroup, index: number, criterion: GroupCriterion): void {
+	private renderCriterionEditRow(container: HTMLElement, ctx: CriteriaEditorContext, index: number, criterion: GroupCriterion): void {
 		const editEl = container.createDiv({ cls: 'clew-criterion-edit' });
-		const applyLive = (): void => {
-			this.debouncedSaveNodeGroups();
-			this.applyNodeGroups();
-		};
+		const applyLive = (): void => ctx.onChange();
 		const rerender = (): void => {
-			this.debouncedSaveNodeGroups();
-			this.applyNodeGroups();
-			this.renderColorAndSizePanel();
+			ctx.onChange();
+			ctx.rerenderPanel();
 		};
 		const finishEditing = (): void => {
-			this.editingCriterionIndex = null;
-			this.criterionEditSnapshot = null;
-			this.applyNodeGroups();
-			this.renderColorAndSizePanel();
+			ctx.setEditingIndex(null);
+			ctx.setSnapshot(null);
+			ctx.onChange();
+			ctx.rerenderPanel();
 		};
 
 		// The type as its own heading line (not inline with the fields any
@@ -2477,8 +2470,8 @@ export class GraphPane {
 				break;
 			case 'property': {
 				const keyDropdown = new DropdownComponent(controlsEl);
-				for (const key of this.colorAndSizeAvailableProperties) keyDropdown.addOption(key, key);
-				if (criterion.key && !this.colorAndSizeAvailableProperties.includes(criterion.key)) keyDropdown.addOption(criterion.key, criterion.key);
+				for (const key of this.availableProperties) keyDropdown.addOption(key, key);
+				if (criterion.key && !this.availableProperties.includes(criterion.key)) keyDropdown.addOption(criterion.key, criterion.key);
 				keyDropdown.setValue(criterion.key).onChange((value) => {
 					criterion.key = value;
 					applyLive();
@@ -2506,7 +2499,7 @@ export class GraphPane {
 			}
 			case 'folder': {
 				const input = new TextComponent(controlsEl).setPlaceholder('Folder (includes subfolders)').setValue(criterion.folder);
-				input.inputEl.setAttribute('list', 'clew-color-size-folders');
+				input.inputEl.setAttribute('list', ctx.folderDatalistId);
 				input.onChange((value) => {
 					criterion.folder = value;
 					applyLive();
@@ -2582,9 +2575,8 @@ export class GraphPane {
 			// "+ add" this session, with nothing to revert to - removing it
 			// is the only sensible "cancel" then, rather than leaving an
 			// unconfigured chip behind.
-			if (this.criterionEditSnapshot) group.criteria[index] = this.criterionEditSnapshot;
-			else group.criteria.splice(index, 1);
-			void this.plugin.saveSettings();
+			if (ctx.snapshot) ctx.criteria[index] = ctx.snapshot;
+			else ctx.criteria.splice(index, 1);
 			finishEditing();
 		});
 	}
@@ -2606,7 +2598,7 @@ export class GraphPane {
 					onChange();
 				});
 			});
-			const remaining = this.colorAndSizeAvailableTags.filter((tag) => !tags.includes(tag));
+			const remaining = this.availableTags.filter((tag) => !tags.includes(tag));
 			if (remaining.length > 0) {
 				const addSelect = pillsEl.createEl('select', { cls: 'dropdown clew-filter-add-select' });
 				addSelect.createEl('option', { text: '+ tag…', value: '' });

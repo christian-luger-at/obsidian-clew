@@ -1,4 +1,4 @@
-import { FilterQuery } from './graph/filter';
+import { FilterPreset } from './graph/filter';
 import { NodeGroup } from './graph/nodeGroups';
 
 export interface PinnedPosition {
@@ -129,14 +129,14 @@ export interface ClewSettings {
 	pinnedPositions: Record<string, PinnedPosition>;
 	appearance: ClewAppearanceSettings;
 	/**
-	 * The Filter panel's current criteria - user feedback: closing the
-	 * panel (or the graph view, or Obsidian itself) shouldn't lose it, the
-	 * same reasoning pinnedPositions above already follows. GraphPane's
-	 * filter icon shows `is-active` whenever this isn't
-	 * isEmptyQuery()-empty, independent of whether the panel itself is
-	 * currently open.
+	 * User-defined filters (see graph/filter.ts) - saved state, same
+	 * reasoning as nodeGroups below: a filter someone spent time defining
+	 * shouldn't vanish on panel close or plugin reload. Empty array = no
+	 * filters defined yet, not "feature off" - GraphPane.filterButton's
+	 * `is-active` tracks whether any filter is *enabled* (see filter.ts's
+	 * isAnyFilterEnabled()), independent of the panel being open.
 	 */
-	filterQuery: FilterQuery;
+	filterPresets: FilterPreset[];
 	/**
 	 * User-defined "Color & size" node groups (see graph/nodeGroups.ts) -
 	 * saved state, same reasoning as filterQuery/pinnedPositions above: a
