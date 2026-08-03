@@ -295,7 +295,17 @@ manual copy step. Then open `test-vault` in Obsidian and check:
   raw graph attributes instead of the filter's own reducer output,
   silently dropping `hidden`). Opening "Appearance…" while the filter
   panel is open (or vice versa) should leave both open now - they no
-  longer share a corner.
+  longer share a corner. **Enabling a `text` filter after a content-
+  independent Color & size criterion** (a real bug this exact scenario
+  caught): with only a `clusterFreshness`/`folder`/`tag`/etc. group active
+  (nothing needing `noteContentCache`), create a *disabled* filter with a
+  `text` criterion, then flip its enable toggle on - it must find matches
+  immediately, not stay permanently empty. The toggle's handler used to
+  call `applyFilter()` directly instead of `applyFilters()` (which also
+  triggers `refreshCriteriaContent()`), so enabling it never checked
+  whether `noteContentCache` (still empty, since nothing had needed it
+  yet) needed populating - the `text` criterion matched zero notes forever
+  until some unrelated criteria edit happened to trigger a refresh.
 - **Deterministic layout**: close and reopen the graph view (or reload the
   plugin) a few times - each note should *start* the force layout from the
   same position every time, so the settled result looks recognizably the

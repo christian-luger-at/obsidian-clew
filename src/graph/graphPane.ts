@@ -1764,7 +1764,7 @@ export class GraphPane {
 		new ToggleComponent(row).setValue(preset.enabled).onChange((value) => {
 			preset.enabled = value;
 			void this.plugin.saveSettings();
-			this.applyFilter();
+			this.applyFilters();
 		});
 	}
 
@@ -1819,7 +1819,7 @@ export class GraphPane {
 		this.editingFilterId = preset.id;
 		this.editingFilterCriterionIndex = null;
 		this.filterCriterionEditSnapshot = null;
-		this.applyFilter();
+		this.applyFilters();
 		this.renderFilterPanel();
 	}
 
@@ -1842,7 +1842,7 @@ export class GraphPane {
 				this.editingFilterCriterionIndex = null;
 				this.filterCriterionEditSnapshot = null;
 			}
-			this.applyFilter();
+			this.applyFilters();
 			this.renderFilterPanel();
 		}).open();
 	}
@@ -1867,12 +1867,31 @@ export class GraphPane {
 			},
 			onChange: () => {
 				this.debouncedSaveFilterPresets();
-				this.applyFilter();
-				void this.refreshCriteriaContent();
+				this.applyFilters();
 			},
 			rerenderPanel: () => this.renderFilterPanel(),
 			folderDatalistId: 'clew-filter-folders',
 		};
+	}
+
+	/**
+	 * Call after ANY change to plugin.settings.filterPresets (add/edit/
+	 * delete/enable-toggle) - the filter analogue of applyNodeGroups().
+	 * Re-applies the filter immediately with whatever's already cached,
+	 * then - only if a filter now needs note content - awaits a fresh read
+	 * and re-applies again, so a first-ever (or newly re-enabled) `text`
+	 * criterion isn't left showing stale (empty) matches. A previous
+	 * version had callers invoke applyFilter() directly instead of this -
+	 * a real bug: enabling a filter whose `text` criterion was set up
+	 * while nothing else needed note content (so noteContentCache was
+	 * still empty) never re-checked that need, permanently matching zero
+	 * notes until some unrelated criteria edit happened to trigger a
+	 * refresh - user feedback ("Filter = old" showed no results only when
+	 * enabled *after* a content-independent Color & size criterion).
+	 */
+	private applyFilters(): void {
+		this.applyFilter();
+		void this.refreshCriteriaContent();
 	}
 
 	/** Reflects whether any filter is currently *enabled* (not whether the panel is open, or whether an enabled filter actually matched anything) - see filterButton's own docstring in the constructor. */
