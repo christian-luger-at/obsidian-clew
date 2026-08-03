@@ -1,7 +1,7 @@
 import { Plugin, WorkspaceLeaf } from 'obsidian';
 import { DEFAULT_APPEARANCE_SETTINGS, ClewSettings } from './settings';
 import { CLEW_STANDALONE_GRAPH_VIEW, StandaloneGraphView } from './graph/standaloneGraphView';
-import { GraphPane } from './graph/graphPane';
+import { FIND_PATH_ENABLED, GraphPane } from './graph/graphPane';
 
 export default class ClewPlugin extends Plugin {
 	settings!: ClewSettings;
@@ -20,16 +20,20 @@ export default class ClewPlugin extends Plugin {
 			callback: () => void this.activateStandaloneGraphView(),
 		});
 
-		this.addCommand({
-			id: 'find-path',
-			name: 'Find path between two notes',
-			checkCallback: (checking) => {
-				const pane = GraphPane.getActive();
-				if (!pane) return false;
-				if (!checking) pane.openPathfindingModal();
-				return true;
-			},
-		});
+		// See FIND_PATH_ENABLED's own docstring - the feature (and this
+		// command) isn't ready to ship yet, hidden without deleting it.
+		if (FIND_PATH_ENABLED) {
+			this.addCommand({
+				id: 'find-path',
+				name: 'Find path between two notes',
+				checkCallback: (checking) => {
+					const pane = GraphPane.getActive();
+					if (!pane) return false;
+					if (!checking) pane.openPathfindingModal();
+					return true;
+				},
+			});
+		}
 	}
 
 	onunload() {}

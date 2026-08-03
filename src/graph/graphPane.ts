@@ -45,6 +45,16 @@ const DRAG_SETTLE_DURATION_MS = 1500;
 const MIN_FIT_EXTENT = 32;
 
 /**
+ * "Find path" (toolbar icon + `openPathfindingModal()` + the command in
+ * main.ts) isn't ready to ship yet - user feedback: hide the icon (and the
+ * command) without deleting the underlying feature (pathfinding.ts,
+ * PathfindingModal, canvasExport.ts, openPathfindingModal() itself all stay
+ * as-is, just unreferenced from the toolbar/command palette for now). Flip
+ * back to `true` to re-enable both in one place.
+ */
+export const FIND_PATH_ENABLED = false;
+
+/**
  * How long the hover-dim (everything but the hovered node/its neighbors)
  * takes to fade fully in or out - user feedback: jumping straight to the
  * dim color the instant a node is entered (and straight back on leave) read
@@ -531,8 +541,10 @@ export class GraphPane {
 		this.colorAndSizeButton = iconButton('palette', 'Color & size…');
 		this.colorAndSizeButton.addEventListener('click', () => this.toggleColorAndSizePanel());
 
-		const findPathButton = iconButton('route', 'Find path…');
-		findPathButton.addEventListener('click', () => this.openPathfindingModal());
+		if (FIND_PATH_ENABLED) {
+			const findPathButton = iconButton('route', 'Find path…');
+			findPathButton.addEventListener('click', () => this.openPathfindingModal());
+		}
 
 		this.appearanceButton = iconButton('sliders-horizontal', 'Appearance…');
 		this.appearanceButton.addEventListener('click', () => this.toggleAppearancePanel());

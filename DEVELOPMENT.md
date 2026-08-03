@@ -221,6 +221,13 @@ ln -s "$PWD/main.js" "$PWD/manifest.json" "$PWD/styles.css" test-vault/.obsidian
 Every `npm run build` after that updates both vaults automatically - no
 manual copy step. Then open `test-vault` in Obsidian and check:
 
+- **Find path** is currently disabled (user feedback: not ready to ship
+  yet) - `FIND_PATH_ENABLED` in graphPane.ts gates both the toolbar icon
+  and the command in main.ts; flip it to `true` to bring the feature (and
+  the QA steps below) back for testing. With it `false`, confirm the
+  toolbar has no route icon and the command palette has no "Find path
+  between two notes" entry - the underlying pathfinding.ts/
+  PathfindingModal/canvasExport.ts code is untouched, just unreferenced.
 - **Find path**, `Topic A - Detail 1` → `Topic B - Detail 1`: should offer a
   route through `Bridge Note` as an alternative to the naive route through
   `Hub` - the hub-avoidance cost model should make the Bridge Note route rank
