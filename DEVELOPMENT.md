@@ -310,9 +310,15 @@ manual copy step. Then open `test-vault` in Obsidian and check:
   throughout the hover, not flash back into view (a real bug this exact
   scenario caught: the hover reducer's "everyone else" branch was reading
   raw graph attributes instead of the filter's own reducer output,
-  silently dropping `hidden`). Opening "Appearance…" while the filter
-  panel is open (or vice versa) should leave both open now - they no
-  longer share a corner. **Enabling a `text` filter after a content-
+  silently dropping `hidden`). **Only one dialog at a time** (user
+  feedback: "immer nur einen Dialog anzeigen" - reversing an earlier
+  decision that let Filter/Color & size/Appearance stack in their own
+  corners): opening "Appearance…" while the Filter panel is open should
+  close Filter (and vice versa, and same for Color & size against either
+  of the other two) - see `closeOtherPanels()` in graphPane.ts. Any
+  criterion/group being edited when its panel closes this way should
+  collapse cleanly (no leftover edit-mode state) the next time that panel
+  reopens. **Enabling a `text` filter after a content-
   independent Color & size criterion** (a real bug this exact scenario
   caught): with only a `clusterFreshness`/`folder`/`tag`/etc. group active
   (nothing needing `noteContentCache`), create a *disabled* filter with a

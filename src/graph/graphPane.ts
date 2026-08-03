@@ -539,10 +539,11 @@ export class GraphPane {
 
 		// Both live inside topbarEl, right below the icon rail (see
 		// topbarEl's own comment above) - not siblings of appearancePanelEl,
-		// so neither shares a corner with it and both can be open at once
-		// without overlapping. Empty shells here - contents are (re)built
-		// fresh every time they open, same reasoning as
-		// renderAppearancePanel().
+		// so neither shares a corner with it (each still gets its own
+		// distinct screen position). Only one of the three is ever actually
+		// shown at a time though - see closeOtherPanels(). Empty shells here
+		// - contents are (re)built fresh every time they open, same
+		// reasoning as renderAppearancePanel().
 		this.filterPanelEl = topbarEl.createDiv({ cls: 'clew-filter-panel' });
 		this.filterPanelEl.hide();
 		this.colorAndSizePanelEl = topbarEl.createDiv({ cls: 'clew-filter-panel' });
@@ -726,9 +727,39 @@ export class GraphPane {
 			this.appearancePanelEl.hide();
 			this.appearanceButton.removeClass('is-active');
 		} else {
+			this.closeOtherPanels('appearance');
 			this.renderAppearancePanel();
 			this.appearancePanelEl.show();
 			this.appearanceButton.addClass('is-active');
+		}
+	}
+
+	/**
+	 * Hides whichever of Filter/Color & size/Appearance is currently open,
+	 * other than `keep` - user feedback: only one of these three should be
+	 * open at a time ("immer nur einen Dialog anzeigen"), reversing an
+	 * earlier decision that let them stack in their own corners. Called
+	 * right before a toggle*Panel() method shows its own panel, not on
+	 * every render - closing one panel to open another is a single user
+	 * action, not something that should also fire on e.g. a live criteria
+	 * update repainting an already-open panel.
+	 */
+	private closeOtherPanels(keep: 'filter' | 'colorAndSize' | 'appearance'): void {
+		if (keep !== 'filter' && this.filterPanelEl.isShown()) {
+			this.filterPanelEl.hide();
+			this.editingFilterId = null;
+			this.editingFilterCriterionIndex = null;
+			this.filterCriterionEditSnapshot = null;
+		}
+		if (keep !== 'colorAndSize' && this.colorAndSizePanelEl.isShown()) {
+			this.colorAndSizePanelEl.hide();
+			this.editingGroupId = null;
+			this.editingCriterionIndex = null;
+			this.criterionEditSnapshot = null;
+		}
+		if (keep !== 'appearance' && this.appearancePanelEl.isShown()) {
+			this.appearancePanelEl.hide();
+			this.appearanceButton.removeClass('is-active');
 		}
 	}
 
@@ -2129,6 +2160,7 @@ export class GraphPane {
 			this.filterCriterionEditSnapshot = null;
 			return;
 		}
+		this.closeOtherPanels('filter');
 		this.renderFilterPanel();
 		this.filterPanelEl.show();
 	}
@@ -2832,6 +2864,7 @@ export class GraphPane {
 			this.criterionEditSnapshot = null;
 			return;
 		}
+		this.closeOtherPanels('colorAndSize');
 		this.renderColorAndSizePanel();
 		this.colorAndSizePanelEl.show();
 	}
