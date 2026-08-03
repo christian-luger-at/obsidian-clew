@@ -68,8 +68,14 @@ const CRITERION_TYPE_LABELS: Record<GroupCriterionType, string> = {
 	// full history) - "Activity" names the axis (active vs. inactive)
 	// rather than presupposing "stagnant" as the default framing.
 	clusterFreshness: 'Activity',
-	staleDays: 'Not edited at least',
-	minLinks: 'Minimum number of links',
+	// Not "Not edited at least"/"Minimum number of links" any more - those
+	// phrases now live in the controls themselves as the clickable
+	// include/exclude word (renderCriterionEditRow()'s staleDays/minLinks
+	// cases), so keeping them here too would read as duplicated ("Not
+	// edited at least" heading right above an "At least"/"Less than" word).
+	// A plain category name instead, same role as folder/filename/tag/text.
+	staleDays: 'Last edited',
+	minLinks: 'Links',
 };
 
 /** Parses a criterion's number inputs (staleDays/minLinks) - empty/invalid/negative all mean "0", same as the field never being touched. */
@@ -1755,7 +1761,7 @@ export class GraphPane {
 		// filter's own criteria instead. A single control for the whole
 		// panel, not per-filter - it describes how the *list* combines, not
 		// any one filter's own behavior.
-		new Setting(this.filterPanelEl).setName('Show a note if it matches').addDropdown((dropdown) =>
+		new Setting(this.filterPanelEl).setName('Show if it matches').addDropdown((dropdown) =>
 			dropdown
 				.addOption('or', 'At least one filter')
 				.addOption('and', 'Every filter')
@@ -2626,6 +2632,8 @@ export class GraphPane {
 
 		switch (criterion.type) {
 			case 'tag':
+				controlsEl.createSpan({ cls: 'clew-criterion-label', text: 'Has' });
+				this.renderNegateWord(controlsEl, criterion, { include: 'any of', exclude: 'none of' }, applyLive);
 				this.renderTagPills(controlsEl, criterion.tags, applyLive);
 				break;
 			case 'property': {
@@ -2658,7 +2666,9 @@ export class GraphPane {
 				break;
 			}
 			case 'folder': {
-				const input = new TextComponent(controlsEl).setPlaceholder('Folder (includes subfolders)').setValue(criterion.folder);
+				controlsEl.createSpan({ cls: 'clew-criterion-label', text: 'Folder' });
+				this.renderNegateWord(controlsEl, criterion, { include: 'is', exclude: 'is not' }, applyLive);
+				const input = new TextComponent(controlsEl).setPlaceholder('Includes subfolders').setValue(criterion.folder);
 				input.inputEl.setAttribute('list', ctx.folderDatalistId);
 				input.onChange((value) => {
 					criterion.folder = value;
@@ -2667,13 +2677,17 @@ export class GraphPane {
 				break;
 			}
 			case 'filename':
-				new TextComponent(controlsEl).setPlaceholder('Filename contains…').setValue(criterion.query).onChange((value) => {
+				controlsEl.createSpan({ cls: 'clew-criterion-label', text: 'Filename' });
+				this.renderNegateWord(controlsEl, criterion, { include: 'contains', exclude: 'does not contain' }, applyLive);
+				new TextComponent(controlsEl).setValue(criterion.query).onChange((value) => {
 					criterion.query = value;
 					applyLive();
 				});
 				break;
 			case 'text':
-				new TextComponent(controlsEl).setPlaceholder('Title or content contains…').setValue(criterion.query).onChange((value) => {
+				controlsEl.createSpan({ cls: 'clew-criterion-label', text: 'Title or content' });
+				this.renderNegateWord(controlsEl, criterion, { include: 'contains', exclude: 'does not contain' }, applyLive);
+				new TextComponent(controlsEl).setValue(criterion.query).onChange((value) => {
 					criterion.query = value;
 					applyLive();
 				});
@@ -2687,7 +2701,10 @@ export class GraphPane {
 				// to this one for exactly that reason - see
 				// StalenessBucket's docstring in nodeGroups.ts) but because
 				// of "cluster"/"half" jargon with no obvious vault-editing
-				// meaning. Same mechanism, described without naming it.
+				// meaning. Same mechanism, described without naming it. No
+				// negate word here (unlike the other 6 types below) - the
+				// bucket dropdown already offers an equivalent choice, see
+				// GroupCriterion's own negate docstring.
 				controlsEl.createSpan({ cls: 'clew-criterion-label', text: 'Notes in' });
 				new DropdownComponent(controlsEl)
 					.addOption('stagnant', 'An inactive area of the vault')
@@ -2699,6 +2716,7 @@ export class GraphPane {
 					});
 				break;
 			case 'staleDays': {
+				this.renderNegateWord(controlsEl, criterion, { include: 'At least', exclude: 'Less than' }, applyLive);
 				const input = new TextComponent(controlsEl).setValue(String(criterion.days));
 				input.inputEl.type = 'number';
 				input.inputEl.min = '0';
@@ -2706,9 +2724,11 @@ export class GraphPane {
 					criterion.days = parsePositiveInt(value) ?? 0;
 					applyLive();
 				});
+				controlsEl.createSpan({ cls: 'clew-criterion-label', text: 'days ago' });
 				break;
 			}
 			case 'minLinks': {
+				this.renderNegateWord(controlsEl, criterion, { include: 'At least', exclude: 'Fewer than' }, applyLive);
 				const input = new TextComponent(controlsEl).setValue(String(criterion.count));
 				input.inputEl.type = 'number';
 				input.inputEl.min = '0';
@@ -2716,6 +2736,7 @@ export class GraphPane {
 					criterion.count = parsePositiveInt(value) ?? 0;
 					applyLive();
 				});
+				controlsEl.createSpan({ cls: 'clew-criterion-label', text: 'links' });
 				break;
 			}
 		}
@@ -2738,6 +2759,33 @@ export class GraphPane {
 			if (ctx.snapshot) ctx.criteria[index] = ctx.snapshot;
 			else ctx.criteria.splice(index, 1);
 			finishEditing();
+		});
+	}
+
+	/**
+	 * The clickable word that both shows and toggles a criterion's
+	 * `negate` flag - see GroupCriterion's own `negate` docstring for why
+	 * this replaced a standalone "Exclude" toggle: the label itself is the
+	 * only control, no separate switch/checkbox/dropdown next to it.
+	 * `labels.include`/`labels.exclude` are each type's own natural
+	 * wording (e.g. "is"/"is not", "contains"/"does not contain") - see
+	 * describeCriterion() in nodeGroups.ts for the matching chip text.
+	 * Mutates its own text directly (not ctx.rerenderPanel()) so clicking
+	 * it doesn't rebuild the whole edit row.
+	 */
+	private renderNegateWord(container: HTMLElement, criterion: GroupCriterion, labels: { include: string; exclude: string }, onChange: () => void): void {
+		const wordEl = container.createSpan({ cls: 'clew-criterion-negate-word' });
+		const render = (): void => {
+			const negated = criterion.negate ?? false;
+			wordEl.setText(negated ? labels.exclude : labels.include);
+			wordEl.toggleClass('is-negated', negated);
+		};
+		render();
+		setTooltip(wordEl, 'Click to include/exclude');
+		wordEl.addEventListener('click', () => {
+			criterion.negate = !(criterion.negate ?? false);
+			render();
+			onChange();
 		});
 	}
 

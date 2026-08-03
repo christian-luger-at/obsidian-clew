@@ -130,6 +130,26 @@ describe('matchesGroup', () => {
 		});
 	});
 
+	describe('negate', () => {
+		it('inverts a folder criterion (exclude instead of include)', () => {
+			const g = group({ criteria: [{ type: 'folder', folder: 'Archive', negate: true }] });
+			expect(matchesGroup(facts({ folder: 'Archive' }), g)).toBe(false);
+			expect(matchesGroup(facts({ folder: 'Archive/2024' }), g)).toBe(false);
+			expect(matchesGroup(facts({ folder: 'Inbox' }), g)).toBe(true);
+		});
+
+		it('inverts a tag criterion', () => {
+			const g = group({ criteria: [{ type: 'tag', tags: ['#archived'], negate: true }] });
+			expect(matchesGroup(facts({ tags: ['#archived'] }), g)).toBe(false);
+			expect(matchesGroup(facts({ tags: ['#active'] }), g)).toBe(true);
+		});
+
+		it('treats a missing negate field as false (not negated) - saved before this feature existed', () => {
+			const g = group({ criteria: [{ type: 'folder', folder: 'Archive' }] });
+			expect(matchesGroup(facts({ folder: 'Archive' }), g)).toBe(true);
+		});
+	});
+
 	it('ANDs across every criterion', () => {
 		const g = group({
 			criteria: [
@@ -187,7 +207,7 @@ describe('needsClusterFreshness', () => {
 
 describe('describeCriterion', () => {
 	it('describes a tag criterion as its tags, comma-joined', () => {
-		expect(describeCriterion({ type: 'tag', tags: ['#project', '#urgent'] })).toBe('#project, #urgent');
+		expect(describeCriterion({ type: 'tag', tags: ['#project', '#urgent'] })).toBe('Has any of #project, #urgent');
 	});
 
 	it('describes an unconfigured tag criterion', () => {
@@ -209,9 +229,9 @@ describe('describeCriterion', () => {
 	});
 
 	it('describes folder/filename/text criteria with their type name, since they would otherwise all look like plain text', () => {
-		expect(describeCriterion({ type: 'folder', folder: 'Archive' })).toBe('Folder: Archive');
-		expect(describeCriterion({ type: 'filename', query: 'draft' })).toBe('Filename: draft');
-		expect(describeCriterion({ type: 'text', query: 'roadmap' })).toBe('Text: roadmap');
+		expect(describeCriterion({ type: 'folder', folder: 'Archive' })).toBe('Folder is Archive');
+		expect(describeCriterion({ type: 'filename', query: 'draft' })).toBe('Filename contains "draft"');
+		expect(describeCriterion({ type: 'text', query: 'roadmap' })).toBe('Text contains "roadmap"');
 	});
 
 	it('describes a clusterFreshness criterion by its bucket', () => {
@@ -220,7 +240,17 @@ describe('describeCriterion', () => {
 	});
 
 	it('describes staleDays/minLinks criteria', () => {
-		expect(describeCriterion({ type: 'staleDays', days: 30 })).toBe('Not edited in 30+ days');
-		expect(describeCriterion({ type: 'minLinks', count: 3 })).toBe('3+ links');
+		expect(describeCriterion({ type: 'staleDays', days: 30 })).toBe('At least 30 days ago');
+		expect(describeCriterion({ type: 'minLinks', count: 3 })).toBe('At least 3 links');
+	});
+
+	it('flips each type’s own wording when negated, instead of a generic "Not " prefix', () => {
+		expect(describeCriterion({ type: 'folder', folder: 'Archive', negate: true })).toBe('Folder is not Archive');
+		expect(describeCriterion({ type: 'filename', query: 'draft', negate: true })).toBe('Filename does not contain "draft"');
+		expect(describeCriterion({ type: 'text', query: 'roadmap', negate: true })).toBe('Text does not contain "roadmap"');
+		expect(describeCriterion({ type: 'tag', tags: ['#project'], negate: true })).toBe('Has none of #project');
+		expect(describeCriterion({ type: 'staleDays', days: 30, negate: true })).toBe('Less than 30 days ago');
+		expect(describeCriterion({ type: 'minLinks', count: 3, negate: true })).toBe('Fewer than 3 links');
+		expect(describeCriterion({ type: 'tag', tags: ['#project'], negate: false })).toBe('Has any of #project');
 	});
 });

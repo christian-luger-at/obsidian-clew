@@ -311,6 +311,28 @@
 	color: var(--text-normal);
 }
 
+/* The clickable include/exclude word itself (renderNegateWord()) - no
+   separate toggle/checkbox next to it, since several rounds of user
+   feedback rejected every variation of a standalone control ("die
+   Vorschläge sind alle noch nicht optimal [...] Ganz anderer Ansatz
+   gewünscht" - see GroupCriterion's own `negate` docstring). Styled like
+   a link (dotted underline, accent color) so it reads as interactive
+   text, not a plain label - `.is-negated` swaps to the same "error" red
+   used elsewhere for a destructive/excluding state, so the word's own
+   color communicates which mode is active even without reading it. */
+.clew-criterion-negate-word {
+	cursor: pointer;
+	color: var(--interactive-accent);
+	border-bottom: 1px dotted var(--interactive-accent);
+	font-size: var(--font-ui-smaller);
+	white-space: nowrap;
+}
+
+.clew-criterion-negate-word.is-negated {
+	color: var(--text-error);
+	border-bottom-color: var(--text-error);
+}
+
 /* The type-specific controls, on their own line below
    .clew-criterion-type-heading - a wrapping flex row since some criteria
    (e.g. property: key + operator + value, or a tag criterion's pills)

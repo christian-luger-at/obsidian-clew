@@ -97,7 +97,36 @@ export interface MinLinksCriterion {
 	count: number;
 }
 
-export type GroupCriterion = ClusterFreshnessCriterion | TextCriterion | FolderCriterion | FilenameCriterion | TagCriterion | PropertyCriterion | StaleDaysCriterion | MinLinksCriterion;
+/**
+ * `& { negate?: boolean }` rather than adding the field to each of the 8
+ * interfaces above - an intersection with a union still distributes over
+ * it (so `criterion.type` narrowing in the switches below is unaffected),
+ * and every criterion type shares the same underlying include/exclude flag
+ * from one place - user feedback: "Bedingungen sollen einen Ausschluss
+ * oder Einschluss ermöglichen z.B. alle Knoten die NICHT im Ordner XY
+ * sind". A first UI pass exposed this as a standalone "Exclude" toggle
+ * next to each criterion's type heading - user feedback rejected several
+ * variations of that as a control ("die Vorschläge sind alle noch nicht
+ * optimal [...] Ganz anderer Ansatz gewünscht"), so graphPane.ts's
+ * renderCriterionEditRow() instead makes the negated/non-negated *wording
+ * itself* (see describeCriterion()) the clickable control - no separate
+ * toggle/checkbox/dropdown element at all for most types. `property` and
+ * `clusterFreshness` don't use `negate` (no UI ever sets it for them) -
+ * each already offers an equivalent choice via its own operator/bucket.
+ * Optional (not required on every literal) so criteria saved before this
+ * feature existed still type-check and behave as included (not negated) -
+ * see matchesCriterion()'s own handling.
+ */
+export type GroupCriterion = (
+	| ClusterFreshnessCriterion
+	| TextCriterion
+	| FolderCriterion
+	| FilenameCriterion
+	| TagCriterion
+	| PropertyCriterion
+	| StaleDaysCriterion
+	| MinLinksCriterion
+) & { negate?: boolean };
 
 /**
  * The common shape every enable-toggleable, criteria-matched list entry
@@ -189,7 +218,8 @@ function stringifyPropertyValue(value: unknown): string {
 /** 0.5 is the boundary between the "fresh" and "stagnant" halves - see StalenessBucket's docstring. */
 const STAGNANT_THRESHOLD = 0.5;
 
-function matchesCriterion(facts: NodeGroupFacts, criterion: GroupCriterion): boolean {
+/** The raw (pre-negation) match for one criterion - see matchesCriterion() below for the negate wrapper. */
+function matchesCriterionValue(facts: NodeGroupFacts, criterion: GroupCriterion): boolean {
 	switch (criterion.type) {
 		case 'clusterFreshness':
 			if (facts.clusterStaleness === null) return false;
@@ -226,6 +256,12 @@ function matchesCriterion(facts: NodeGroupFacts, criterion: GroupCriterion): boo
 		case 'minLinks':
 			return facts.degree >= criterion.count;
 	}
+}
+
+/** Include (default) or exclude - see GroupCriterion's own docstring for why `negate` lives here instead of on each of the 8 criterion types individually. */
+function matchesCriterion(facts: NodeGroupFacts, criterion: GroupCriterion): boolean {
+	const value = matchesCriterionValue(facts, criterion);
+	return criterion.negate ? !value : value;
 }
 
 /**
@@ -285,21 +321,26 @@ const STRING_OPERATOR_LABELS: Record<StringOperator, string> = {
 
 /**
  * A short, plain-language one-liner for a single criterion (e.g. `status
- * equals "done"`, `#project, #urgent`, `Folder: Archive`) - GraphPane
+ * equals "done"`, `Folder is Archive`, `Folder is not Archive`) - GraphPane
  * shows this as a compact chip's label instead of always-visible
  * type-specific controls, so a group with several criteria reads as a
  * short list of chips rather than a wall of dropdowns/text fields (user
  * feedback: the criteria list was "unübersichtlich" - unclear/cluttered).
- * `tag`/`property` read as natural mini-sentences on their own (a tag
- * already starts with '#', a property reads as "key operator value") and
- * so skip the type-name prefix the free-text types (`folder`/`filename`/
- * `text`) need to stay distinguishable from one another once filled in -
- * same reasoning as CRITERION_TYPE_LABELS in graphPane.ts.
+ * Every type except `property`/`clusterFreshness` (which already offer an
+ * equivalent choice via their own operator/bucket) reads `criterion.negate`
+ * and flips its own wording accordingly ("is"/"is not", "contains"/"does
+ * not contain", "any of"/"none of", "at least"/"less than" or "fewer
+ * than") - graphPane.ts's renderCriterionEditRow() renders that same word
+ * as the actual clickable include/exclude control (see GroupCriterion's
+ * own `negate` docstring for why a plain include/exclude toggle read
+ * poorly - "die Vorschläge sind alle noch nicht optimal" - and this
+ * "the word IS the control" phrasing was chosen instead).
  */
 export function describeCriterion(criterion: GroupCriterion): string {
+	const negate = criterion.negate ?? false;
 	switch (criterion.type) {
 		case 'tag':
-			return criterion.tags.length > 0 ? criterion.tags.join(', ') : 'Tag: (none picked)';
+			return criterion.tags.length > 0 ? `Has ${negate ? 'none of' : 'any of'} ${criterion.tags.join(', ')}` : 'Tag: (none picked)';
 		case 'property': {
 			if (!criterion.key) return 'Property: (none picked)';
 			if (criterion.operator === 'isEmpty' || criterion.operator === 'isNotEmpty') {
@@ -308,16 +349,16 @@ export function describeCriterion(criterion: GroupCriterion): string {
 			return `${criterion.key} ${STRING_OPERATOR_LABELS[criterion.operator]} "${criterion.value || '…'}"`;
 		}
 		case 'folder':
-			return `Folder: ${criterion.folder || '(none)'}`;
+			return `Folder ${negate ? 'is not' : 'is'} ${criterion.folder || '(none)'}`;
 		case 'filename':
-			return `Filename: ${criterion.query || '(none)'}`;
+			return `Filename ${negate ? 'does not contain' : 'contains'} ${criterion.query ? `"${criterion.query}"` : '(none)'}`;
 		case 'text':
-			return `Text: ${criterion.query || '(none)'}`;
+			return `Text ${negate ? 'does not contain' : 'contains'} ${criterion.query ? `"${criterion.query}"` : '(none)'}`;
 		case 'clusterFreshness':
 			return criterion.bucket === 'stagnant' ? 'Activity: inactive area of the vault' : 'Activity: active area of the vault';
 		case 'staleDays':
-			return `Not edited in ${criterion.days}+ days`;
+			return `${negate ? 'Less than' : 'At least'} ${criterion.days} days ago`;
 		case 'minLinks':
-			return `${criterion.count}+ links`;
+			return `${negate ? 'Fewer than' : 'At least'} ${criterion.count} links`;
 	}
 }

@@ -278,7 +278,7 @@ manual copy step. Then open `test-vault` in Obsidian and check:
   just the original text/tag/property set), always AND'd within one filter
   (same as a node group's own criteria - no per-filter AND/OR choice, see
   below for why that choice lives one level up instead).
-  **"Show a note if it matches": At least one filter vs. Every filter**
+  **"Show if it matches": At least one filter vs. Every filter**
   (a panel-level dropdown, above the filter list, not per-filter - user
   feedback: "Das ist auf der falschen Ebene [...] soll für die Kombination
   von ganzen Filtern gelten", after an earlier version put an AND/OR
@@ -531,6 +531,31 @@ manual copy step. Then open `test-vault` in Obsidian and check:
   just as a group criterion instead of a filter. Create a group with a
   `staleDays` criterion of e.g. 30 and confirm only notes whose mtime is
   30+ days old join it; same for `minLinks` against `graph.degree()`.
+- **Criterion negation (the clickable include/exclude word)**: `Folder`,
+  `Filename`, `Text`, `Tag`, `Not edited`/staleDays, and `Links`/minLinks
+  (Color & size *and* Filter, since both share `nodeGroups.ts`'s
+  `GroupCriterion`) each show one small clickable word inline in their own
+  controls - `is`/`is not` (Folder), `contains`/`does not contain`
+  (Filename, Text), `any of`/`none of` (Tag), `At least`/`Less than`
+  (staleDays), `At least`/`Fewer than` (minLinks) - see
+  `renderNegateWord()` in graphPane.ts. User feedback: "Bedingungen sollen
+  einen Ausschluss oder Einschluss ermöglichen z.B. alle Knoten die NICHT
+  im Ordner XY sind", but a *separate* standalone "Exclude" toggle/
+  checkbox/segmented-button/icon next to the heading (several variations
+  were tried) all read poorly - "die Vorschläge sind alle noch nicht
+  optimal [...] Ganz anderer Ansatz gewünscht" - so the word *is* the
+  control, no other element next to it. Click the word (e.g. "is" on a
+  `Folder` criterion) - it should immediately flip to its negated form
+  ("is not"), turn red (`--text-error`, vs. the default accent color), and
+  the graph should re-apply live. The chip's own collapsed description
+  should read the same flipped sentence (e.g. "Folder is not Archive"),
+  not a generic "Not " prefix. `Property` and `Activity` (clusterFreshness)
+  do *not* get this word - each already has its own equivalent choice
+  (the operator dropdown / the active-inactive bucket dropdown). Reload
+  the plugin (or restart Obsidian) - the negated state should persist per
+  criterion. A criterion saved before this feature existed (no `negate`
+  field at all) should still behave as included (not excluded), not error
+  or silently invert.
 - **Drag to pin a node** (force layout only): drag any note - its
   *neighbors* should visibly shift/readjust for a second or two after you
   release it (ForceAtlas2 briefly re-settling around the now-fixed
