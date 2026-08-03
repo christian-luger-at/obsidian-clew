@@ -9,6 +9,59 @@
 	inset: 0;
 }
 
+/* Centered over the canvas (see GraphPane's showEmptyState()) - a low
+   z-index (below .clew-topbar's 10) since it only ever appears when the
+   canvas itself has nothing drawn on it, so it never needs to compete
+   with the toolbar/panels for visibility. */
+.clew-empty-state {
+	position: absolute;
+	inset: 0;
+	z-index: 1;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+}
+
+/* Same floating-panel look as .clew-legend/.clew-appearance-panel, so it
+   reads as part of the same UI system rather than a one-off dialog. */
+.clew-empty-state-card {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: var(--size-4-2);
+	max-width: 260px;
+	padding: var(--size-4-6) var(--size-4-5);
+	background: var(--background-primary);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-m);
+	box-shadow: var(--shadow-s);
+	text-align: center;
+}
+
+.clew-empty-state-icon {
+	color: var(--text-muted);
+}
+
+.clew-empty-state-icon svg {
+	width: 32px;
+	height: 32px;
+}
+
+.clew-empty-state-heading {
+	color: var(--text-normal);
+	font-size: var(--font-ui-medium);
+	font-weight: var(--font-medium);
+}
+
+.clew-empty-state-sub {
+	color: var(--text-muted);
+	font-size: var(--font-ui-small);
+}
+
+.clew-empty-state-card button {
+	margin-top: var(--size-4-1);
+}
+
 /* Positions the icon rail (.clew-toolbar) and the filter panel
    (.clew-filter-panel), top-right - a flex column so the panel drops
    straight down below the rail rather than sharing a corner with the

@@ -348,6 +348,7 @@ export class GraphPane {
 	}
 
 	private readonly graphContainerEl: HTMLElement;
+	private readonly emptyStateEl: HTMLElement;
 	private readonly panelEl: HTMLElement;
 	private readonly legendEl: HTMLElement;
 	private readonly appearancePanelEl: HTMLElement;
@@ -444,6 +445,17 @@ export class GraphPane {
 		// gets its own sub-container - otherwise re-rendering would wipe the
 		// button/panel below along with the canvases.
 		this.graphContainerEl = this.containerEl.createDiv({ cls: 'clew-graph-canvas' });
+
+		// A centered overlay card (same look as the Filter/Color & size
+		// panels) shown whenever there's nothing to draw - either the vault
+		// has no notes at all, or an active filter matches none of them (see
+		// updateEmptyState()) - user feedback: an empty canvas with no
+		// explanation reads as broken, not "nothing to show yet". Hidden by
+		// default; toggled by updateEmptyState(), never emptied/rebuilt like
+		// the other panels since its content only ever needs one of two
+		// fixed shapes (see showEmptyState()).
+		this.emptyStateEl = this.containerEl.createDiv({ cls: 'clew-empty-state' });
+		this.emptyStateEl.hide();
 
 		// A vertical icon rail (left edge) rather than a horizontal row of
 		// 6 text buttons - user feedback: the text-button row got covered/
@@ -1969,6 +1981,7 @@ export class GraphPane {
 		if (!isAnyFilterEnabled(presets)) {
 			this.clearHighlight();
 			this.renderLegend();
+			this.updateEmptyState();
 			return;
 		}
 
@@ -1987,6 +2000,58 @@ export class GraphPane {
 		this.renderer?.setSetting('nodeReducer', (node, attr) => ({ ...attr, hidden: !matches.has(node) }));
 		this.renderer?.setSetting('edgeReducer', (edge, attr) => ({ ...attr, hidden: !visibleEdges.has(edge) }));
 		this.renderLegend();
+		this.updateEmptyState(matches.size);
+	}
+
+	/**
+	 * Shows/hides the empty-state card - vault has no notes at all (checked
+	 * first, takes priority) or an active filter matches none of them
+	 * (`filterMatchCount === 0`, passed by applyFilter() from the match set
+	 * it just computed rather than re-evaluating filters here). Called from
+	 * every applyFilter() exit path (including the "no filter enabled"
+	 * early return, so a vault that's empty independent of any filter still
+	 * shows the right card) and indirectly from setFiles() (which always
+	 * calls applyFilter() on a fresh file set).
+	 */
+	private updateEmptyState(filterMatchCount?: number): void {
+		if (this.files.length === 0) {
+			this.showEmptyState('vault');
+		} else if (filterMatchCount === 0) {
+			this.showEmptyState('filter');
+		} else {
+			this.emptyStateEl.hide();
+		}
+	}
+
+	/**
+	 * Rebuilt from scratch each time (not left standing and toggled) -
+	 * cheap (a handful of elements) and simpler than tracking which of the
+	 * two fixed shapes is currently showing. 'vault': nothing actionable
+	 * from inside the graph view, so no button - just an explanation.
+	 * 'filter': an active filter is the *reason* nothing shows, so a
+	 * "Reset filter" button (disables every currently enabled filter) is
+	 * the one obvious next step, right there instead of requiring a trip
+	 * to the Filter panel.
+	 */
+	private showEmptyState(kind: 'vault' | 'filter'): void {
+		this.emptyStateEl.empty();
+		const cardEl = this.emptyStateEl.createDiv({ cls: 'clew-empty-state-card' });
+		setIcon(cardEl.createDiv({ cls: 'clew-empty-state-icon' }), kind === 'vault' ? 'file-text' : 'search-x');
+		cardEl.createDiv({ cls: 'clew-empty-state-heading', text: kind === 'vault' ? 'No notes in this vault' : 'No notes found' });
+		cardEl.createDiv({
+			cls: 'clew-empty-state-sub',
+			text: kind === 'vault' ? 'Create a note to see it appear here.' : 'Your active filter has no matches.',
+		});
+		if (kind === 'filter') {
+			const resetButton = cardEl.createEl('button', { text: 'Reset filter' });
+			resetButton.addEventListener('click', () => {
+				for (const preset of this.plugin.settings.filterPresets) preset.enabled = false;
+				void this.plugin.saveSettings();
+				this.applyFilters();
+				if (this.filterPanelEl.isShown()) this.renderFilterPanel();
+			});
+		}
+		this.emptyStateEl.show();
 	}
 
 	/**

@@ -312,6 +312,20 @@ manual copy step. Then open `test-vault` in Obsidian and check:
   whether `noteContentCache` (still empty, since nothing had needed it
   yet) needed populating - the `text` criterion matched zero notes forever
   until some unrelated criteria edit happened to trigger a refresh.
+- **Empty state** (`showEmptyState()`/`updateEmptyState()` in graphPane.ts
+  - user feedback: an empty canvas with no explanation reads as broken):
+  a centered card, same floating-panel look as Filter/Legend, distinguishes
+  *why* nothing's shown. Open the graph on an empty vault (or temporarily
+  rename `test-vault`'s notes out of it) - "No notes in this vault" with a
+  file icon, no button (nothing actionable from inside the graph view).
+  With notes present, enable a filter whose criteria match nothing (e.g. a
+  `Filename` criterion for a string no note has) - "No notes found" with a
+  search-x icon and a "Reset filter" button; clicking it should disable
+  every enabled filter and bring the graph back. The vault-empty check
+  takes priority - if `this.files.length === 0`, that card shows even
+  with a filter also configured. Toggling a group in "Color & size…" alone
+  should never show this card - only Filter can hide *every* node (Color &
+  size only recolors, per its own docstring).
 - **Deterministic layout**: close and reopen the graph view (or reload the
   plugin) a few times - each note should *start* the force layout from the
   same position every time, so the settled result looks recognizably the
