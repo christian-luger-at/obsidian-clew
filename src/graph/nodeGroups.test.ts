@@ -148,6 +148,13 @@ describe('matchesGroup', () => {
 			const g = group({ criteria: [{ type: 'folder', folder: 'Archive' }] });
 			expect(matchesGroup(facts({ folder: 'Archive' }), g)).toBe(true);
 		});
+
+		it('a negated but still-unconfigured criterion matches nothing, not everything', () => {
+			expect(matchesGroup(facts({ folder: 'Anything' }), group({ criteria: [{ type: 'folder', folder: '', negate: true }] }))).toBe(false);
+			expect(matchesGroup(facts({ label: 'Anything' }), group({ criteria: [{ type: 'filename', query: '', negate: true }] }))).toBe(false);
+			expect(matchesGroup(facts({ content: 'anything' }), group({ criteria: [{ type: 'text', query: '', negate: true }] }))).toBe(false);
+			expect(matchesGroup(facts({ tags: ['#anything'] }), group({ criteria: [{ type: 'tag', tags: [], negate: true }] }))).toBe(false);
+		});
 	});
 
 	it('ANDs across every criterion', () => {

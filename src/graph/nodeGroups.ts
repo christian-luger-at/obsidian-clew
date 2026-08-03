@@ -258,8 +258,38 @@ function matchesCriterionValue(facts: NodeGroupFacts, criterion: GroupCriterion)
 	}
 }
 
-/** Include (default) or exclude - see GroupCriterion's own docstring for why `negate` lives here instead of on each of the 8 criterion types individually. */
+/**
+ * Whether `criterion` still has nothing meaningful to match against (e.g.
+ * an empty folder path, no tags picked) - matchesCriterionValue() already
+ * treats this as "doesn't match" on its own, but negate's `!value` flip
+ * below would otherwise turn that into "matches everything" for a
+ * half-built criterion the user hasn't finished typing into yet. staleDays/
+ * minLinks/clusterFreshness are never "unconfigured" (blankCriterion()
+ * always gives them a real default), so they're excluded here.
+ */
+function isCriterionUnconfigured(criterion: GroupCriterion): boolean {
+	switch (criterion.type) {
+		case 'folder':
+			return criterion.folder === '';
+		case 'filename':
+		case 'text':
+			return criterion.query.trim() === '';
+		case 'tag':
+			return criterion.tags.length === 0;
+		case 'property':
+			if (criterion.key === '') return true;
+			if (criterion.operator === 'isEmpty' || criterion.operator === 'isNotEmpty') return false;
+			return criterion.value.trim() === '';
+		case 'clusterFreshness':
+		case 'staleDays':
+		case 'minLinks':
+			return false;
+	}
+}
+
+/** Include (default) or exclude - see GroupCriterion's own docstring for why `negate` lives here instead of on each of the 8 criterion types individually. Unconfigured criteria always fail (see isCriterionUnconfigured()) regardless of `negate` - a half-built criterion shouldn't silently flip into "matches everything". */
 function matchesCriterion(facts: NodeGroupFacts, criterion: GroupCriterion): boolean {
+	if (isCriterionUnconfigured(criterion)) return false;
 	const value = matchesCriterionValue(facts, criterion);
 	return criterion.negate ? !value : value;
 }
