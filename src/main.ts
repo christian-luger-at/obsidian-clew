@@ -1,5 +1,5 @@
 import { Plugin, WorkspaceLeaf } from 'obsidian';
-import { DEFAULT_APPEARANCE_SETTINGS, ClewSettings } from './settings';
+import { DEFAULT_APPEARANCE_SETTINGS, DEFAULT_TIMELINE_SETTINGS, ClewSettings } from './settings';
 import { CLEW_STANDALONE_GRAPH_VIEW, StandaloneGraphView } from './graph/standaloneGraphView';
 import { FIND_PATH_ENABLED, GraphPane } from './graph/graphPane';
 
@@ -66,6 +66,7 @@ export default class ClewPlugin extends Plugin {
 			filterPresets: [...(loaded?.filterPresets ?? [])],
 			filterCombineMode: loaded?.filterCombineMode ?? 'or',
 			nodeGroups: [...(loaded?.nodeGroups ?? [])],
+			timeline: { ...DEFAULT_TIMELINE_SETTINGS, ...loaded?.timeline },
 		};
 	}
 

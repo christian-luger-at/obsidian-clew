@@ -2,6 +2,18 @@
 	position: relative;
 	width: 100%;
 	height: 100%;
+	/* Every panel below is absolutely positioned within this view, sized
+	   against its own width/height (`calc(100% - ...)`, `70vh`, etc.) - but
+	   nothing actually clipped overflow if one of them (a panel's own
+	   content, not the panel's box - `.clew-timeline-panel` specifically,
+	   see its own comment below) still ended up taller/wider than that in
+	   a narrow or short graph pane. Without this, that overflow leaked out
+	   into Obsidian's own workspace-leaf scroll container, showing up as
+	   the OS's auto-hide scrollbars flashing in on every drag/pan (macOS's
+	   default "show scrollbars: on interaction" setting) - user-reported,
+	   traced to the newly added Timeline panel specifically lacking the
+	   max-height/overflow-y every other panel already had. */
+	overflow: hidden;
 }
 
 .clew-graph-canvas {
@@ -549,6 +561,99 @@
 
 .clew-appearance-panel-header h4 {
 	margin: 0;
+}
+
+/* Bottom-center scrubber bar - its own horizontal region rather than
+   another corner panel like Filter/Color & size/Appearance, since a
+   timeline reads more like a video player's transport controls than a
+   settings list (see toggleTimelinePanel()'s docstring in graphPane.ts).
+   Sits centered along the bottom edge, between .clew-legend (bottom-left)
+   and .clew-appearance-panel (bottom-right). */
+.clew-timeline-panel {
+	position: absolute;
+	bottom: var(--size-4-2);
+	left: 50%;
+	transform: translateX(-50%);
+	z-index: 10;
+	/* Shorter (less padding, no header/description) than the first version
+	   (user feedback: it covered too much of the graph), but wide enough
+	   for the row's two dropdowns + date label to leave the scrubber
+	   itself a usable length - a first attempt at narrowing this too
+	   (420px) left almost nothing for the scrubber once the pace-mode
+	   dropdown was added (user feedback: "der Dialog ist jetzt zu kurz",
+	   i.e. the *scrubber*, not the panel's own footprint). */
+	width: 520px;
+	max-width: calc(100% - var(--size-4-4));
+	/* Missing on this panel specifically (every sibling panel below has
+	   its own max-height/overflow-y) was the actual root cause of the
+	   scrollbar bug .clew-graph-view's own overflow:hidden above now also
+	   guards against more generally - its content (description text +
+	   controls) could exceed the space between `bottom` and the top of a
+	   short graph pane with nothing to cap or scroll it. */
+	max-height: calc(100% - var(--size-4-4));
+	overflow-y: auto;
+	padding: var(--size-4-2);
+	background: var(--background-primary);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-m);
+	box-shadow: var(--shadow-s);
+}
+
+/* Same icon-hover-contrast fix as .clew-filter-panel's own rule above -
+   Obsidian's default .clickable-icon:hover barely changes the icon color
+   against this panel's own background (see that rule's docstring for the
+   original user-reported bug this addresses). */
+.clew-timeline-panel .clickable-icon:hover {
+	color: var(--text-normal);
+}
+
+.clew-timeline-row {
+	display: flex;
+	align-items: center;
+	gap: var(--size-4-2);
+}
+
+/* The only child allowed to change size as the row's content changes -
+   every other child (buttons, .clew-timeline-date, the duration dropdown)
+   gets flex-shrink: 0 below, so only the scrubber's own length reacts to
+   available space, never anyone else's. */
+.clew-timeline-row > * {
+	flex-shrink: 0;
+}
+
+.clew-timeline-scrubber {
+	flex: 1 1 auto;
+	/* A floor so it can't be squeezed down to a sliver by the row's other
+	   (fixed-width) children on a narrow pane - the panel's own width
+	   above should stretch/wrap first (max-width already caps it at the
+	   available space either way). */
+	min-width: 120px;
+}
+
+/* Nothing to replay - every note shares essentially one ctime (see
+   renderTimelinePanel()'s timelineSteps.length < 2 branch). Dimmed rather
+   than hidden, so the controls' layout doesn't jump once there *is*
+   something to animate (e.g. after a new note is created). */
+.clew-timeline-scrubber:disabled,
+.clew-timeline-row .clickable-icon:disabled {
+	opacity: 0.4;
+	cursor: not-allowed;
+}
+
+/* Inline in .clew-timeline-row now (not its own line below the controls) -
+   a fixed (not min-) width, sized for the longest realistic value ("Sep
+   30, 2026") - user feedback: min-width alone still let a longer date
+   grow past it and visibly shrink .clew-timeline-scrubber (the row's only
+   flexible child, `flex: 1 1 auto`) to make room, changing the scrubber's
+   own length as playback/scrubbing changes the date shown. flex-shrink: 0
+   so the row's flexbox math can't override this fixed width either. */
+.clew-timeline-date {
+	flex: 0 0 7em;
+	width: 7em;
+	font-size: var(--font-ui-smaller);
+	color: var(--text-muted);
+	white-space: nowrap;
+	text-align: right;
 }
 
 /** Shared by every Clew modal that explains what it does under its title (RadialLayoutModal, PathfindingModal, ...). */

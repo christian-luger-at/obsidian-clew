@@ -1,5 +1,6 @@
 import { FilterCombineMode, FilterPreset } from './graph/filter';
 import { NodeGroup } from './graph/nodeGroups';
+import { DEFAULT_TIMELINE_DURATION, DEFAULT_TIMELINE_PACE_MODE, TimelineDuration, TimelinePaceMode } from './graph/timeline';
 
 export interface PinnedPosition {
 	x: number;
@@ -155,4 +156,24 @@ export interface ClewSettings {
 	 * *enabled*, independent of the panel being open.
 	 */
 	nodeGroups: NodeGroup[];
+	/**
+	 * The Timeline panel's own duration/pace-mode picks (see
+	 * graph/timeline.ts) - user feedback: these should persist across
+	 * restarts like every other panel's saved state (filterPresets,
+	 * nodeGroups, ...), not reset to their defaults every time the graph
+	 * view reopens. The scrubber's own position isn't included - that's
+	 * always session state (see GraphPane.toggleTimelinePanel()'s
+	 * docstring: opening the panel always starts at the beginning).
+	 */
+	timeline: ClewTimelineSettings;
 }
+
+export interface ClewTimelineSettings {
+	totalDuration: TimelineDuration;
+	paceMode: TimelinePaceMode;
+}
+
+export const DEFAULT_TIMELINE_SETTINGS: ClewTimelineSettings = {
+	totalDuration: DEFAULT_TIMELINE_DURATION,
+	paceMode: DEFAULT_TIMELINE_PACE_MODE,
+};

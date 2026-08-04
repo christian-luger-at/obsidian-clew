@@ -263,6 +263,80 @@ manual copy step. Then open `test-vault` in Obsidian and check:
   colorable by any group whose criteria it happens to match (e.g. a
   `filename`/`tag`/`property` criterion) - Louvain still assigns it its own
   single-note community, so a `clusterFreshness` criterion can match it too.
+- **Timeline** (history icon, opens a compact bottom-center row - Play,
+  scrubber, date, duration, an (i) tooltip carrying the ctime-only-
+  approximation explanation, Close - see `timeline.ts`'s docstring for
+  that approximation and why: Obsidian records no history of when a link
+  was actually added, only each file's own `ctime`/`mtime`, same
+  limitation as core Obsidian's own Graph View "Animate" toggle. User
+  feedback: an earlier version had a header + permanent description
+  paragraph + controls, "überdeckt viel wertvolle Fläche" - now a single
+  row). **Open it: the scrubber should start at the far left (the oldest
+  note), not "today"** - user feedback, matching a video player's own
+  convention (starts at 0:00) - and the graph should immediately narrow
+  down to just the earliest note(s), not stay showing everything. Drag
+  the scrubber right: notes/edges should appear in creation order -
+  `test-vault`'s backdated `Old Cluster A/B/C` notes should be the first
+  ones to show. **New notes/edges should visibly grow in, not just pop in
+  at full size** (user feedback) - drag the scrubber past one and confirm
+  it briefly grows from small to full size (~400ms, `TIMELINE_FADE_MS` in
+  graphPane.ts) rather than appearing instantly; scrubbing back and forth
+  over the same note repeatedly should re-trigger the grow-in each time,
+  not just the first. **Playback is paced by distinct creation moments,
+  not calendar days** (see `timeline.ts`'s `computeTimelineSteps()`/
+  `cursorForElapsed()` docstrings - discovered testing against
+  `test-vault` itself: most of its notes share one ctime,
+  `gen-test-vault.mjs`'s own run, with only `Old Cluster A/B/C`/`Medium
+  Age A/B` backdated - pacing by calendar days spent ~27 of a 30-second
+  playthrough crawling through that sparse backdated tail, then revealed
+  all 14 same-ctime notes in a single instant, reading as "Play does
+  nothing"). Press Play: the duration dropdown ("10s"/"30s"/"1 min"/
+  "3 min") is how long the *whole* replay takes, always, regardless of the
+  vault's real date spread - `test-vault` has 7 distinct creation moments,
+  so at "10s" each is ~1.4s apart, evenly, not weighted by the ~200-day
+  gap between the oldest cluster and everything else. Confirm the graph
+  visibly changes at roughly even intervals throughout the whole duration,
+  not just at the very end. **Pace mode toggle** (the ⚡/📅 icon, user
+  feedback: the jump-y date this even pacing produces "kann sehr
+  verwirrend sein" for some vaults - see `timeline.ts`'s
+  `TimelinePaceMode` docstring): click it mid-playthrough - the graph
+  should keep animating continuously through the switch, not jump or
+  restart. In "real calendar time" mode, confirm playback instead spends
+  time proportional to each gap - `test-vault`'s ~200-day span should
+  crawl through the ~185-day gap before `Medium Age A/B` slowly, then
+  reveal the 14 same-ctime notes in a near-instant burst at the very end
+  (the exact behavior "steps" mode was built to avoid - both are
+  legitimate depending on what the vault's own date spread looks like).
+  Pause and resume mid-playthrough (in either mode) - should continue
+  from the same position, not jump. **Persistence** (user feedback -
+  settings.ts's `ClewTimelineSettings`, not session-only state): default
+  pace mode is "Real time"; change the duration and pace-mode dropdowns,
+  reload the plugin (or restart Obsidian) - reopening the Timeline panel
+  should show the picks you left, not the defaults. The scrubber's own
+  position is *not* persisted - it always starts at the beginning on open
+  (see toggleTimelinePanel()'s docstring), by design. **Toolbar icon
+  highlight**: open the panel (icon should highlight) and let a
+  playthrough finish (cursor back at "today") - the icon should *stay*
+  highlighted the whole time the panel is open, not lose its highlight
+  once nothing is actually being filtered anymore (a real bug this exact
+  scenario caught - see updateTimelineButtonState()'s docstring). **A
+  vault where every note
+  shares one ctime** (a single distinct creation moment): the Play button
+  and scrubber should be disabled with an explanatory note ("Every note
+  here was created at essentially the same time") rather than a Play
+  button that silently does nothing - construct one by touching every
+  file in a fresh vault at once (e.g. `touch` from a shell), not via
+  `gen-test-vault.mjs` (which always backdates a few notes).
+  **Interrupts, doesn't combine with, Filter**: enable a filter first,
+  then scrub the timeline - the filter's own hidden notes should reappear
+  (the timeline reducer takes over outright, matching how Find path/
+  Filter already override each other in this file) rather than the two
+  combining. Scrub all the way right to "today" (or close the panel, which
+  snaps the cursor there directly) - the original filter should resume
+  controlling visibility. **Vault refresh mid-playback**: start playback,
+  then create a new note - playback should stop (not animate against a
+  now-stale file set) and the slider's range should silently extend to
+  cover the new note's `ctime` next time the panel is reopened.
 - **Filter** (funnel icon, opens a panel that drops down directly below the
   icon rail - not positioned like "Appearance…", with its own "x" to
   close): same create/edit/delete/enable list architecture as "Color &

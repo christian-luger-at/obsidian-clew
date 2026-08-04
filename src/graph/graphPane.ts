@@ -33,7 +33,35 @@ import {
 	StringOperator,
 } from './nodeGroups';
 import { ClewAppearanceSettings, DEFAULT_APPEARANCE_SETTINGS } from '../settings';
+import {
+	computeTimelineBounds,
+	computeTimelineSteps,
+	cursorForElapsed,
+	cursorForElapsedByCalendar,
+	stepIndexAtOrBefore,
+	TimelineBounds,
+	TimelineDuration,
+	TIMELINE_DURATIONS,
+	TimelinePaceMode,
+	visibleEdgesAt,
+	visibleNodesAt,
+} from './timeline';
 import type ClewPlugin from '../main';
+
+/** Real time between timeline playback ticks - not every rAF frame (~16ms): rebuilding the visible node/edge sets is a full graph pass, and a step-paced animation doesn't need 60fps smoothness anyway. Same reasoning/precedent as the 150ms camera-refit interval below. */
+const TIMELINE_TICK_MS = 200;
+
+/** How long a newly-revealed node/edge grows in over, instead of popping in at full size instantly (user feedback) - real wall-clock time, independent of the chosen playback duration, since a fade this short should read the same regardless of how fast the timeline itself is playing. */
+const TIMELINE_FADE_MS = 400;
+/** How often the fade ticker forces a re-render while anything is still growing in - Sigma reducers re-run on every refresh() on their own, this just needs to happen more often than TIMELINE_TICK_MS for the fade to read as smooth motion rather than a couple of visible jumps. */
+const TIMELINE_FADE_TICK_MS = 30;
+
+/** "10s"/"30s"/"1 min"/"3 min" - TIMELINE_DURATIONS is always whole seconds, some of them >= 60. */
+function formatTimelineDuration(seconds: number): string {
+	if (seconds < 60) return `${seconds}s`;
+	const minutes = seconds / 60;
+	return `${minutes} min`;
+}
 
 /** Wall-clock budget for the initial force-layout settle when a graph is (re)built - not user-tunable (unlike gravity/scalingRatio), since a longer settle mostly just delays interactivity rather than visibly improving the result. */
 const SETTLE_DURATION_MS = 2000;
@@ -449,6 +477,43 @@ export class GraphPane {
 	/** Remembers the radial layout's chosen focus note so an appearance-panel change can re-apply it (reapplyActiveLayout()) without re-prompting for a note. */
 	private radialFocusNode: string | null = null;
 
+	/**
+	 * ctime-based time-lapse (see timeline.ts's docstring for the
+	 * ctime-only approximation this makes). Its own bottom-center scrubber
+	 * bar rather than sharing the Filter/Color & size/Appearance panel
+	 * system - see toggleTimelinePanel()'s docstring for why it doesn't
+	 * need closeOtherPanels().
+	 */
+	private readonly timelineButton: HTMLButtonElement;
+	private readonly timelinePanelEl: HTMLElement;
+	private timelinePlayButton!: HTMLButtonElement;
+	private timelineScrubberEl: HTMLInputElement | null = null;
+	private timelineDateLabelEl!: HTMLElement;
+	/** Note ctimes for the current file set - refreshed in setFiles(), same lifecycle as mtimeByPath above. */
+	private ctimeByPath = new Map<string, number>();
+	/** null exactly when there are no notes at all (see timeline.ts's computeTimelineBounds()) - the toolbar button/panel are inert until setFiles() populates this. */
+	private timelineBounds: TimelineBounds | null = null;
+	/** Every distinct ctime present, ascending (see timeline.ts's computeTimelineSteps()) - what playback paces through, refreshed alongside timelineBounds in setFiles(). */
+	private timelineSteps: number[] = [];
+	/** ms-epoch playback position - `timelineBounds.end` ("today") is the deliberate at-rest value; applyTimeline() treats that as a no-op, see its own docstring. */
+	private timelineCursor = 0;
+	// timelineTotalDuration/timelinePaceMode themselves live in
+	// plugin.settings.timeline, not as fields here - user feedback: these
+	// (the duration/pace-mode dropdowns' picks) should persist across
+	// restarts the same as every other panel's saved state
+	// (filterPresets, nodeGroups, ...), not reset to their defaults every
+	// time the graph view reopens. See settings.ts's ClewTimelineSettings.
+	private timelinePlaying = false;
+	private timelineIntervalId: number | null = null;
+	/** Date.now() offset such that `(Date.now() - timelinePlaybackStartedAt) / 1000` is the correct "elapsed" argument for cursorForElapsed() - set once when playback (re)starts (see startTimelinePlayback()), not tracked per-tick, so ticks never accumulate drift. */
+	private timelinePlaybackStartedAt = 0;
+	/** The node/edge ids applyTimeline() last made visible - compared against on the next call to find newly-revealed ones (see timelineAppearedAt) rather than re-fading everything already on screen. */
+	private timelineVisibleNodes = new Set<string>();
+	private timelineVisibleEdges = new Set<string>();
+	/** Date.now() a node/edge id first became visible - drives timelineFadeProgress()'s grow-in (user feedback: new notes/links should visibly appear, not just instantly be there). Shared by node and edge ids since graphology keys them separately and this is only ever looked up by the id the caller already knows the kind of. */
+	private timelineAppearedAt = new Map<string, number>();
+	private timelineFadeIntervalId: number | null = null;
+
 	constructor(
 		private readonly app: App,
 		private readonly containerEl: HTMLElement,
@@ -546,6 +611,13 @@ export class GraphPane {
 			findPathButton.addEventListener('click', () => this.openPathfindingModal());
 		}
 
+		// Chat decision, 2026-08-04: a ctime-based time-lapse instead of the
+		// full "real time slider" backlog item (GitHub issue #6, which needs
+		// a background snapshot index that doesn't exist yet) - see
+		// timeline.ts's docstring for the approximation this makes.
+		this.timelineButton = iconButton('history', 'Timeline…');
+		this.timelineButton.addEventListener('click', () => this.toggleTimelinePanel());
+
 		this.appearanceButton = iconButton('sliders-horizontal', 'Appearance…');
 		this.appearanceButton.addEventListener('click', () => this.toggleAppearancePanel());
 
@@ -575,6 +647,13 @@ export class GraphPane {
 		this.appearancePanelEl = this.containerEl.createDiv({ cls: 'clew-appearance-panel' });
 		this.appearancePanelEl.hide();
 
+		// Bottom-center - a horizontal scrubber bar, not another corner
+		// panel, so it doesn't compete with Filter/Color & size/Appearance
+		// for space (see toggleTimelinePanel()'s docstring for why it also
+		// doesn't need closeOtherPanels()).
+		this.timelinePanelEl = this.containerEl.createDiv({ cls: 'clew-timeline-panel' });
+		this.timelinePanelEl.hide();
+
 		this.containerEl.addEventListener('click', () => {
 			GraphPane.active = this;
 		});
@@ -591,9 +670,25 @@ export class GraphPane {
 		this.panelEl.hide();
 		this.activateLayoutMode('force');
 		this.pathResultActive = false;
+		// A vault refresh mid-playback (a note created/edited while playing)
+		// would otherwise keep animating against a file set/graph that no
+		// longer matches what's about to be rebuilt below.
+		this.stopTimelinePlayback();
+		this.stopTimelineFadeTicker();
+		this.timelineVisibleNodes = new Set();
+		this.timelineVisibleEdges = new Set();
+		this.timelineAppearedAt.clear();
 
 		this.files = files;
 		this.mtimeByPath = new Map(files.map((file) => [file.path, file.stat.mtime]));
+		this.ctimeByPath = new Map(files.map((file) => [file.path, file.stat.ctime]));
+		this.timelineBounds = computeTimelineBounds(this.ctimeByPath);
+		this.timelineSteps = computeTimelineSteps(this.ctimeByPath);
+		// Back to "today" - see timelineCursor's own docstring. Rebuilding
+		// the panel (if it was left open across this refresh) keeps its
+		// slider bounds/value in sync rather than showing stale ones.
+		this.timelineCursor = this.timelineBounds?.end ?? 0;
+		if (this.timelinePanelEl.isShown()) this.renderTimelinePanel();
 		this.refreshCriteriaOptions();
 		this.graph = buildVaultGraph(this.app, files, {
 			directed: false,
@@ -954,7 +1049,317 @@ export class GraphPane {
 		else this.reapplyActiveLayout();
 	}
 
+	/**
+	 * Reveals the Timeline panel or hides it - unlike
+	 * toggleFilterPanel()/toggleColorAndSizePanel()/toggleAppearancePanel(),
+	 * doesn't call closeOtherPanels(): the Timeline bar lives bottom-center,
+	 * a screen region none of those three occupy, so there's no space
+	 * conflict to resolve. Closing it always snaps back to "today"
+	 * (timelineCursor = timelineBounds.end) rather than leaving it wherever
+	 * it was mid-scrub - reopening later should start from a predictable
+	 * state, not silently resume a stale position.
+	 */
+	private toggleTimelinePanel(): void {
+		if (this.timelinePanelEl.isShown()) {
+			this.stopTimelinePlayback();
+			this.timelinePanelEl.hide();
+			if (this.timelineBounds) this.timelineCursor = this.timelineBounds.end;
+		} else {
+			if (!this.timelineBounds) return;
+			// The start of the vault's history, not "today" (user feedback:
+			// opening the panel used to leave the scrubber at rest on the
+			// far right, since that's the no-op position - but the natural
+			// thing to want on opening a *timeline* is to see the beginning,
+			// ready to press Play, the same convention a video player uses).
+			this.timelineCursor = this.timelineRestCursor(this.timelineBounds);
+			this.renderTimelinePanel();
+			this.timelinePanelEl.show();
+		}
+		this.applyTimeline();
+	}
+
+	/**
+	 * One compact row (user feedback: the previous header+description+
+	 * controls layout took up too much of the graph) - Play, scrubber,
+	 * date, duration, an (i) tooltip carrying the explanation that used to
+	 * be a permanent paragraph, then Close. Rebuilt from scratch each time
+	 * the panel opens (same reasoning as renderAppearancePanel()) so its
+	 * slider bounds/value always reflect the current file set, not a stale
+	 * one from before the last setFiles().
+	 */
+	private renderTimelinePanel(): void {
+		this.timelinePanelEl.empty();
+		const bounds = this.timelineBounds;
+		if (!bounds) return;
+
+		const rowEl = this.timelinePanelEl.createDiv({ cls: 'clew-timeline-row' });
+
+		this.timelinePlayButton = rowEl.createEl('button', { cls: 'clickable-icon' });
+		this.updateTimelinePlayButton();
+		this.timelinePlayButton.disabled = this.timelineSteps.length < 2;
+		this.timelinePlayButton.addEventListener('click', () => this.toggleTimelinePlayback());
+
+		// A plain native range input, not Obsidian's SliderComponent - full
+		// control over exactly what's in the DOM here (no ambiguity about
+		// what Obsidian's own wrapper might render alongside it), and day-
+		// granularity ms-epoch values are small/simple enough to not need
+		// SliderComponent's dynamic-tooltip machinery anyway (this.timelineDateLabelEl
+		// below already shows a real date, not a raw number).
+		const scrubber = rowEl.createEl('input', { cls: 'clew-timeline-scrubber' });
+		scrubber.type = 'range';
+		scrubber.min = String(this.timelineRestCursor(bounds));
+		scrubber.max = String(bounds.end);
+		scrubber.step = '1';
+		scrubber.value = String(this.timelineCursor);
+		scrubber.disabled = bounds.start === bounds.end;
+		scrubber.addEventListener('input', () => {
+			this.stopTimelinePlayback();
+			this.timelineCursor = Number(scrubber.value);
+			this.applyTimeline();
+		});
+		this.timelineScrubberEl = scrubber;
+
+		this.timelineDateLabelEl = rowEl.createDiv({ cls: 'clew-timeline-date' });
+		this.updateTimelineDateLabel();
+
+		const durationDropdown = new DropdownComponent(rowEl);
+		for (const duration of TIMELINE_DURATIONS) durationDropdown.addOption(String(duration), formatTimelineDuration(duration));
+		durationDropdown.setValue(String(this.plugin.settings.timeline.totalDuration)).onChange((value) => {
+			this.plugin.settings.timeline.totalDuration = Number(value) as TimelineDuration;
+			void this.plugin.saveSettings();
+		});
+
+		// A labeled dropdown, not an icon toggle (user feedback: the earlier
+		// ⚡/📅 icons "sind total verwirrend" - words read unambiguously
+		// where an icon needs a tooltip to explain itself).
+		const paceModeDropdown = new DropdownComponent(rowEl);
+		paceModeDropdown.addOption('steps', 'Even pace');
+		paceModeDropdown.addOption('calendar', 'Real time');
+		paceModeDropdown.setValue(this.plugin.settings.timeline.paceMode).onChange((value) => {
+			this.plugin.settings.timeline.paceMode = value as TimelinePaceMode;
+			void this.plugin.saveSettings();
+			// Changing the pace mode mid-playthrough would otherwise jump
+			// the cursor (the two modes' "how far along" fractions read
+			// differently against the same real elapsed time) - restarting
+			// from the current position keeps it visually continuous.
+			// stopTimelinePlayback() first: startTimelinePlayback() doesn't
+			// clear an existing interval on its own, since it's normally
+			// only ever called while not already playing (see
+			// toggleTimelinePlayback()).
+			if (this.timelinePlaying) {
+				this.stopTimelinePlayback();
+				this.startTimelinePlayback();
+			}
+		});
+
+		const closeButton = rowEl.createEl('button', { cls: 'clickable-icon' });
+		setIcon(closeButton, 'x');
+		setTooltip(closeButton, 'Close');
+		closeButton.addEventListener('click', () => this.toggleTimelinePanel());
+
+		if (this.timelineSteps.length < 2) {
+			this.timelinePanelEl.createEl('p', {
+				cls: 'clew-filter-empty-note',
+				text: 'Every note here was created at essentially the same time - nothing to replay yet.',
+			});
+		}
+	}
+
+	private updateTimelinePlayButton(): void {
+		setIcon(this.timelinePlayButton, this.timelinePlaying ? 'pause' : 'play');
+		setTooltip(this.timelinePlayButton, this.timelinePlaying ? 'Pause' : 'Play');
+	}
+
+	private updateTimelineDateLabel(): void {
+		if (!this.timelineDateLabelEl || !this.timelineBounds) return;
+		const atToday = this.timelineCursor >= this.timelineBounds.end;
+		this.timelineDateLabelEl.setText(atToday ? 'Today' : new Date(this.timelineCursor).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }));
+	}
+
+	/**
+	 * Unlike filterButton (see its own docstring, tracking "is a filter
+	 * enabled" independent of the panel) - tied to the panel simply being
+	 * open. A bug in an earlier version tracked "is the timeline actually
+	 * holding something back right now" instead, which meant the icon lost
+	 * its highlight the moment playback reached "today" (cursor no longer
+	 * < end), even with the panel still open and clearly in "Timeline
+	 * mode" - user-reported.
+	 */
+	private updateTimelineButtonState(): void {
+		this.timelineButton.toggleClass('is-active', this.timelinePanelEl.isShown());
+	}
+
+	/**
+	 * `bounds.start` itself is the earliest note's own ctime, so a cursor
+	 * *at* it (`ctime <= cursor` in timeline.ts's visibleNodesAt()) already
+	 * matches that note - user feedback: with the scrubber sitting at the
+	 * very left, before ever touching Play, that note (and any edges to
+	 * other notes sharing its ctime) was already visible, at full size,
+	 * with no grow-in. One ms earlier makes "all the way left" mean
+	 * "before anything existed" instead, matching a video player's own 0:00
+	 * convention - the very first note only appears once the scrubber (or
+	 * playback) actually moves off that leftmost position, same as every
+	 * later one.
+	 */
+	private timelineRestCursor(bounds: TimelineBounds): number {
+		return bounds.start - 1;
+	}
+
+	/**
+	 * Re-derives which nodes/edges are "born" by timelineCursor and hides
+	 * the rest. At "today" (timelineCursor === timelineBounds.end) this is
+	 * a deliberate no-op that hands the reducer back to applyFilter()
+	 * instead - opening the Timeline panel, or playback simply finishing,
+	 * never changes what's on screen on its own.
+	 *
+	 * Mutually exclusive with Filter/Find-path/Stagnation the same way
+	 * those are already mutually exclusive with each other in this file -
+	 * whichever applyX() ran last owns nodeReducer/edgeReducer outright,
+	 * no composition. Scrubbing the timeline overrides an active filter
+	 * rather than combining with it; returning to "today" hands control
+	 * straight back to applyFilter(), which is exactly what a scrub away
+	 * from "today" had silently overridden.
+	 */
+	private applyTimeline(): void {
+		this.updateTimelineButtonState();
+		this.updateTimelineDateLabel();
+		if (this.timelineScrubberEl) this.timelineScrubberEl.value = String(this.timelineCursor);
+		if (!this.graph || !this.timelineBounds) return;
+
+		if (this.timelineCursor >= this.timelineBounds.end) {
+			this.stopTimelineFadeTicker();
+			this.timelineVisibleNodes = new Set();
+			this.timelineVisibleEdges = new Set();
+			this.timelineAppearedAt.clear();
+			this.applyFilter();
+			return;
+		}
+
+		this.pathResultActive = false;
+		this.panelEl.empty();
+		this.panelEl.hide();
+
+		const visibleNodes = visibleNodesAt(this.ctimeByPath, this.timelineCursor);
+		const visibleEdges = visibleEdgesAt(this.graph, this.ctimeByPath, this.timelineCursor);
+
+		// Grow-in (user feedback: new notes/links should visibly appear, not
+		// just instantly be there) - only nodes/edges just now crossing from
+		// hidden to visible get stamped, so scrubbing within an already-
+		// revealed range doesn't re-fade everything already on screen.
+		const now = Date.now();
+		for (const node of visibleNodes) if (!this.timelineVisibleNodes.has(node)) this.timelineAppearedAt.set(node, now);
+		for (const edge of visibleEdges) if (!this.timelineVisibleEdges.has(edge)) this.timelineAppearedAt.set(edge, now);
+		this.timelineVisibleNodes = visibleNodes;
+		this.timelineVisibleEdges = visibleEdges;
+		this.startTimelineFadeTicker();
+
+		this.renderer?.setSetting('nodeReducer', (node, attr) => {
+			if (!visibleNodes.has(node)) return { ...attr, hidden: true };
+			const fade = this.timelineFadeProgress(node);
+			if (fade >= 1) return attr;
+			return { ...attr, size: ((attr.size as number | undefined) ?? 1) * fade };
+		});
+		this.renderer?.setSetting('edgeReducer', (edge, attr) => {
+			if (!visibleEdges.has(edge)) return { ...attr, hidden: true };
+			const fade = this.timelineFadeProgress(edge);
+			if (fade >= 1) return attr;
+			return { ...attr, size: ((attr.size as number | undefined) ?? 1) * fade };
+		});
+		this.renderLegend();
+	}
+
+	/** 0-1 growth progress for a node/edge id, based on how long ago timelineAppearedAt recorded it becoming visible - 1 (full size) once TIMELINE_FADE_MS has passed, or for anything not currently mid-fade at all. Floored well above 0 rather than starting at literally 0: a node that's shrunk to nothing isn't just invisible, it's also unclickable/unhoverable for that first instant, which reads as a glitch rather than a fade. */
+	private timelineFadeProgress(id: string): number {
+		const appearedAt = this.timelineAppearedAt.get(id);
+		if (appearedAt === undefined) return 1;
+		const elapsed = Date.now() - appearedAt;
+		if (elapsed >= TIMELINE_FADE_MS) return 1;
+		return Math.max(0.15, elapsed / TIMELINE_FADE_MS);
+	}
+
+	/** Sigma reducers already re-run on every refresh() on their own - this just forces refreshes often enough, for as long as anything in timelineAppearedAt is still within its fade window, for that to read as smooth growth rather than a couple of visible jumps. Self-stopping: the last tick that finds nothing still fading clears its own interval. */
+	private startTimelineFadeTicker(): void {
+		if (this.timelineFadeIntervalId !== null) return;
+		this.timelineFadeIntervalId = window.setInterval(() => {
+			this.renderer?.refresh();
+			const now = Date.now();
+			let stillFading = false;
+			for (const appearedAt of this.timelineAppearedAt.values()) {
+				if (now - appearedAt < TIMELINE_FADE_MS) {
+					stillFading = true;
+					break;
+				}
+			}
+			if (!stillFading) this.stopTimelineFadeTicker();
+		}, TIMELINE_FADE_TICK_MS);
+	}
+
+	private stopTimelineFadeTicker(): void {
+		if (this.timelineFadeIntervalId !== null) {
+			window.clearInterval(this.timelineFadeIntervalId);
+			this.timelineFadeIntervalId = null;
+		}
+	}
+
+	private toggleTimelinePlayback(): void {
+		if (this.timelinePlaying) this.stopTimelinePlayback();
+		else this.startTimelinePlayback();
+	}
+
+	/**
+	 * Resumes from wherever timelineCursor already sits (mid-scrub) rather
+	 * than always restarting from the very beginning - computed by finding
+	 * that position's own "how far along" fraction (step index in 'steps'
+	 * mode, real date position in 'calendar' mode - see
+	 * timelinePaceMode's own docstring) and converting it back to an
+	 * equivalent "elapsed" offset, so a mid-playthrough Pause/Play doesn't
+	 * jump anywhere. Once a full playthrough has already reached "today",
+	 * though, Play restarts from the beginning instead of doing nothing.
+	 */
+	private startTimelinePlayback(): void {
+		if (!this.timelineBounds || this.timelineSteps.length < 2) return;
+		if (this.timelineCursor >= this.timelineBounds.end) this.timelineCursor = this.timelineRestCursor(this.timelineBounds);
+
+		const fractionAlready =
+			this.plugin.settings.timeline.paceMode === 'steps'
+				? Math.max(0, stepIndexAtOrBefore(this.timelineSteps, this.timelineCursor)) / this.timelineSteps.length
+				: (this.timelineCursor - this.timelineBounds.start) / (this.timelineBounds.end - this.timelineBounds.start || 1);
+		const startOffsetS = fractionAlready * this.plugin.settings.timeline.totalDuration;
+		this.timelinePlaybackStartedAt = Date.now() - startOffsetS * 1000;
+
+		this.timelinePlaying = true;
+		this.updateTimelinePlayButton();
+		this.timelineIntervalId = window.setInterval(() => this.tickTimelinePlayback(), TIMELINE_TICK_MS);
+	}
+
+	private stopTimelinePlayback(): void {
+		if (this.timelineIntervalId !== null) {
+			window.clearInterval(this.timelineIntervalId);
+			this.timelineIntervalId = null;
+		}
+		if (this.timelinePlaying) {
+			this.timelinePlaying = false;
+			this.updateTimelinePlayButton();
+		}
+	}
+
+	private tickTimelinePlayback(): void {
+		if (!this.timelineBounds || this.timelineSteps.length < 2) {
+			this.stopTimelinePlayback();
+			return;
+		}
+		const elapsedS = (Date.now() - this.timelinePlaybackStartedAt) / 1000;
+		this.timelineCursor =
+			this.plugin.settings.timeline.paceMode === 'steps'
+				? cursorForElapsed(this.timelineSteps, elapsedS, this.plugin.settings.timeline.totalDuration)
+				: cursorForElapsedByCalendar(this.timelineBounds, elapsedS, this.plugin.settings.timeline.totalDuration);
+		this.applyTimeline();
+		if (elapsedS >= this.plugin.settings.timeline.totalDuration) this.stopTimelinePlayback();
+	}
+
 	destroy(): void {
+		this.stopTimelinePlayback();
+		this.stopTimelineFadeTicker();
 		this.layout?.stop();
 		this.renderer?.kill();
 		if (GraphPane.active === this) GraphPane.active = null;
