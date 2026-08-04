@@ -1,0 +1,28 @@
+# FAQ & troubleshooting
+
+## Does Clew change my notes?
+
+No. Filters, Color & size groups, appearance settings, and pinned positions are all Clew's own saved state for the vault - separate from your note content, and never written into your notes' frontmatter or body.
+
+## Nothing shows in the graph
+
+Two possible reasons, and Clew tells you which:
+
+- **The vault has no notes at all** - the graph shows a card saying so.
+- **An active filter matches nothing** - the graph shows a different card, with a "Reset filter" button. See [Filter](../guide/filter).
+
+## A note isn't where I left it
+
+If you dragged it to pin it, switching layouts and back to Force should restore it - pinning only applies in Force layout (see [Interacting with the graph](../guide/interactions)). If it's still not where you expect, check the [Appearance panel](../guide/appearance)'s "Pinned node positions" - "Clear all" resets every pin, in case one was pinned unintentionally.
+
+## Where's "Find path"?
+
+Finding the shortest, hub-avoiding path between two notes (and exporting it to a Canvas file) is built but not switched on yet - see the note in the [README](https://github.com/christian-luger-at/obsidian-clew#what-you-can-do).
+
+## Is my vault too big for this?
+
+Force layout scales to large vaults (it switches to an approximate physics algorithm above a node-count threshold). Hierarchical layout doesn't scale the same way and disables itself above a note-count threshold - the [layout picker](../guide/layouts) shows this directly on its row when it applies.
+
+## I found a bug / have a feature request
+
+Please [open an issue](https://github.com/christian-luger-at/obsidian-clew/issues) - see the [README](https://github.com/christian-luger-at/obsidian-clew#support) for details.

@@ -20,7 +20,11 @@
 		"release:major": "bash release.sh --bump major --publish",
 		"spike:build": "node spike/esbuild.mjs",
 		"gen-test-vault": "node scripts/gen-test-vault.mjs",
-		"sync-private-vault": "bash scripts/sync-private-vault.sh"
+		"sync-private-vault": "bash scripts/sync-private-vault.sh",
+		"docs:dev": "vitepress dev docs",
+		"docs:build": "vitepress build docs",
+		"docs:preview": "vitepress preview docs",
+		"docs:shots": "node scripts/screenshots.mjs"
 	},
 	"keywords": [],
 	"license": "0-BSD",
@@ -34,8 +38,10 @@
 		"globals": "^17.6.0",
 		"jiti": "^2.6.1",
 		"obsidian": "latest",
+		"playwright-core": "^1.62.1",
 		"typescript": "^5.8.3",
 		"typescript-eslint": "^8.59.1",
+		"vitepress": "^1.6.4",
 		"vitest": "^4.1.10"
 	},
 	"dependencies": {

@@ -7,20 +7,28 @@
 [![Coverage](https://raw.githubusercontent.com/christian-luger-at/obsidian-clew/badges/coverage.svg)](https://github.com/christian-luger-at/obsidian-clew/actions/workflows/coverage.yml)
 [![GitHub issues](https://img.shields.io/github/issues/christian-luger-at/obsidian-clew)](../../issues)
 
-See your whole vault as a graph, and find how any two notes actually connect - without every path routing through your index notes.
+![Clew: hovering a hub note, switching layouts, then filtering the graph down](docs/public/screens/tour.gif)
+
+**Clew shows your whole Obsidian vault as one interactive graph** - open it, and every note is a node, every link an edge. Zoom around, filter down to what matters, color and size notes by whatever makes sense to you, and click straight through to any note.
 
 A plugin for [Obsidian](https://obsidian.md).
 
-> [!note]
-> **Early development.** The repository is scaffolded and the release tooling is in place, but the plugin itself is still being built. Expect the feature list below to change.
+## Getting started
 
-## What it's for
+1. Install the plugin (see below) and enable it.
+2. Click the **Clew** icon in the left ribbon, or run **"Open graph view"** from the command palette (`Ctrl/Cmd+P`).
+3. That's it - the graph builds itself from your vault, no configuration needed. Everything below is optional tuning.
 
-Obsidian's built-in graph shows you everything at once, but it can't answer "how are X and Y connected?" - and a naive answer to that question almost always routes through a hub note (an index, a MOC, a daily note), which is technically correct and practically useless.
+## What you can do
 
-- **See your whole vault as a graph** - open it from the ribbon icon or the **"Open graph"** command, no setup needed.
-- **Find the path between two notes** - pick a start and an end; routing is weighted to avoid cutting through hub notes, with alternative routes shown alongside the best one.
-- **Export a path to Canvas** - turn a found path into an editable `.canvas` file.
+- **See your whole vault as a graph.** Every note and link, laid out automatically - no setup, no manual arrangement.
+- **Choose a layout that fits what you're looking at.** Force-directed (the default - related notes cluster together), Hierarchical (top-down, for vaults with a real outline structure), Radial (rings out from one note by link distance), or Circular (every note evenly spaced, good for spotting recurring patterns). The layout picker explains what each one is for.
+- **Filter down to what matters.** Build named, reusable filters from tags, properties, folder, filename, text, link count, edit recency, or how active/stale a note's neighborhood is - and invert any of them ("in this folder" ↔ "not in this folder") with one click. Combine several filters with either/or logic.
+- **Color and size notes by your own rules.** Same criteria as filtering, applied as named, colored groups instead - so "everything tagged #project" or "notes I haven't touched in 30 days" gets its own color and size at a glance.
+- **Tune the look live.** Node/edge size, color, physics, and label density are all adjustable while watching the graph react.
+- **Interact directly with the graph.** Click a node to open that note, hover one to highlight its connections, drag a note to pin it exactly where you want it.
+
+> **Coming soon:** finding the shortest, hub-avoiding path between any two notes, and exporting that path to a Canvas file. The groundwork is already in the codebase - just not switched on yet.
 
 ## Installing the plugin
 

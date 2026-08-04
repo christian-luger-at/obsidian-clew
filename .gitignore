@@ -41,3 +41,11 @@ test-vault/
 
 # Test coverage (vitest --coverage)
 coverage/
+
+# VitePress build output/cache (docs/) - deployed by CI, not committed.
+docs/.vitepress/dist
+docs/.vitepress/cache
+
+# Scratch vault the screenshot script (scripts/screenshots.mjs) builds and
+# tears down - like test-vault/, never meant to be committed.
+.screenshot-vault/
