@@ -346,6 +346,15 @@ async function capture(page) {
 			await sleep(200);
 		});
 
+		await attempt(`timeline-panel-${theme}`, async () => {
+			await clickToolbarIcon(page, 'Timeline');
+			await page.waitForSelector('.clew-timeline-panel', { timeout: 5000 });
+			await sleep(300);
+			await shoot(page, 'timeline-panel', theme, '.clew-timeline-panel');
+			await closePanel(page, '.clew-timeline-panel');
+			await sleep(200);
+		});
+
 		await attempt(`appearance-panel-${theme}`, async () => {
 			await clickToolbarIcon(page, 'Appearance');
 			await page.waitForSelector('.clew-appearance-panel', { timeout: 5000 });

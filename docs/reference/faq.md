@@ -15,6 +15,10 @@ Two possible reasons, and Clew tells you which:
 
 If you dragged it to pin it, switching layouts and back to Force should restore it - pinning only applies in Force layout (see [Interacting with the graph](../guide/interactions)). If it's still not where you expect, check the [Appearance panel](../guide/appearance)'s "Pinned node positions" - "Clear all" resets every pin, in case one was pinned unintentionally.
 
+## Why does the Timeline jump or sit still?
+
+It depends on the pace mode you picked (see [Timeline](../guide/timeline)). "Real time" maps playback onto your vault's actual date span, so a long quiet stretch in your notes' history means playback sits still for a while too, before a burst of newer notes appears quickly. "Even pace" instead advances evenly no matter how far apart notes were actually created, so something is always visibly happening - at the cost of the date shown sometimes jumping a lot between two ticks. Neither is wrong; pick whichever reads better for your vault.
+
 ## Where's "Find path"?
 
 Finding the shortest, hub-avoiding path between two notes (and exporting it to a Canvas file) is built but not switched on yet - see the note in the [README](https://github.com/christian-luger-at/obsidian-clew#what-you-can-do).

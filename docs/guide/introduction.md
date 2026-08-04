@@ -7,6 +7,7 @@ Obsidian's built-in graph shows you everything at once, but it's a single fixed 
 - **Layout** - pick how notes are arranged: force-directed (the default), hierarchical, radial, or circular.
 - **Filter** - hide everything except notes matching one or more named, reusable filters.
 - **Color & size** - recolor and resize notes into named groups, by the same kind of criteria filters use.
+- **Timeline** - replay your notes and links in the order they were created.
 - **Appearance** - tune node/edge size, color, physics, and labels live.
 
 Nothing here edits your notes. Filters, groups, and appearance settings are all Clew's own saved state (per vault), completely separate from your note content.
@@ -24,6 +25,7 @@ Nothing here edits your notes. Filters, groups, and appearance settings are all 
 - **Which topic areas have gone stale.** Color & size's "cluster freshness" criterion runs community detection on your link graph, then compares how recently each detected cluster was edited relative to the others - so, say, an old project's whole neighborhood of notes can get its own color without you having to define what "old project" means note by note.
 - **Which individual notes haven't been touched in a while.** Filter or group by "not edited in the last N days," independent of which cluster a note belongs to.
 - **How everything relates to one specific note.** The Radial layout arranges every other note in rings by hop distance from a note you pick - useful for seeing exactly what's actually connected to it, and how closely.
+- **How your vault grew.** The Timeline panel replays notes and links in creation order - useful for spotting a burst of activity, a long quiet stretch, or just how far back your oldest notes go.
 
 ## Why "Clew"?
 
@@ -32,5 +34,5 @@ A *clew* is a ball of thread - the one Theseus used to find his way back out of 
 ## Where to go next
 
 - [Getting started](./getting-started) - open the graph for the first time.
-- [Layouts](./layouts), [Filter](./filter), [Color & size](./color-and-size), [Appearance](./appearance) - one page per panel, in the order their toolbar icons appear.
+- [Layouts](./layouts), [Filter](./filter), [Color & size](./color-and-size), [Timeline](./timeline), [Appearance](./appearance) - one page per panel, in the order their toolbar icons appear.
 - [Interacting with the graph](./interactions) - clicking, hovering, and pinning notes.

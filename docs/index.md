@@ -32,6 +32,9 @@ features:
   - icon: 🎨
     title: Color & size by your own rules
     details: The same criteria as filtering, applied as named, colored groups instead - so "everything tagged #project" gets its own color and size at a glance.
+  - icon: 🕰️
+    title: Watch your vault grow
+    details: The Timeline panel replays notes and links in the order they were created, at a duration and pace you pick.
   - icon: 🎛️
     title: Live appearance tuning
     details: Node/edge size, color, physics, and label density are all adjustable while watching the graph react immediately.

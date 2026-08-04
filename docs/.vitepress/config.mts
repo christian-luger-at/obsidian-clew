@@ -34,8 +34,8 @@ export default defineConfig({
 
     // One linear learning path: what the plugin is and how to open it
     // first, then each panel in the order its own toolbar icon appears
-    // (Layout, Filter, Color & size, Appearance), then how you interact
-    // with the graph itself.
+    // (Layout, Filter, Color & size, Timeline, Appearance), then how you
+    // interact with the graph itself.
     sidebar: [
       {
         text: 'Introduction',
@@ -48,6 +48,7 @@ export default defineConfig({
           { text: 'Layouts', link: '/guide/layouts' },
           { text: 'Filter', link: '/guide/filter' },
           { text: 'Color & size', link: '/guide/color-and-size' },
+          { text: 'Timeline', link: '/guide/timeline' },
           { text: 'Appearance', link: '/guide/appearance' },
           { text: 'Interacting with the graph', link: '/guide/interactions' },
         ],

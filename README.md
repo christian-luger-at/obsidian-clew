@@ -21,6 +21,7 @@ Obsidian's built-in graph shows everything at once, but it's a single fixed view
 - **Which notes are orphaned or isolated.** With no links in or out, they drift to the outskirts under the default Force layout on their own - an easy way to spot notes worth linking up or archiving.
 - **Which topic areas have gone stale.** The "cluster freshness" criterion detects communities of linked notes, then compares how recently each one was edited relative to the others - so an old project's whole neighborhood can get its own color without you defining what "old" means note by note.
 - **How everything relates to one specific note.** The Radial layout rings out every other note by hop distance from a note you pick.
+- **How your vault grew over time.** The Timeline panel replays notes and links in creation order, revealing bursts of activity or long quiet stretches.
 
 Nothing here edits your notes - filters, groups, and appearance settings are Clew's own saved state, completely separate from your note content.
 
@@ -36,6 +37,7 @@ Nothing here edits your notes - filters, groups, and appearance settings are Cle
 - **Choose a layout that fits what you're looking at.** Force-directed (the default - related notes cluster together), Hierarchical (top-down, for vaults with a real outline structure), Radial (rings out from one note by link distance), or Circular (every note evenly spaced, good for spotting recurring patterns). The layout picker explains what each one is for.
 - **Filter down to what matters.** Build named, reusable filters from tags, properties, folder, filename, text, link count, edit recency, or how active/stale a note's neighborhood is - and invert any of them ("in this folder" ↔ "not in this folder") with one click. Combine several filters with either/or logic.
 - **Color and size notes by your own rules.** Same criteria as filtering, applied as named, colored groups instead - so "everything tagged #project" or "notes I haven't touched in 30 days" gets its own color and size at a glance, with a legend explaining what's on screen.
+- **Watch your vault grow.** The Timeline panel replays your notes and links in the order they were created - pick how long the replay takes and whether it paces evenly or maps onto real elapsed time.
 - **Tune the look live.** Node/edge size, color, physics, and label density are all adjustable while watching the graph react.
 - **Interact directly with the graph.** Click a node to open that note, hover one to highlight its connections, drag a note to pin it exactly where you want it.
 
