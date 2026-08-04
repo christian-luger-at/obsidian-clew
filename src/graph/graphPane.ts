@@ -1802,19 +1802,35 @@ export class GraphPane {
 	 * leaf's pixel size at all - user-reported: the graph goes blank
 	 * switching away to Obsidian's own Graph View and back, or just opening
 	 * a note, and only "Center" (resetCameraAndRefresh) brought it back.
-	 * `resize(true)` forces past sigma's own "size didn't actually change,
-	 * skip" guard (harmless no-op otherwise), and refresh() forces an
-	 * immediate repaint rather than only scheduling one - Chromium can
-	 * suspend a WebGL canvas's own render-loop scheduling while its tab
-	 * isn't visible, so without an explicit forced repaint here the canvas
-	 * can stay on its last-rendered (blank, from before becoming hidden)
-	 * frame indefinitely even once the size and camera are both already
-	 * correct again.
+	 *
+	 * Debounced (see debouncedHandleResize below) - workspace's own
+	 * 'resize' event is documented as "a WorkspaceItem resized or the
+	 * layout changed", not specifically *this* leaf, so it fires for any
+	 * pane's layout churn, not just a genuine size change here. User-
+	 * reported: the graph visibly stutters while the file-explorer sidebar
+	 * is open (present the whole time, not something toggling size), which
+	 * pointed at that sidebar's own routine internal updates (e.g.
+	 * highlighting the active file) generating a stream of these events -
+	 * each one, undebounced, forced a real Sigma resize (bypassing its own
+	 * "unchanged, skip" guard) plus an explicit repaint, so a burst of them
+	 * meant a burst of real WebGL work with nothing about this leaf's own
+	 * size actually having changed.
 	 */
 	handleResize(): void {
+		this.debouncedHandleResize();
+	}
+
+	/**
+	 * A single debounced instance (not re-created per handleResize() call,
+	 * which would defeat debouncing entirely) - see handleResize()'s own
+	 * docstring. 100ms: short enough that a genuine tab-switch/resize still
+	 * feels immediate, long enough to collapse a burst of same-tick
+	 * 'resize' events (the actual reported problem) into one real call.
+	 */
+	private readonly debouncedHandleResize = debounce(() => {
 		this.renderer?.resize(true);
 		this.renderer?.refresh();
-	}
+	}, 100);
 
 	/** ForceAtlas2 options shared by every runLayout() call site - gravity/scalingRatio are user-tunable (Settings tab), only the duration differs per call site (initial settle vs. the short post-drag re-settle). */
 	private layoutOptions(durationMs: number): { durationMs: number; gravity: number; scalingRatio: number } {
