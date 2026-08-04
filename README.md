@@ -11,7 +11,18 @@
 
 **Clew shows your whole Obsidian vault as one interactive graph** - open it, and every note is a node, every link an edge. Zoom around, filter down to what matters, color and size notes by whatever makes sense to you, and click straight through to any note.
 
-A plugin for [Obsidian](https://obsidian.md).
+A plugin for [Obsidian](https://obsidian.md). Full documentation (with more screenshots) lives at **[the Clew guide](https://christian-luger-at.github.io/obsidian-clew/)**.
+
+## Why use it
+
+Obsidian's built-in graph shows everything at once, but it's a single fixed view: one color scheme, one layout, no way to narrow it down to just the notes you care about right now. Clew is a second, purpose-built graph view layered on top of your vault, and it can tell you things the built-in one can't:
+
+- **Which notes are hubs.** Notes with more links render larger by default, and a link-count filter lets you isolate them directly - the notes the rest of your vault actually depends on.
+- **Which notes are orphaned or isolated.** With no links in or out, they drift to the outskirts under the default Force layout on their own - an easy way to spot notes worth linking up or archiving.
+- **Which topic areas have gone stale.** The "cluster freshness" criterion detects communities of linked notes, then compares how recently each one was edited relative to the others - so an old project's whole neighborhood can get its own color without you defining what "old" means note by note.
+- **How everything relates to one specific note.** The Radial layout rings out every other note by hop distance from a note you pick.
+
+Nothing here edits your notes - filters, groups, and appearance settings are Clew's own saved state, completely separate from your note content.
 
 ## Getting started
 
@@ -24,7 +35,7 @@ A plugin for [Obsidian](https://obsidian.md).
 - **See your whole vault as a graph.** Every note and link, laid out automatically - no setup, no manual arrangement.
 - **Choose a layout that fits what you're looking at.** Force-directed (the default - related notes cluster together), Hierarchical (top-down, for vaults with a real outline structure), Radial (rings out from one note by link distance), or Circular (every note evenly spaced, good for spotting recurring patterns). The layout picker explains what each one is for.
 - **Filter down to what matters.** Build named, reusable filters from tags, properties, folder, filename, text, link count, edit recency, or how active/stale a note's neighborhood is - and invert any of them ("in this folder" ↔ "not in this folder") with one click. Combine several filters with either/or logic.
-- **Color and size notes by your own rules.** Same criteria as filtering, applied as named, colored groups instead - so "everything tagged #project" or "notes I haven't touched in 30 days" gets its own color and size at a glance.
+- **Color and size notes by your own rules.** Same criteria as filtering, applied as named, colored groups instead - so "everything tagged #project" or "notes I haven't touched in 30 days" gets its own color and size at a glance, with a legend explaining what's on screen.
 - **Tune the look live.** Node/edge size, color, physics, and label density are all adjustable while watching the graph react.
 - **Interact directly with the graph.** Click a node to open that note, hover one to highlight its connections, drag a note to pin it exactly where you want it.
 
