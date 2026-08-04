@@ -45,7 +45,8 @@ Nothing here edits your notes - filters, groups, and appearance settings are Cle
 
 ### From the Community Plugins browser
 
-Not yet published to the community plugin list.
+1. Open **Settings → Community plugins → Browse** in Obsidian.
+2. Search for **Clew** and click **Install**, then **Enable**.
 
 ### Manual installation
 
