@@ -67,6 +67,6 @@ function sampleFrame(now: number): void {
 		frameTimeSum = 0;
 		lastReport = now;
 	}
-	requestAnimationFrame(sampleFrame);
+	window.requestAnimationFrame(sampleFrame);
 }
-requestAnimationFrame(sampleFrame);
+window.requestAnimationFrame(sampleFrame);

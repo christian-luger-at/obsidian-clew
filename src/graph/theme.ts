@@ -288,8 +288,7 @@ function ensureContrast(color: string, backgroundColor: string): string {
  */
 export function readThemeColors(referenceEl: HTMLElement, edgeIntensity: number = EDGE_INTENSITY_FACTOR): ThemeColors {
 	const computed = getComputedStyle(referenceEl);
-	const probe = referenceEl.ownerDocument.createElement('span');
-	referenceEl.appendChild(probe);
+	const probe = referenceEl.createSpan();
 
 	const cssVar = (name: string, fallback: string): string => {
 		const raw = computed.getPropertyValue(name).trim();
