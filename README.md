@@ -2,7 +2,7 @@
 
 [![Version](https://img.shields.io/github/manifest-json/v/christian-luger-at/obsidian-clew?color=blue&label=version)](https://github.com/christian-luger-at/obsidian-clew/releases)
 [![Obsidian minimum version](https://img.shields.io/badge/Obsidian-%E2%89%A5%201.12.0-7c3aed)](https://obsidian.md)
-[![License: 0-BSD](https://img.shields.io/badge/license-0--BSD-blue)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![Build](https://github.com/christian-luger-at/obsidian-clew/actions/workflows/lint.yml/badge.svg)](https://github.com/christian-luger-at/obsidian-clew/actions/workflows/lint.yml)
 [![Coverage](https://raw.githubusercontent.com/christian-luger-at/obsidian-clew/badges/coverage.svg)](https://github.com/christian-luger-at/obsidian-clew/actions/workflows/coverage.yml)
 [![GitHub issues](https://img.shields.io/github/issues/christian-luger-at/obsidian-clew)](../../issues)
@@ -85,4 +85,4 @@ See https://docs.obsidian.md
 
 ## License
 
-Clew is licensed under [0-BSD](LICENSE).
+Clew is licensed under [MIT](LICENSE).

@@ -72,7 +72,7 @@ export default defineConfig({
     search: { provider: 'local' },
 
     footer: {
-      message: 'Released under the 0-BSD License.',
+      message: 'Released under the MIT License.',
       copyright: '© 2026 Christian Luger',
     },
   },

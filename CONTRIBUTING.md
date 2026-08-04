@@ -4,7 +4,7 @@ Thanks for taking the time to contribute. This guide explains how to report
 issues, propose changes, and get a pull request merged.
 
 > [!important]
-> **Licensing note.** Clew is licensed under [0-BSD](LICENSE). By submitting a
+> **Licensing note.** Clew is licensed under [MIT](LICENSE). By submitting a
 > contribution (issue, code, or documentation) you agree that your contribution
 > is provided under the same license.
 
