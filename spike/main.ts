@@ -8,7 +8,7 @@ import { runLayout } from '../src/graph/layoutRunner';
  * plugin uses, so this doubles as a standing perf-regression check that
  * doesn't require opening Obsidian at all.
  *
- * All console output is prefixed with CLEW_SPIKE so it's easy to filter.
+ * Status is logged into the on-page HUD, not the console.
  */
 
 const NODE_COUNT = 10_000;
@@ -23,7 +23,6 @@ const container = document.getElementById('app')!;
 const hud = document.getElementById('hud')!;
 
 function log(message: string): void {
-	console.log(`CLEW_SPIKE ${message}`);
 	const line = document.createElement('div');
 	line.textContent = message;
 	hud.appendChild(line);

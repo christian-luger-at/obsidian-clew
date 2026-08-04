@@ -39,7 +39,7 @@ Nothing here edits your notes - filters, groups, and appearance settings are Cle
 - **Tune the look live.** Node/edge size, color, physics, and label density are all adjustable while watching the graph react.
 - **Interact directly with the graph.** Click a node to open that note, hover one to highlight its connections, drag a note to pin it exactly where you want it.
 
-> **Coming soon:** finding the shortest, hub-avoiding path between any two notes, and exporting that path to a Canvas file. The groundwork is already in the codebase - just not switched on yet.
+> **Not switched on yet:** finding the shortest, hub-avoiding path between any two notes, and exporting that path to a Canvas file. The groundwork already exists in the codebase, but the feature is disabled pending further testing.
 
 ## Installing the plugin
 

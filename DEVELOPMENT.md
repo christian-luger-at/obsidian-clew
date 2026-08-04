@@ -697,7 +697,7 @@ python3 -m http.server 4173 --directory spike
 # then open http://localhost:4173
 ```
 
-The page logs (prefixed `CLEW_SPIKE`) node/edge counts, layout settle time, and a rolling average frame time. A subset of nodes render with a placeholder image, to exercise sigma's image-node program.
+The page's on-screen HUD logs node/edge counts, layout settle time, and a rolling average frame time. A subset of nodes render with a placeholder image, to exercise sigma's image-node program.
 
 ### 2. A large test vault (only testable in the app)
 
