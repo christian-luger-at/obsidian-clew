@@ -798,6 +798,29 @@ node scripts/gen-graph-vault.mjs   # writes ./spike-vault: 10,000 notes with a h
 
 The graph view has not yet been checked on a tablet (Obsidian mobile). Desktop performance has comfortable margin (steady 60fps at 10k nodes), so this isn't currently blocking feature work, but it hasn't been confirmed either - worth doing before relying on mobile behavior for anything.
 
+User-reported (2026-08-05): the plugin failed to load on mobile at all
+- `esbuild.config.mjs` marked every Node builtin (via `node:module`'s
+  `builtinModules`) `external`, including `'events'`. Desktop Obsidian
+  (Electron) has Node integration, so a bare `require("events")`
+  resolves there for free; mobile has no Node runtime at all, so that
+  same call failed the instant the bundle was evaluated, before
+  `onload()` even ran - surfaced as a flat "Failed to load plugin",
+  no further detail. sigma/graphology both use `require('events')`
+  internally for their own EventEmitter - fixed by excluding `'events'`
+  specifically from the external list, letting esbuild bundle the
+  `events` *npm package* instead (a browser-safe polyfill of the same
+  API - already an existing transitive dependency of both, not Node's
+  own module). Confirmed fixed: `grep -oE "require\([^)]+\)" main.js`
+  now only shows `require("obsidian")`.
+- This only explains the *load* failure, not interaction quality -
+  `setupNodeDragging()`/`setupNodeHover()` are wired to Sigma's mouse
+  captor (`getMouseCaptor()`), not a touch captor, so pin-by-dragging
+  and (especially) hover-to-highlight-neighbors likely don't work
+  meaningfully on a touchscreen (no real "hover" state on touch at
+  all) even now that the plugin actually loads. Still unverified: pan/
+  zoom quality, tap-to-open, and whether the ForceAtlas2 Worker (Blob
+  URL-based) spawns reliably on iOS Safari WebKit.
+
 `spike-vault/` and `spike/dist/` are gitignored - regenerate them locally; they never land in a commit.
 
 ## Build production release

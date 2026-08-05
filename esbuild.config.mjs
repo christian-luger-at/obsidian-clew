@@ -30,7 +30,21 @@ const context = await esbuild.context({
 		'@lezer/common',
 		'@lezer/highlight',
 		'@lezer/lr',
-		...builtinModules,
+		// Node builtins - external because desktop Obsidian (Electron) has
+		// Node integration, so a bare `require("...")` for one resolves
+		// fine there without bundling it. 'events' is deliberately
+		// excluded from this list: sigma/graphology's own `require('events')`
+		// (their internal EventEmitter) resolves to it, and Obsidian
+		// *Mobile* has no Node runtime at all - left external, that
+		// `require("events")` call fails outright the moment the plugin's
+		// bundle is evaluated, before onload() even runs, which surfaced as
+		// a flat "Failed to load plugin" with no further detail (user-
+		// reported). The `events` *npm package* (a browser-safe polyfill of
+		// the same API, already an existing transitive dependency of both
+		// sigma and graphology - not Node's own module) bundles in cleanly
+		// once it isn't marked external, and works identically on both
+		// desktop and mobile.
+		...builtinModules.filter((mod) => mod !== 'events'),
 	],
 	format: 'cjs',
 	target: 'es2021',
