@@ -12,8 +12,23 @@
 	   the OS's auto-hide scrollbars flashing in on every drag/pan (macOS's
 	   default "show scrollbars: on interaction" setting) - user-reported,
 	   traced to the newly added Timeline panel specifically lacking the
-	   max-height/overflow-y every other panel already had. */
-	overflow: hidden;
+	   max-height/overflow-y every other panel already had.
+	   `clip`, not `hidden`: this element *is* Obsidian's own `contentEl`
+	   (GraphPane's constructor adds this class directly to the element
+	   Obsidian gives it - no extra wrapper), so it's the view's own
+	   scroll container, not just a plain box. `overflow: hidden` stops the
+	   user from *manually* scrolling it (wheel/drag), but a browser can
+	   still scroll a `hidden` container *programmatically* - most commonly
+	   the default "scroll the focused element into view" behavior, which
+	   fires on any focus change (clicking a toggle, a freshly re-rendered
+	   button, panning the graph canvas itself if it's focusable) even when
+	   nothing is actually out of view, still visibly shifting this view's
+	   content for a frame before it (sometimes) snaps back - user-reported
+	   again later ("es ruckelt wieder", with a screen recording showing the
+	   graph itself jumping, not just an idle scrollbar flash). `clip`
+	   forbids scrolling this element altogether, programmatic included,
+	   which `hidden` never did. */
+	overflow: clip;
 }
 
 .clew-graph-canvas {
