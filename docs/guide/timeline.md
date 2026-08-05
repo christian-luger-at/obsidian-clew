@@ -25,4 +25,4 @@ Both are legitimate depending on what your vault's own date spread looks like - 
 
 ## Interaction with Filter
 
-Scrubbing the timeline away from "today" takes over from an active filter, the same way switching to Find path would - only one of them controls what's visible at a time. Scrub back to "today", or close the panel, to hand control back to your filter.
+An active filter stays in effect while you scrub or play - the timeline only reveals notes that are both within the current cutoff *and* matching your filter, so replaying a filtered-down view doesn't quietly show everything else too. Scrub back to "today", or close the panel, to hand full control back to your filter.

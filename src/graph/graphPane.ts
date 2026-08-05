@@ -1206,25 +1206,26 @@ export class GraphPane {
 	}
 
 	/**
-	 * Re-derives which nodes/edges are "born" by timelineCursor and hides
-	 * the rest. At "today" (timelineCursor === timelineBounds.end) this is
-	 * a deliberate no-op that hands the reducer back to applyFilter()
+	 * Re-derives which nodes/edges are "born" by timelineCursor, intersects
+	 * that with the current filter's match set (if any filter is enabled -
+	 * see currentFilterMatches()), and hides the rest. An active filter
+	 * stays in effect throughout scrubbing/playback (user feedback: "Wenn
+	 * ein Filter gesetzt ist, wird dieser bei Animate nicht berücksichtigt"
+	 * - an earlier version had the timeline silently override the filter
+	 * entirely, the same way Find-path/Stagnation already override each
+	 * other in this file, which turned out not to be the wanted behavior
+	 * here). At "today" (timelineCursor === timelineBounds.end) this is a
+	 * deliberate no-op that hands the reducer back to applyFilter()
 	 * instead - opening the Timeline panel, or playback simply finishing,
-	 * never changes what's on screen on its own.
-	 *
-	 * Mutually exclusive with Filter/Find-path/Stagnation the same way
-	 * those are already mutually exclusive with each other in this file -
-	 * whichever applyX() ran last owns nodeReducer/edgeReducer outright,
-	 * no composition. Scrubbing the timeline overrides an active filter
-	 * rather than combining with it; returning to "today" hands control
-	 * straight back to applyFilter(), which is exactly what a scrub away
-	 * from "today" had silently overridden.
+	 * never changes what's on screen on its own. Still mutually exclusive
+	 * with Find-path/Stagnation, which don't compose with anything here.
 	 */
 	private applyTimeline(): void {
 		this.updateTimelineButtonState();
 		this.updateTimelineDateLabel();
 		if (this.timelineScrubberEl) this.timelineScrubberEl.value = String(this.timelineCursor);
 		if (!this.graph || !this.timelineBounds) return;
+		const graph = this.graph;
 
 		if (this.timelineCursor >= this.timelineBounds.end) {
 			this.stopTimelineFadeTicker();
@@ -1239,8 +1240,21 @@ export class GraphPane {
 		this.panelEl.empty();
 		this.panelEl.hide();
 
-		const visibleNodes = visibleNodesAt(this.ctimeByPath, this.timelineCursor);
-		const visibleEdges = visibleEdgesAt(this.graph, this.ctimeByPath, this.timelineCursor);
+		// An active filter stays in effect while scrubbing/playing (user
+		// feedback: "Wenn ein Filter gesetzt ist, wird dieser bei Animate
+		// nicht berücksichtigt") - the timeline narrows further within
+		// whatever the filter already allows, rather than overriding it
+		// outright the way it does with Find-path/Stagnation. `null` means
+		// no filter is enabled, i.e. no extra restriction (see filter.ts's
+		// isAnyFilterEnabled() docstring for why that's not the same as
+		// "matches nothing").
+		const filterMatches = this.currentFilterMatches();
+		let visibleNodes = visibleNodesAt(this.ctimeByPath, this.timelineCursor);
+		let visibleEdges = visibleEdgesAt(graph, this.ctimeByPath, this.timelineCursor);
+		if (filterMatches) {
+			visibleNodes = new Set([...visibleNodes].filter((node) => filterMatches.has(node)));
+			visibleEdges = new Set([...visibleEdges].filter((edge) => graph.extremities(edge).every((node) => visibleNodes.has(node))));
+		}
 
 		// Grow-in (user feedback: new notes/links should visibly appear, not
 		// just instantly be there) - only nodes/edges just now crossing from
@@ -2465,13 +2479,35 @@ export class GraphPane {
 	 * enabled *after* a content-independent Color & size criterion).
 	 */
 	private applyFilters(): void {
-		this.applyFilter();
+		// If the timeline is actively narrowing the graph (mid-scrub, not
+		// resting at "today"), a filter edit made in that state should stay
+		// intersected with it (see applyTimeline()'s own docstring) rather
+		// than this unconditionally handing the reducer back to a plain
+		// filter-only view until the scrubber is next touched.
+		if (this.timelineBounds && this.timelineCursor < this.timelineBounds.end) this.applyTimeline();
+		else this.applyFilter();
 		void this.refreshCriteriaContent();
 	}
 
 	/** Reflects whether any filter is currently *enabled* (not whether the panel is open, or whether an enabled filter actually matched anything) - see filterButton's own docstring in the constructor. */
 	private updateFilterButtonState(): void {
 		this.filterButton.toggleClass('is-active', isAnyFilterEnabled(this.plugin.settings.filterPresets));
+	}
+
+	/**
+	 * The current filter's match set, or `null` if no filter is enabled -
+	 * `null` specifically means "no restriction" (everything matches), not
+	 * "matches nothing" (see filter.ts's isAnyFilterEnabled() docstring).
+	 * Shared by applyFilter() and applyTimeline(), which needs to know this
+	 * to keep an active filter in effect while scrubbing/playing (user
+	 * feedback: "Wenn ein Filter gesetzt ist, wird dieser bei Animate nicht
+	 * berücksichtigt") rather than silently overriding it the way Find-path/
+	 * Stagnation already override each other in this file.
+	 */
+	private currentFilterMatches(): Set<string> | null {
+		const presets = this.plugin.settings.filterPresets;
+		if (!isAnyFilterEnabled(presets)) return null;
+		return evaluateFilters(this.buildCriteriaFacts(), presets, this.plugin.settings.filterCombineMode);
 	}
 
 	/**
@@ -2495,9 +2531,9 @@ export class GraphPane {
 		this.updateFilterButtonState();
 		if (!this.graph) return;
 		const graph = this.graph;
-		const presets = this.plugin.settings.filterPresets;
+		const matches = this.currentFilterMatches();
 
-		if (!isAnyFilterEnabled(presets)) {
+		if (!matches) {
 			this.clearHighlight();
 			this.renderLegend();
 			this.updateEmptyState();
@@ -2514,7 +2550,6 @@ export class GraphPane {
 		this.panelEl.hide();
 		this.pathResultActive = false;
 
-		const matches = evaluateFilters(this.buildCriteriaFacts(), presets, this.plugin.settings.filterCombineMode);
 		const visibleEdges = new Set(graph.edges().filter((edge) => graph.extremities(edge).every((node) => matches.has(node))));
 		this.renderer?.setSetting('nodeReducer', (node, attr) => ({ ...attr, hidden: !matches.has(node) }));
 		this.renderer?.setSetting('edgeReducer', (edge, attr) => ({ ...attr, hidden: !visibleEdges.has(edge) }));

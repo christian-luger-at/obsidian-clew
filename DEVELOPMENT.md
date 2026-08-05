@@ -327,14 +327,20 @@ manual copy step. Then open `test-vault` in Obsidian and check:
   button that silently does nothing - construct one by touching every
   file in a fresh vault at once (e.g. `touch` from a shell), not via
   `gen-test-vault.mjs` (which always backdates a few notes).
-  **Interrupts, doesn't combine with, Filter**: enable a filter first,
-  then scrub the timeline - the filter's own hidden notes should reappear
-  (the timeline reducer takes over outright, matching how Find path/
-  Filter already override each other in this file) rather than the two
-  combining. Scrub all the way right to "today" (or close the panel, which
-  snaps the cursor there directly) - the original filter should resume
-  controlling visibility. **Vault refresh mid-playback**: start playback,
-  then create a new note - playback should stop (not animate against a
+  **Combines with an active Filter** (user feedback - `currentFilterMatches()`
+  is shared by applyFilter()/applyTimeline(), an earlier version had the
+  timeline silently override the filter entirely instead): enable a
+  filter first, then scrub the timeline - only notes matching *both* the
+  filter and the current ctime cutoff should show, not everything up to
+  that cutoff. Edit or toggle the filter while the timeline is mid-scrub
+  (not resting at "today") - the graph should immediately reflect the new
+  filter intersected with the current cursor position, not silently drop
+  back to an unfiltered timeline view. Scrub all the way right to "today"
+  (or close the panel, which snaps the cursor there directly) - the
+  original filter should resume controlling visibility on its own. Still
+  mutually exclusive with Find path/Stagnation, which override each other
+  the same way they always have. **Vault refresh mid-playback**: start
+  playback, then create a new note - playback should stop (not animate against a
   now-stale file set) and the slider's range should silently extend to
   cover the new note's `ctime` next time the panel is reopened.
 - **Filter** (funnel icon, opens a panel that drops down directly below the
