@@ -312,15 +312,20 @@
 	width: 100%;
 }
 
-/* The type as its own heading line at the top of a criterion's edit
-   controls (renderCriterionEditRow()) - user feedback: first line = a
-   heading (e.g. "Property"), then the fields below it, rather than the
-   type name sitting inline to the left of the fields on one row. */
-.clew-criterion-type-heading {
-	margin-bottom: var(--size-4-1);
+/* The type as the first segment of a criterion's edit row
+   (renderCriterionEditRow()) - a small badge inline with the fields rather
+   than its own heading line above them (previous version), so editing a
+   criterion no longer grows the row from one line (its collapsed chip) to
+   four - user feedback on flattening the Color & size panel generally. */
+.clew-criterion-type-badge {
+	flex: 0 0 auto;
+	padding: 1px var(--size-4-1);
+	background: var(--background-modifier-hover);
+	border-radius: var(--radius-s);
 	font-size: var(--font-ui-smaller);
 	font-weight: var(--font-medium);
 	color: var(--text-normal);
+	white-space: nowrap;
 }
 
 /* The clickable include/exclude word itself (renderNegateWord()) - no
@@ -345,10 +350,10 @@
 	border-bottom-color: var(--text-error);
 }
 
-/* The type-specific controls, on their own line below
-   .clew-criterion-type-heading - a wrapping flex row since some criteria
-   (e.g. property: key + operator + value, or a tag criterion's pills)
-   carry several fields. */
+/* The whole edit row for one criterion: the type badge, its type-specific
+   fields, and (via .clew-criterion-edit-actions' auto margin) check/cancel
+   at the end - a wrapping flex row since some criteria (e.g. property: key
+   + operator + value, or a tag criterion's pills) carry several fields. */
 .clew-criterion-controls {
 	display: flex;
 	flex-wrap: wrap;
@@ -374,25 +379,29 @@
 	white-space: nowrap;
 }
 
-/* Check/cancel for a criterion being edited - always their own line below
-   the fields (user feedback), not sharing a row with .clew-criterion-controls
-   (where they'd otherwise get caught up in that row's own wrapping once
-   several fields wrap onto a second line). */
+/* Check/cancel for a criterion being edited - now the trailing segment of
+   the same row as the type badge and fields (.clew-criterion-controls),
+   pinned to the row's right edge via auto margin. Still its own child
+   (not merged into the fields' own flow) so it wraps onto its own line as
+   a unit if the fields before it need the space (e.g. a tag criterion's
+   pills), rather than the check/cancel icons splitting apart. */
 .clew-criterion-edit-actions {
 	display: flex;
 	gap: var(--size-4-1);
-	margin-top: var(--size-4-1);
+	margin-left: auto;
 }
 
-/* All of a group's criteria (renderCriteriaList()) - a wrapping row of
-   chips (see .clew-criterion-chip below), with the one currently being
-   edited (.clew-criterion-edit) forced onto its own full-width line via
-   flex-basis so it reads as expanded "in place" rather than crammed
-   between its neighboring chips. */
+/* All of a group's criteria (renderCriteriaList()) - one per line (user
+   feedback: several collapsed chips sharing a wrapped row read as a messy
+   cloud of pills, not a scannable list of conditions), each chip keeping
+   its own natural width rather than stretching to fill the line. The one
+   currently being edited (.clew-criterion-edit) already reads as its own
+   line via its own layout, this column just keeps every *other* chip that
+   way too. */
 .clew-criteria-chips {
 	display: flex;
-	flex-wrap: wrap;
-	align-items: center;
+	flex-direction: column;
+	align-items: flex-start;
 	gap: var(--size-4-1);
 }
 
@@ -412,16 +421,22 @@
 }
 
 /* The one criterion currently expanded into its full controls
-   (renderCriterionEditRow()) - set apart with its own background/border so
-   it clearly reads as "now editing this one", not just another chip in the
-   row (the chip list's own flex-basis: 100% on this element only handles
-   the layout/line-break, not the appearance). */
+   (renderCriterionEditRow()) - a left accent border, not a full
+   background+border box (previous version) - user feedback: a solid
+   `--background-primary` panel with its own border, sitting inside the
+   already-boxed group card, read as a "box within a box" and made the
+   whole form feel busy/restless ("unruhig"), especially in dark themes
+   where primary and secondary backgrounds contrast sharply. The accent
+   stripe is enough to mark "this one is being edited" without a second
+   frame. `align-self: stretch` (not the previous `flex: 1 1 100%`, which
+   only made sense back when this list wrapped as a row) makes it take the
+   full column width instead of shrinking to its own content's width like
+   the collapsed chips beside it (.clew-criteria-chips' `align-items:
+   flex-start`). */
 .clew-criterion-edit {
-	flex: 1 1 100%;
+	align-self: stretch;
 	padding: var(--size-4-1) var(--size-4-2);
-	background: var(--background-primary);
-	border: 1px solid var(--background-modifier-border);
-	border-radius: var(--radius-s);
+	border-left: 2px solid var(--interactive-accent);
 }
 
 /* Every plain (non-Setting) row directly inside a group's edit form - the
@@ -435,17 +450,20 @@
    'Criteria' ... sein"). Giving these rows that same left padding, rather
    than removing it from every `.setting-item` instead, keeps Obsidian's
    own Setting styling (including its per-item background/border)
-   completely untouched. */
+   completely untouched. Still applies as-is to Filter's own edit form
+   (renderFilterEditForm()), which kept its "Filter"/"Criteria" headings -
+   Color & size's flattened form overrides this back to 0 below, having
+   dropped both headings it existed to align with. */
 .clew-group-name-row,
 .clew-group-criteria {
 	padding-left: var(--size-4-4);
 }
 
-/* The color+name row under the "Group" heading (renderGroupEditForm()) -
-   a plain flex row, not a Setting, so there's no "Name" label (redundant
-   right under the heading) and no Setting name/control split reserving
-   space for one - user feedback. The color swatch stays its own natural
-   size, the title field stretches to fill the rest of the row. */
+/* The color+name row at the top of a group's edit form
+   (renderGroupEditForm()) - a plain flex row, not a Setting, so there's no
+   "Name" label and no Setting name/control split reserving space for one -
+   user feedback. The color swatch stays its own natural size, the title
+   field stretches to fill the rest of the row. */
 .clew-group-name-row {
 	display: flex;
 	align-items: center;
@@ -458,17 +476,34 @@
 	min-width: 0;
 }
 
-/* "+ add" (renderGroupEditForm()) - `margin-left`, not `padding-left` like
-   .clew-group-name-row/.clew-group-criteria above: those are plain divs
-   with no visible box of their own, so nudging their *content* right reads
-   identically to nudging the whole element. A button has its own visible
-   border/background though - padding-left alone left that box flush at the
-   form's own left edge with just its label text nudged inward, reading as
-   not-aligned-at-all rather than merely off by 16px (user feedback: "zu
-   weit links und nicht ausgerichtet"). A margin instead moves the button's
-   whole box to line up with "Criteria" above it. */
+/* "+ add" (renderGroupEditForm()/renderFilterEditForm()) - `margin-left`,
+   not `padding-left` like .clew-group-name-row/.clew-group-criteria above:
+   those are plain divs with no visible box of their own, so nudging their
+   *content* right reads identically to nudging the whole element. A button
+   has its own visible border/background though - padding-left alone left
+   that box flush at the form's own left edge with just its label text
+   nudged inward, reading as not-aligned-at-all rather than merely off by
+   16px (user feedback: "zu weit links und nicht ausgerichtet"). A margin
+   instead moves the button's whole box to line up with "Criteria" above it.
+   Color & size's flattened form overrides this back to 0 below. */
 .clew-group-edit > .clew-filter-add-button {
 	margin-left: var(--size-4-4);
+}
+
+/* Color & size's edit form (renderGroupEditForm()) dropped its "Group" and
+   "Criteria" Setting headings entirely (flattened - user feedback that the
+   panel's nested boxes/headings read as cluttered), so the left-inset the
+   two rules above exist to line child rows up with is gone too - every row
+   sits flush against `.clew-group-edit`'s own padding instead. Filter's own
+   edit form (renderFilterEditForm()) kept its headings and isn't affected -
+   see .clew-group-edit-flat's use in renderGroupEditForm(). */
+.clew-group-edit-flat .clew-group-name-row,
+.clew-group-edit-flat .clew-group-criteria {
+	padding-left: 0;
+}
+
+.clew-group-edit-flat > .clew-filter-add-button {
+	margin-left: 0;
 }
 
 /* The `tag` criterion's own pill picker - reuses .clew-filter-pills'

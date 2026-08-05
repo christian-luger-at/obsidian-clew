@@ -358,13 +358,20 @@ manual copy step. Then open `test-vault` in Obsidian and check:
   since several enabled filters combine per "Combine filters" (see below),
   not by their own order, reordering must have *no effect* on which notes
   are shown - unlike a node group's own drag-to-reorder, which does
-  control color precedence. Its edit form is the group edit form minus the
-  color picker and "Scale size" toggle: a name field, then the exact same
-  "Criteria" chip list + "+ add" menu Color & size uses (including
+  control color precedence. Its edit form is flattened the same way as
+  Color & size's own (user feedback that the flattening should apply here
+  too, not just there - see `.clew-group-edit-flat` in `styles.css`): no
+  "Filter"/"Criteria" Setting headings any more, just a name field (no
+  color swatch - a filter has none, and no "..." menu either - there's no
+  filter-level option like "Scale size" to hide behind one) with the
+  closing "x" at the row's right end, then the exact same "Criteria" chip
+  list + "+ add" menu Color & size uses directly beneath it (including
   `Not edited at least (days)`/`Minimum number of links`/`Activity`, not
-  just the original text/tag/property set), always AND'd within one filter
-  (same as a node group's own criteria - no per-filter AND/OR choice, see
-  below for why that choice lives one level up instead).
+  just the original text/tag/property set, and the same one-chip-per-line
+  layout with an accent-border edit row, not a boxed one - see Color &
+  size's own entry above), always AND'd within one filter (same as a node
+  group's own criteria - no per-filter AND/OR choice, see below for why
+  that choice lives one level up instead).
   **"Show if it matches": At least one filter vs. Every filter**
   (a panel-level dropdown, above the filter list, not per-filter - user
   feedback: "Das ist auf der falschen Ebene [...] soll für die Kombination
@@ -491,70 +498,85 @@ manual copy step. Then open `test-vault` in Obsidian and check:
 - **Color & size** (palette icon, opens a panel dropping down below the
   icon rail, same look as Filter/Appearance - see `nodeGroups.ts`): click
   "+ new group" - a blank group ("Group 1", a default color, no criteria)
-  is created, saved, and opens directly in its edit form under a "Group"
-  heading (same bold style as "Criteria" below, and as Appearance's own
-  "Nodes"/"Edges"), with an *unlabeled* color+name row right underneath -
-  color swatch flush left, title field stretching to fill the rest of the
-  row. Set the name to "Status A", click "+ add" - it should sit flush
-  with the "Criteria" heading below (not just its own text nudged in with
-  the button's border/background still sitting at the form's own left
-  edge - an earlier version got this wrong: a plain div can be aligned by
-  nudging its *content* with padding, but a button has its own visible
-  box, so it needs its whole box shifted with a margin instead). It opens
-  a small menu (Tag / Property / Folder / Filename / Text / Stagnation,
-  the same Menu-based pattern the "Layout" toolbar button used before it
-  became its own explanatory dialog) - pick
-  "Property" and the new criterion opens directly in its expanded
-  controls (not yet a chip, since it still needs configuring), reading top
-  to bottom as **heading, then fields, then actions**: a "Property" label
-  on its own line, the key/operator/value controls on the line(s) below
-  it, and the checkmark/"x" on their own line under those (never crammed
-  onto the same line as the fields, even if the fields themselves wrap);
-  set it to `status` / "Equals" / `done` - *without clicking anything
-  else*, every note with `status: done` (`Topic A`/`Topic A - Detail
-  1`/`Topic A - Detail 2`) should immediately take that color and the
-  palette icon should highlight - **everything here saves immediately as
-  you go, there is no separate Save step anywhere in this panel**. Click
-  the checkmark next to the criterion - it should collapse into a compact
-  chip reading `status equals "done"` (nodeGroups.ts's
-  `describeCriterion()`), flush-aligned with the "Criteria" heading and
-  its description text right above it. **Cancel reverts, not deletes**:
-  click an existing chip to re-expand it, change its value, then click the
-  "x" (not the checkmark) - it should revert to what the chip showed
-  *before* you started this edit, not delete the criterion (an earlier
-  version deleted it - user feedback: "x" while editing should mean
-  Cancel). For a criterion you just added via "+ add" (never had a
-  "before" state), the same "x" removes it instead, since there's nothing
-  to revert to. A chip's own "x" *while collapsed* still removes it
-  directly, no expand needed. **Chips**: with several criteria configured,
-  the "Criteria" section should read as a short row of wrapping chips, not
-  a wall of dropdowns/text fields all shown at once. **Wrapped tag
-  pills**: expand a `tag` criterion and pick enough tags that its pills
-  wrap onto a second line - the wrapped line should stay inside the
-  criterion's own controls, not jump to the panel's own left edge, and the
-  checkmark/"x" row should still land on its own line below all of it, no
-  matter how many lines the fields wrapped onto. **No empty-state text**:
+  is created, saved, and opens directly in its edit form, flattened to a
+  single color+name row at the top - no "Group" heading above it any more
+  (removed, along with the "Criteria" heading/description below - user
+  feedback that the nested headings/boxes read as cluttered before you
+  even reach a criterion; see `.clew-group-edit-flat` in `styles.css`).
+  Color swatch flush left, title field stretching to fill the row, then a
+  "..." (more options - currently just "Scale size", see below) and "x"
+  (closes the form back to the group's row) at the right end. Set the name
+  to "Status A", click "+ add" - it should sit flush with the name row and
+  criteria list above it, at the form's own left edge (an earlier version
+  aligned it to the now-removed "Criteria" heading's indent instead - a
+  plain div can be aligned by nudging its *content* with padding, but a
+  button has its own visible box, so it needed its whole box shifted with
+  a margin; both are gone now that there's no heading to align to). It
+  opens a small menu (Tag / Property / Folder / Filename / Text /
+  Stagnation, the same Menu-based pattern the "Layout" toolbar button used
+  before it became its own explanatory dialog) - pick "Property" and the
+  new criterion opens directly in its expanded controls (not yet a chip,
+  since it still needs configuring), all on **one wrapping row**: a
+  "Property" badge, then the key/operator/value controls, then the
+  checkmark/"x" pinned to the row's right end via auto margin - the row
+  only breaks onto a second line if the fields themselves don't fit
+  (previously a fixed heading-then-fields-then-actions stack of up to 4
+  lines regardless of how short the criterion was - user feedback); set it
+  to `status` / "Equals" / `done` - *without clicking anything else*,
+  every note with `status: done` (`Topic A`/`Topic A - Detail 1`/`Topic A
+  - Detail 2`) should immediately take that color and the palette icon
+  should highlight - **everything here saves immediately as you go, there
+  is no separate Save step anywhere in this panel**. Click the checkmark
+  next to the criterion - it should collapse into a compact chip reading
+  `status equals "done"` (nodeGroups.ts's `describeCriterion()`), sitting
+  directly under the name row with no heading above it any more.
+  **Cancel reverts, not deletes**: click an existing chip to re-expand it,
+  change its value, then click the "x" (not the checkmark) - it should
+  revert to what the chip showed *before* you started this edit, not
+  delete the criterion (an earlier version deleted it - user feedback:
+  "x" while editing should mean Cancel). For a criterion you just added
+  via "+ add" (never had a "before" state), the same "x" removes it
+  instead, since there's nothing to revert to. A chip's own "x" *while
+  collapsed* still removes it directly, no expand needed. **Chips, one per
+  line**: with several criteria configured, they should stack one below
+  the other, each on its own line, not wrap several onto a shared row
+  (changed from an earlier wrapping-row layout - user feedback: several
+  chips sharing a line read as a messy cloud of pills rather than a
+  scannable list of conditions); each chip still only as wide as its own
+  text, not stretched to fill the row. **Editing a criterion has no boxed
+  frame**: expand a chip into its full controls - it should show only a
+  thin accent-colored line down its left edge, not a solid background
+  panel with its own border (an earlier version's full box, sitting inside
+  the already-boxed group card, read as "boxes within boxes" and made the
+  form feel busy/restless - user feedback, especially visible in dark
+  themes). **Wrapped tag pills**: expand a `tag` criterion and pick enough
+  tags that its pills wrap onto a second line - the wrapped line should
+  stay inside the criterion's own row, and the checkmark/"x" should still
+  land at the end of whichever line has room for them (its own trailing
+  line if the fields filled the row completely). **No empty-state text**:
   a brand new group with no criteria yet should show no placeholder line
-  under "Criteria" at all - just the heading, description, and the "+
-  add" button. **Multiple criteria (AND only)**: add a `tag` criterion too
-  - now only notes matching *both* the property AND the tag should stay
-  colored (every criterion in a group is AND'd, with no OR/grouping option
-  - the "Criteria" heading's own description says "A note must match every
-  criterion below."). **Size multiplier**: "Scale size" is off by default
-  on a new group; toggle it on - a "Size multiplier" slider appears (no
-  explanatory text under it - its own live tooltip while dragging is
-  enough), range 0.3-3, starting at 1; drag it to 2 - matching notes
+  at all - just the name row and the "+ add" button, nothing in between.
+  **Multiple criteria (AND only)**: add a `tag` criterion too - now only
+  notes matching *both* the property AND the tag should stay colored
+  (every criterion in a group is still AND'd, with no OR/grouping option -
+  unchanged, just no longer spelled out in a heading description since
+  that heading is gone). **Size multiplier**: open the "..." menu next to
+  the name - "Scale size" is off (unchecked) by default on a new group;
+  click it on - a "Size multiplier" slider appears directly under the name
+  row (no explanatory text under it - its own live tooltip while dragging
+  is enough), range 0.3-3, starting at 1; drag it to 2 - matching notes
   should visibly grow, but a hub note among them should still look bigger
   than a leaf note in the same group (it's a *multiplier* on each note's
   own degree-based size, not a fixed size replacing it - user feedback: an
   earlier absolute-size version made every matching note identically
   sized, losing the hub-vs-leaf signal entirely); at exactly 1 every
-  matching note's size should be unchanged from default. Toggle "Scale
-  size" back off and sizes should return to fully default. **Closing a
-  group's edit form**: there is no standalone "Done"/Save/Cancel button at
-  the bottom any more (removed - user feedback: nothing was left for it to
-  commit) - the only way to collapse the form back to the group's row is
-  the small "x" next to the "Group" heading itself, at the top.
+  matching note's size should be unchanged from default. Open the "..."
+  menu again and click "Scale size" off - the slider disappears and sizes
+  return to fully default. **Closing a group's edit form**: there is no
+  standalone "Done"/Save/Cancel button at the bottom any more (removed -
+  user feedback: nothing was left for it to commit) - the only way to
+  collapse the form back to the group's row is the small "x" at the right
+  end of the name row, next to "...".
   **Precedence**: create a second group ("Status B", a different color,
   the same `status` equals `done` criterion) - only the *first* group in
   the list (topmost) should win for those notes; **drag "Status B" above

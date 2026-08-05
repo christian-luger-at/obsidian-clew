@@ -2367,26 +2367,23 @@ export class GraphPane {
 	 * groups.
 	 */
 	private renderFilterEditForm(preset: FilterPreset): void {
-		const formEl = this.filterListContainerEl.createDiv({ cls: 'clew-group-edit' });
+		// Flattened the same way as Color & size's own edit form
+		// (renderGroupEditForm()) - user feedback that the flattening should
+		// apply here too, not just there. No "Filter"/"Criteria" Setting
+		// headings any more; the name field (no color swatch - a filter has
+		// none) and the "x" that closes the form sit on one row, with the
+		// criteria list directly beneath. 'clew-group-edit-flat' drops the
+		// left-inset that existed only to line child rows up with those now-
+		// removed headings - see styles.css.
+		const formEl = this.filterListContainerEl.createDiv({ cls: 'clew-group-edit clew-group-edit-flat' });
 
-		new Setting(formEl)
-			.setName('Filter')
-			.setHeading()
-			.addExtraButton((button) =>
-				button
-					.setIcon('x')
-					.setTooltip('Close')
-					.onClick(() => this.toggleEditingFilter(preset.id)),
-			);
+		const nameRowEl = formEl.createDiv({ cls: 'clew-group-name-row' });
+		new TextComponent(nameRowEl).setValue(preset.name).onChange((value) => {
+			preset.name = value;
+			this.debouncedSaveFilterPresets();
+		});
+		new ExtraButtonComponent(nameRowEl).setIcon('x').setTooltip('Close').onClick(() => this.toggleEditingFilter(preset.id));
 
-		new Setting(formEl).setName('Name').addText((text) =>
-			text.setValue(preset.name).onChange((value) => {
-				preset.name = value;
-				this.debouncedSaveFilterPresets();
-			}),
-		);
-
-		new Setting(formEl).setName('Criteria').setDesc('A note matches this filter if it matches every criterion below.').setHeading();
 		const criteriaEl = formEl.createDiv({ cls: 'clew-group-criteria' });
 		this.renderCriteriaList(criteriaEl, this.filterCriteriaContext(preset));
 
@@ -2977,30 +2974,23 @@ export class GraphPane {
 	 * commit or discard by then.
 	 */
 	private renderGroupEditForm(group: NodeGroup): void {
-		const formEl = this.colorAndSizeGroupsContainerEl.createDiv({ cls: 'clew-group-edit' });
+		// 'clew-group-edit-flat' in addition to the shared 'clew-group-edit'
+		// (still used as-is by Filter's own renderFilterEditForm()) - this
+		// form dropped its "Group"/"Criteria" Setting headings (flattened,
+		// see below), so it no longer needs the child-row left-inset that
+		// exists purely to line their text up with a Setting's own indent -
+		// see styles.css's `.clew-group-edit-flat` rule.
+		const formEl = this.colorAndSizeGroupsContainerEl.createDiv({ cls: 'clew-group-edit clew-group-edit-flat' });
 
-		// A real section heading (.setHeading(), same as "Criteria" below
-		// and Appearance's "Nodes"/"Edges") rather than a plain Setting name
-		// - user feedback: as a plain name it didn't read as a heading at
-		// all. The trailing "x" is the only way left to collapse the form
-		// back to the group's row - user feedback removed the standalone
-		// "Done" button at the bottom entirely (every field already
-		// auto-saves, so there was nothing left for it to actually commit).
-		new Setting(formEl)
-			.setName('Group')
-			.setHeading()
-			.addExtraButton((button) =>
-				button
-					.setIcon('x')
-					.setTooltip('Close')
-					.onClick(() => this.toggleEditingGroup(group.id)),
-			);
-
-		// A plain flex row, not a Setting - user feedback: no "Name" label
-		// (redundant right under the "Group" heading), the color picker
-		// flush left, and the title field stretching to fill the rest of
-		// the row instead of the width Obsidian's default Setting control
-		// column would leave it.
+		// Flattened from a separate "Group" heading row + always-visible
+		// "Scale size" toggle row into one line - user feedback: three
+		// stacked boxes (this form's own background, a "Criteria" heading
+		// section, and each criterion's own box) before reaching any actual
+		// criteria read as cluttered. The color picker and name field are
+		// the two things every group needs; "Scale size" (rarely used) is
+		// tucked behind the "..." menu instead of always claiming a row of
+		// its own, and "x" (closes the form back to the group's row) moved
+		// here rather than under a now-removed heading.
 		const nameRowEl = formEl.createDiv({ cls: 'clew-group-name-row' });
 		new ColorComponent(nameRowEl).setValue(group.color).onChange((value) => {
 			group.color = value;
@@ -3012,15 +3002,10 @@ export class GraphPane {
 			this.debouncedSaveNodeGroups();
 			this.applyNodeGroups();
 		});
+		const optionsButton = new ExtraButtonComponent(nameRowEl).setIcon('more-vertical').setTooltip('More options');
+		optionsButton.onClick(() => this.openGroupOptionsMenu(optionsButton.extraSettingsEl, group));
+		new ExtraButtonComponent(nameRowEl).setIcon('x').setTooltip('Close').onClick(() => this.toggleEditingGroup(group.id));
 
-		new Setting(formEl).setName('Scale size').addToggle((toggle) =>
-			toggle.setValue(group.sizeMultiplier !== null).onChange((value) => {
-				group.sizeMultiplier = value ? (group.sizeMultiplier ?? 1) : null;
-				void this.plugin.saveSettings();
-				this.applyNodeGroups();
-				this.renderColorAndSizePanel();
-			}),
-		);
 		// No description here (user feedback: not needed) - "Scale size"
 		// off by default (sizeMultiplier starts null, see startCreatingGroup())
 		// plus the slider's own live tooltip while dragging cover it well
@@ -3039,13 +3024,12 @@ export class GraphPane {
 			);
 		}
 
-		// "Criteria" (not "Criteria - all must match") - kept to a single
-		// short setDesc() below rather than a whole extra control, since
-		// AND-across-everything isn't user-configurable (removed on
-		// feedback: a per-group AND/OR choice, then nested AND/OR blocks,
-		// were both "too complicated for a first implementation" - see
-		// nodeGroups.ts's docstring).
-		new Setting(formEl).setName('Criteria').setDesc('A note must match every criterion below.').setHeading();
+		// No "Criteria" heading/description any more (removed on feedback,
+		// same flattening as above) - AND-across-everything still isn't
+		// user-configurable (a per-group AND/OR choice, then nested AND/OR
+		// blocks, were both "too complicated for a first implementation" -
+		// see nodeGroups.ts's docstring), there's just nothing left to say
+		// about that here once the list sits directly under the name.
 		const criteriaEl = formEl.createDiv({ cls: 'clew-group-criteria' });
 		this.renderCriteriaList(criteriaEl, this.groupCriteriaContext(group));
 
@@ -3058,6 +3042,24 @@ export class GraphPane {
 		// criterion of this type").
 		const addCriterionButton = formEl.createEl('button', { text: '+ add', cls: 'clew-filter-add-button' });
 		addCriterionButton.addEventListener('click', (evt) => this.openAddCriterionMenu(evt, this.groupCriteriaContext(group)));
+	}
+
+	/** The "..." menu next to a group's name (renderGroupEditForm()) - currently just "Scale size", the one group-level option beyond name/color/criteria. Pulled out of the form's main flow (previously a permanent, always-visible toggle row) since it's rarely used and was competing with the name/criteria for attention - user feedback on flattening the panel's hierarchy. Positioned off `anchorEl`'s own bounding box rather than a MouseEvent so it works the same regardless of how it was triggered. */
+	private openGroupOptionsMenu(anchorEl: HTMLElement, group: NodeGroup): void {
+		const menu = new Menu();
+		menu.addItem((item) =>
+			item
+				.setTitle('Scale size')
+				.setChecked(group.sizeMultiplier !== null)
+				.onClick(() => {
+					group.sizeMultiplier = group.sizeMultiplier !== null ? null : 1;
+					void this.plugin.saveSettings();
+					this.applyNodeGroups();
+					this.renderColorAndSizePanel();
+				}),
+		);
+		const rect = anchorEl.getBoundingClientRect();
+		menu.showAtPosition({ x: rect.left, y: rect.bottom });
 	}
 
 	/**
@@ -3127,28 +3129,24 @@ export class GraphPane {
 			ctx.rerenderPanel();
 		};
 
-		// The type as its own heading line (not inline with the fields any
-		// more - user feedback: first line = heading, e.g. "Property", then
-		// the fields on the line(s) below), same "heading, then controls"
-		// shape as the group form's own "Group"/"Criteria" headings above.
-		const typeHeadingEl = editEl.createDiv({ cls: 'clew-criterion-type-heading', text: CRITERION_TYPE_LABELS[criterion.type] });
-		// Only "Activity" gets a tooltip explaining its mechanism - every
-		// other type is self-evident from its own controls (a tag picker,
-		// a folder path, ...), but "an inactive/active area of the vault"
-		// (this criterion's dropdown, below) still begs the question of
-		// what decides that without at least one sentence of explanation -
-		// a tooltip here rather than a permanent line of text under the
-		// heading, since every other criterion type manages without one and
-		// user feedback has consistently pushed for keeping this list
-		// compact (see e.g. the removed size-multiplier description text).
+		const controlsEl = editEl.createDiv({ cls: 'clew-criterion-controls' });
+
+		// The type as the first segment of the row (not its own heading
+		// line above the fields any more - user feedback: a criterion being
+		// edited taking 4 stacked lines, most of them just for "Property" or
+		// "Text", read as heavier than the single-line summary it collapses
+		// back to). Only "Activity" gets a tooltip explaining its mechanism -
+		// every other type is self-evident from its own controls (a tag
+		// picker, a folder path, ...), but "an inactive/active area of the
+		// vault" (this criterion's dropdown, below) still begs the question
+		// of what decides that without at least one sentence of explanation.
+		const typeBadgeEl = controlsEl.createSpan({ cls: 'clew-criterion-type-badge', text: CRITERION_TYPE_LABELS[criterion.type] });
 		if (criterion.type === 'clusterFreshness') {
 			setTooltip(
-				typeHeadingEl,
+				typeBadgeEl,
 				'Notes are grouped into tightly-linked neighborhoods, then compared by how recently each neighborhood was edited overall.',
 			);
 		}
-
-		const controlsEl = editEl.createDiv({ cls: 'clew-criterion-controls' });
 
 		switch (criterion.type) {
 			case 'tag':
@@ -3261,12 +3259,14 @@ export class GraphPane {
 			}
 		}
 
-		// Check/cancel always sit on their own line below the fields (user
-		// feedback), not inside controlsEl - a separate block-level row so
-		// they're never caught up in that container's own wrapping once
-		// several fields (e.g. a tag criterion's pills) wrap onto a second
-		// line themselves.
-		const actionsEl = editEl.createDiv({ cls: 'clew-criterion-edit-actions' });
+		// Check/cancel now sit at the end of the same row as the fields
+		// (previously forced onto their own line below - user feedback that
+		// pushed a criterion's edit form to 4 stacked lines total). Still a
+		// child of controlsEl, not a sibling, so `margin-left: auto` (see
+		// styles.css) can pin it to the row's right edge and let it wrap
+		// onto its own line only when the fields before it actually need
+		// the space (e.g. a tag criterion's pills).
+		const actionsEl = controlsEl.createDiv({ cls: 'clew-criterion-edit-actions' });
 		new ExtraButtonComponent(actionsEl).setIcon('check').setTooltip('Done').onClick(finishEditing);
 		new ExtraButtonComponent(actionsEl).setIcon('x').setTooltip('Cancel').onClick(() => {
 			// A snapshot means this criterion existed before this edit
