@@ -1,6 +1,6 @@
 {
 	"name": "obsidian-clew",
-	"version": "1.1.0",
+	"version": "1.2.0",
 	"description": "See your whole vault as a graph and find how any two notes connect, without every path routing through your index notes.",
 	"main": "main.js",
 	"type": "module",
