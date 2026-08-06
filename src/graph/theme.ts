@@ -4,7 +4,6 @@ export interface ThemeColors {
 	labelColor: string;
 	defaultEdgeColor: string;
 	primaryPathColor: string;
-	altPathColor: string;
 	dimNodeColor: string;
 	dimEdgeColor: string;
 	matchColor: string;
@@ -325,7 +324,6 @@ export function readThemeColors(referenceEl: HTMLElement, edgeIntensity: number 
 		// attributes directly (applyHighlight() in graphPane.ts) and
 		// sigma's own color parser doesn't understand oklch()/lab()/etc.
 		primaryPathColor: ensureContrast(cssVar('--color-green', '#22c55e'), backgroundColor),
-		altPathColor: ensureContrast(cssVar('--color-yellow', '#eab308'), backgroundColor),
 		dimNodeColor: blendToward(cssVar('--text-faint', '#4b5563'), backgroundColor, DIM_FACTOR),
 		// min(DIM_FACTOR, edgeIntensity), not DIM_FACTOR alone: a low
 		// edgeIntensity setting can already put the *resting* edge color

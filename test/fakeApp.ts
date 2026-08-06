@@ -12,19 +12,14 @@ export interface FakeNote {
 export interface FakeAppHandle {
 	app: App;
 	files: TFile[];
-	/** Files written via app.vault.create() during the test, in call order. */
-	created: { path: string; data: string }[];
-	/** Vault paths passed to leaf.openFile(), in call order. */
-	openedPaths: string[];
 }
 
 /**
- * Builds a fake `App` shaped exactly like what buildVaultGraph and
- * canvasExport actually call: metadataCache.resolvedLinks,
- * metadataCache.getFileCache, vault.getAbstractFileByPath,
- * vault.getResourcePath, vault.create, workspace.getLeaf().openFile(). Not a
- * general-purpose Obsidian test harness - just enough surface for the
- * graph-building and canvas-export logic under test.
+ * Builds a fake `App` shaped exactly like what buildVaultGraph actually
+ * calls: metadataCache.resolvedLinks, metadataCache.getFileCache,
+ * vault.getAbstractFileByPath, vault.getResourcePath. Not a general-purpose
+ * Obsidian test harness - just enough surface for the graph-building logic
+ * under test.
  *
  * Returns the real (type-only) `TFile` type at this boundary, cast from the
  * lightweight mock class - see obsidian-mock.ts for why the mock doesn't try
@@ -41,9 +36,6 @@ export function createFakeApp(notes: FakeNote[]): FakeAppHandle {
 		resolvedLinks[note.path] = Object.fromEntries(note.links.map((target) => [target, 1]));
 	}
 
-	const created: { path: string; data: string }[] = [];
-	const openedPaths: string[] = [];
-
 	const fakeApp = {
 		metadataCache: {
 			resolvedLinks,
@@ -55,27 +47,12 @@ export function createFakeApp(notes: FakeNote[]): FakeAppHandle {
 		vault: {
 			getAbstractFileByPath: (path: string) => filesByPath.get(path) ?? null,
 			getResourcePath: (file: MockTFile) => `app://local/${file.path}`,
-			create: async (path: string, data: string) => {
-				const file = new MockTFile(path);
-				created.push({ path, data });
-				filesByPath.set(path, file);
-				return file;
-			},
 			getMarkdownFiles: () => mockFiles,
-		},
-		workspace: {
-			getLeaf: () => ({
-				openFile: async (file: MockTFile) => {
-					openedPaths.push(file.path);
-				},
-			}),
 		},
 	};
 
 	return {
 		app: fakeApp as unknown as App,
 		files: mockFiles as unknown as TFile[],
-		created,
-		openedPaths,
 	};
 }

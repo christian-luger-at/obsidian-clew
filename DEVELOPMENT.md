@@ -114,7 +114,6 @@ src/
     standaloneGraphView.ts   # the "Clew graph view" - ribbon icon / "Open graph view" command, whole vault
     pathfinding.ts           # Yen's k-shortest-paths, hub-avoidance weighting
     pathfindingModal.ts      # note-picker modal for path finding
-    canvasExport.ts          # export a found path as a .canvas file
 ```
 
 As the plugin grows, keep `main.ts` limited to lifecycle (load/unload, registering
@@ -148,8 +147,8 @@ npm run test:coverage
 ```
 
 [Vitest](https://vitest.dev). Covers the pure graph-algorithm modules directly
-(`pathfinding.ts`, `stagnation.ts`, `canvasExport.ts`'s `pathToCanvas`), plus
-`vaultGraph.ts` - the actual node/edge-construction pipeline, exercised
+(`pathfinding.ts`, `stagnation.ts`), plus `vaultGraph.ts` - the actual
+node/edge-construction pipeline, exercised
 against realistic fixtures (hub notes, isolated notes, cross-cluster links
 outside the given file set, cover images, directed vs. undirected).
 
@@ -221,20 +220,82 @@ ln -s "$PWD/main.js" "$PWD/manifest.json" "$PWD/styles.css" test-vault/.obsidian
 Every `npm run build` after that updates both vaults automatically - no
 manual copy step. Then open `test-vault` in Obsidian and check:
 
-- **Find path** is currently disabled (user feedback: not ready to ship
-  yet) - `FIND_PATH_ENABLED` in graphPane.ts gates both the toolbar icon
-  and the command in main.ts; flip it to `true` to bring the feature (and
-  the QA steps below) back for testing. With it `false`, confirm the
-  toolbar has no route icon and the command palette has no "Find path
-  between two notes" entry - the underlying pathfinding.ts/
-  PathfindingModal/canvasExport.ts code is untouched, just unreferenced.
+- **Find path** (route icon) is enabled - `FIND_PATH_ENABLED` in graphPane.ts
+  gates both the toolbar icon and the command in main.ts; flip it back to
+  `false` if there's ever again a reason to hide the feature without
+  deleting it (pathfinding.ts/PathfindingModal would stay as-is, just
+  unreferenced, same as before it was re-enabled). Its result
+  panel now has the same header chrome (title + a single "x" that closes
+  it) every other panel here uses - it used to just start straight in with
+  a heading-less list.
+- **The dialog remembers the last search while a result is showing**: run a
+  search, then click the toolbar icon again (or the command) to reopen the
+  dialog - "From"/"To"/"Directed" should still show what you just searched
+  for, including after a "no path found" result (see lastPathSource's own
+  docstring in graphPane.ts for exactly which panel states count as
+  "showing"). Close the result (its own "x") or open the panel fresh for
+  the first time - the fields should be empty, not stuck on an old search.
 - **Find path**, `Topic A - Detail 1` → `Topic B - Detail 1`: should offer a
   route through `Bridge Note` as an alternative to the naive route through
   `Hub` - the hub-avoidance cost model should make the Bridge Note route rank
-  competitively despite `Hub` being the shorter hop count.
+  competitively despite `Hub` being the shorter hop count. The result panel
+  should show "Shortest" first, then up to 3 "Alt N" pills next to it in one
+  row - 4 total (`MAX_PATH_ROUTES` in graphPane.ts, not pathfinding.ts's own
+  library default of 5 - a UI decision, not the library's own) - user
+  feedback: 4 full-width rows just to pick a route cost more space than the
+  choice itself needed, one row of small pills reads the same choice in a
+  fraction of the height. No hover tooltip on a pill either (an earlier
+  version showed its note count that way - removed on user feedback); the
+  currently-selected pill gets a solid accent fill (same "selected"
+  language as the toolbar's own `is-active` icons), and a `Shortest · 3
+  notes`-style summary line under the pills always names the one currently
+  showing, which is where the note count still lives. **Only "Shortest" is
+  drawn on the graph at first** - click "Alt 1" (or 2, or 3): its pill
+  becomes the filled one, the summary line and the note list below switch
+  to that route's notes, and the graph highlight moves to *only* that route
+  - the previously-shown route (and every other route not currently
+  selected) should now look exactly like "not on this path at all" (dimmed,
+  no distinct color of its own) - user feedback: showing every route
+  highlighted at once, each in
+  its own color, was hard to read. Clicking a note in the list (under the
+  routes) opens it, same as before. **No "Export path to canvas" any
+  more** - removed (user feedback, "Warum brauche ich Export Feature?"):
+  the auto-generated canvas was just a plain left-to-right chain with no
+  real advantage over building one by hand, and the actual "explore this
+  path further" need was already covered by clicking a note in the list to
+  open it - canvasExport.ts is deleted, not just unreferenced.
+  **No legend** - user feedback ("Legende kann weg"): a route's own
+  accent-bordered row plus the graph highlight already say which one is
+  shown, without a legend repeating it (renderLegend() itself stays, now a
+  no-op for this panel, in case a future mode wants a legend entry again).
+  **The note list is a vertical stepper** (user feedback: "Stepper mit
+  Verbindungslinie", replacing a plain `1. 2. 3.` numbered list) - a marker
+  dot per note with a connecting line down to the next one, no link count
+  next to it any more (an earlier version showed one - removed on user
+  feedback, the dot's own size already carries that signal without a
+  number repeating it). `Hub`'s dot should visibly be the largest in the
+  list (12 links in the test vault vs. 1-3 for the others on a typical
+  route) - `pathStepMarkerSize()` in graphPane.ts grows it the same way a
+  node's own size on the canvas grows by degree, so a hub note stands out
+  here too, not just on the graph itself.
+  **The toolbar icon lights up while a result is showing** - run a search;
+  the route icon itself (not just the panel) should get the same solid
+  accent fill every other active toolbar icon gets, and lose it again once
+  the result is closed. It never did this at all before (a real bug, not
+  just a stale state one): `findPathButton` was a local variable inside the
+  constructor, with nothing anywhere ever touching its `is-active` class.
 - **Find path**, anything → `Island X` or `Island Y`: should report "no path
-  found" (a first-class result, not an error) - `Island X`/`Island Y` are a
-  deliberately disconnected two-note component.
+  found" (a first-class result, not an error, still inside the same header
+  chrome) - `Island X`/`Island Y` are a deliberately disconnected two-note
+  component.
+- **Find path closes Filter/Color & size/Appearance, and vice versa**
+  (closeOtherPanels()) - open Filter or Color & size, then run a Find-path
+  search: the Filter/Color & size panel should close and its own coloring/
+  filtering should stop being visible (Find-path overrides it outright, see
+  applyHighlight()'s reducers) - previously it didn't, leaving a stale
+  panel open showing criteria that no longer matched what was drawn.
+  Conversely, with a path result showing, opening Filter/Color & size/
+  Appearance should close the path result panel and clear its highlight.
 - **Cluster freshness** (an "Activity" criterion on a node group - see
   "Color & size" below and `nodeGroups.ts`): create a group with a single
   Activity criterion, reading "Notes in [an inactive area of the vault]" -

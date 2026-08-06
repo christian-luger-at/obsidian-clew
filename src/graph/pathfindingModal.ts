@@ -7,23 +7,34 @@ export interface PathfindingRequest {
 	directed: boolean;
 }
 
+/** What to pre-fill the "From"/"To"/"Directed" fields with when the modal opens - GraphPane.openPathfindingModal()'s own docstring for when this is "the last search" vs. empty. */
+export interface PathfindingModalInitial {
+	source: TFile | null;
+	target: TFile | null;
+	directed: boolean;
+}
+
 /**
  * Note selection is restricted to `candidates` - the notes currently in the
  * graph being searched. Picking a note outside that set would just fail to
  * find a path for a confusing reason (it isn't part of the graph at all).
  */
 export class PathfindingModal extends Modal {
-	private sourceFile: TFile | null = null;
-	private targetFile: TFile | null = null;
-	private directed = false;
+	private sourceFile: TFile | null;
+	private targetFile: TFile | null;
+	private directed: boolean;
 	private errorEl!: HTMLElement;
 
 	constructor(
 		app: App,
 		private readonly candidates: TFile[],
 		private readonly onSubmit: (request: PathfindingRequest) => void,
+		initial: PathfindingModalInitial = { source: null, target: null, directed: false },
 	) {
 		super(app);
+		this.sourceFile = initial.source;
+		this.targetFile = initial.target;
+		this.directed = initial.directed;
 	}
 
 	onOpen(): void {
@@ -44,6 +55,7 @@ export class PathfindingModal extends Modal {
 		fromSetting.settingEl.addClass('clew-note-picker-setting');
 		fromSetting.addText((text) => {
 			text.setPlaceholder('Start note…');
+			if (this.sourceFile) text.setValue(this.sourceFile.basename);
 			text.inputEl.addClass('clew-note-picker-input');
 			const suggest = new NoteSuggest(this.app, text.inputEl, this.candidates);
 			suggest.onSelect((file) => {
@@ -58,6 +70,7 @@ export class PathfindingModal extends Modal {
 		toSetting.settingEl.addClass('clew-note-picker-setting');
 		toSetting.addText((text) => {
 			text.setPlaceholder('End note…');
+			if (this.targetFile) text.setValue(this.targetFile.basename);
 			text.inputEl.addClass('clew-note-picker-input');
 			const suggest = new NoteSuggest(this.app, text.inputEl, this.candidates);
 			suggest.onSelect((file) => {

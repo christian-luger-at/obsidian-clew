@@ -17,6 +17,11 @@ import { bidirectional } from 'graphology-shortest-path/dijkstra';
 
 export type PathResult = { found: false } | { found: true; paths: string[][] };
 
+/** A vault path's display name (no folders, no `.md`) - used by graphPane.ts's path-result list. */
+export function basename(vaultPath: string): string {
+	return vaultPath.split('/').pop()?.replace(/\.md$/, '') ?? vaultPath;
+}
+
 interface Candidate {
 	path: string[];
 	cost: number;

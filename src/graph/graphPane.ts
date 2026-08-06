@@ -8,12 +8,12 @@ import { buildVaultGraph, resetToDeterministicPositions, sizeNodesByDegree } fro
 import { runHierarchicalLayout, HIERARCHICAL_LAYOUT_NODE_LIMIT } from './hierarchicalLayout';
 import { computeRadialLayout } from './radialLayout';
 import { computeCircularLayout } from './circularLayout';
-import { findPaths, PathResult } from './pathfinding';
-import { PathfindingModal } from './pathfindingModal';
+import { basename, findPaths, PathResult } from './pathfinding';
+import { PathfindingModal, PathfindingModalInitial } from './pathfindingModal';
+
 import { RadialLayoutModal } from './radialLayoutModal';
 import { LayoutMode, LAYOUT_MODE_LABELS, LayoutModal } from './layoutModal';
 import { ConfirmModal } from './confirmModal';
-import { exportPathToCanvas } from './canvasExport';
 import { computeCommunityStats, detectCommunities, staleness } from './stagnation';
 import { readThemeColors, ThemeColors, blendToward } from './theme';
 import { evaluateFilters, FilterCombineMode, FilterPreset, isAnyFilterEnabled, MAX_FILTER_PRESETS } from './filter';
@@ -63,6 +63,11 @@ function formatTimelineDuration(seconds: number): string {
 	return `${minutes} min`;
 }
 
+/** A Find-path route step's marker dot size (px) - grown by degree the same way vaultGraph.ts's sizeNodesByDegree() grows a node's size on the canvas, so a hub note visibly stands out in the route list too, not just on the graph. A small, capped range (6-14px): this is a UI list marker, not a graph node, so it shouldn't grow anywhere near as much. */
+function pathStepMarkerSize(degree: number): number {
+	return Math.min(14, 6 + Math.log(1 + degree) * 2.5);
+}
+
 /** Wall-clock budget for the initial force-layout settle when a graph is (re)built - not user-tunable (unlike gravity/scalingRatio), since a longer settle mostly just delays interactivity rather than visibly improving the result. */
 const SETTLE_DURATION_MS = 2000;
 
@@ -73,14 +78,23 @@ const DRAG_SETTLE_DURATION_MS = 1500;
 const MIN_FIT_EXTENT = 32;
 
 /**
- * "Find path" (toolbar icon + `openPathfindingModal()` + the command in
- * main.ts) isn't ready to ship yet - user feedback: hide the icon (and the
- * command) without deleting the underlying feature (pathfinding.ts,
- * PathfindingModal, canvasExport.ts, openPathfindingModal() itself all stay
- * as-is, just unreferenced from the toolbar/command palette for now). Flip
- * back to `true` to re-enable both in one place.
+ * How many routes total runPathSearch() asks findPaths() for (passed
+ * straight through as its `k`) - the shortest route plus 3 alternatives.
+ * pathfinding.ts's own default (k=5) is a generic library default, not a UI
+ * decision made for this panel specifically.
  */
-export const FIND_PATH_ENABLED = false;
+const MAX_PATH_ROUTES = 4;
+
+/**
+ * "Find path" (toolbar icon + `openPathfindingModal()` + the command in
+ * main.ts). Was `false` ("not ready to ship yet") while its panel didn't
+ * participate in closeOtherPanels()'s mutual exclusion with Filter/Color &
+ * size/Appearance and always surfaced up to 5 alternative routes - both
+ * fixed (see closeOtherPanels()'s docstring, MAX_PATH_ROUTES above).
+ * Re-enabled rather than deleted the gate itself, in case a future reason
+ * to hide it again comes up - flip back to `false` to do that in one place.
+ */
+export const FIND_PATH_ENABLED = true;
 
 /**
  * How long the hover-dim (everything but the hovered node/its neighbors)
@@ -413,6 +427,8 @@ export class GraphPane {
 	private editingFilterCriterionIndex: number | null = null;
 	private filterCriterionEditSnapshot: GroupCriterion | null = null;
 	private readonly layoutButton: HTMLButtonElement;
+	/** Only assigned when FIND_PATH_ENABLED - see its own docstring. Every use below is optional-chained for that reason, not because the button can otherwise go missing once created. */
+	private findPathButton: HTMLButtonElement | null = null;
 	private readonly colorAndSizeButton: HTMLButtonElement;
 	private readonly colorAndSizePanelEl: HTMLElement;
 	// Reassigned on every renderColorAndSizePanel() call, same reasoning as
@@ -472,8 +488,25 @@ export class GraphPane {
 	 * that method's docstring for why this is necessary at all.
 	 */
 	private dragMoved = false;
-	/** Whether a found path result is the reason nodes/edges are currently colored - see renderLegend()'s precedence over this vs. the filter, which visually overrides a path's reducer when active. */
-	private pathResultActive = false;
+	/** The current Find-path result's routes (null when nothing found/no search run yet, or once something else has taken over the reducers - see clearHighlight()) - kept around so selectPathRoute() can re-highlight and re-render the route list on click without re-running the search. Doubles as "is a path result the reason nodes/edges are currently colored" (non-null = yes) - a separate boolean for that (`pathResultActive`) was removed once its only reader, renderLegend()'s own path legend, was removed (user feedback: "Legende kann weg" - a route's own accent-bordered row and the graph highlight already say which one is shown, without needing a legend to repeat it). */
+	private pathRoutes: string[][] | null = null;
+	/** Which of pathRoutes is currently shown on the graph - only that one route's notes/edges are highlighted, every other route treated the same as "not on any path" (user feedback: showing every route's nodes/edges at once, each in its own color, was hard to read - one route at a time, picked from the list, is clearer). Reset to the shortest route (0) on every new search. */
+	private selectedPathIndex = 0;
+	/**
+	 * The source/target/directed openPathfindingModal() last ran a search
+	 * with - reset alongside pathRoutes (see resetPathState()), so they're
+	 * only ever non-null/non-default while a result is actually showing.
+	 * openPathfindingModal() pre-fills the "From"/"To"/"Directed" fields
+	 * from these - user feedback: reopening the dialog while a result is
+	 * still up should let you tweak that same search (e.g. just swap the
+	 * target) rather than starting from two empty fields every time; but
+	 * the *first* time it's opened, or once the result's been dismissed
+	 * (its own "x"), the fields should be empty again, not stuck showing
+	 * whatever was searched for last.
+	 */
+	private lastPathSource: TFile | null = null;
+	private lastPathTarget: TFile | null = null;
+	private lastPathDirected = false;
 	/** Remembers the radial layout's chosen focus note so an appearance-panel change can re-apply it (reapplyActiveLayout()) without re-prompting for a note. */
 	private radialFocusNode: string | null = null;
 
@@ -607,8 +640,8 @@ export class GraphPane {
 		this.colorAndSizeButton.addEventListener('click', () => this.toggleColorAndSizePanel());
 
 		if (FIND_PATH_ENABLED) {
-			const findPathButton = iconButton('route', 'Find path…');
-			findPathButton.addEventListener('click', () => this.openPathfindingModal());
+			this.findPathButton = iconButton('route', 'Find path…');
+			this.findPathButton.addEventListener('click', () => this.openPathfindingModal());
 		}
 
 		// Chat decision, 2026-08-04: a ctime-based time-lapse instead of the
@@ -669,7 +702,8 @@ export class GraphPane {
 		this.panelEl.empty();
 		this.panelEl.hide();
 		this.activateLayoutMode('force');
-		this.pathResultActive = false;
+		this.resetPathState();
+		this.updateFindPathButtonState();
 		// A vault refresh mid-playback (a note created/edited while playing)
 		// would otherwise keep animating against a file set/graph that no
 		// longer matches what's about to be rebuilt below.
@@ -842,16 +876,27 @@ export class GraphPane {
 	}
 
 	/**
-	 * Hides whichever of Filter/Color & size/Appearance is currently open,
-	 * other than `keep` - user feedback: only one of these three should be
-	 * open at a time ("immer nur einen Dialog anzeigen"), reversing an
-	 * earlier decision that let them stack in their own corners. Called
-	 * right before a toggle*Panel() method shows its own panel, not on
+	 * Hides whichever of Filter/Color & size/Appearance/Find-path's result is
+	 * currently open, other than `keep` - user feedback: only one of these
+	 * should be open at a time ("immer nur einen Dialog anzeigen"), reversing
+	 * an earlier decision that let Filter/Color & size/Appearance stack in
+	 * their own corners. Called right before a toggle*Panel() method (or
+	 * renderResult(), Find-path's equivalent) shows its own panel, not on
 	 * every render - closing one panel to open another is a single user
 	 * action, not something that should also fire on e.g. a live criteria
 	 * update repainting an already-open panel.
+	 *
+	 * Find-path joined this set late - it predates closeOtherPanels() and was
+	 * never added, so opening Filter/Color & size/Appearance while a path
+	 * result was showing used to leave that result's panel (and its
+	 * highlight reducers) sitting there stale until something else happened
+	 * to overwrite them, contradicting Find-path's own "mutually exclusive,
+	 * doesn't compose with anything" docstring (see applyTimeline()). Not
+	 * `'findPath'` on Timeline's own toggle - see toggleTimelinePanel()'s
+	 * docstring for why Timeline never calls closeOtherPanels() at all; it
+	 * clears a shown path result itself, directly, inside applyTimeline().
 	 */
-	private closeOtherPanels(keep: 'filter' | 'colorAndSize' | 'appearance'): void {
+	private closeOtherPanels(keep: 'filter' | 'colorAndSize' | 'appearance' | 'findPath'): void {
 		if (keep !== 'filter' && this.filterPanelEl.isShown()) {
 			this.filterPanelEl.hide();
 			this.editingFilterId = null;
@@ -867,6 +912,20 @@ export class GraphPane {
 		if (keep !== 'appearance' && this.appearancePanelEl.isShown()) {
 			this.appearancePanelEl.hide();
 			this.appearanceButton.removeClass('is-active');
+		}
+		if (keep !== 'findPath' && this.panelEl.isShown()) {
+			this.panelEl.empty();
+			this.panelEl.hide();
+			// clearHighlight(), not just clearing pathRoutes - unlike
+			// Filter/Color & size/Appearance (whose own re-render always
+			// repaints the graph right after, so their reducers never stay
+			// stale), nothing else here is about to overwrite the path
+			// highlight's nodeReducer/edgeReducer on a mere panel toggle -
+			// without this, hiding the panel used to leave the highlight
+			// itself sitting on the graph until something unrelated
+			// happened to repaint it.
+			this.clearHighlight();
+			this.updateFindPathButtonState();
 		}
 	}
 
@@ -1190,6 +1249,19 @@ export class GraphPane {
 	}
 
 	/**
+	 * Same "tied to the panel being open" convention as
+	 * updateTimelineButtonState() above, not "is a result currently found"
+	 * - user-reported: the toolbar icon never lit up at all (missing
+	 * entirely, not just wrong) because findPathButton was a local const in
+	 * the constructor with nothing ever updating its `is-active` class.
+	 * Called everywhere renderPathPanel()/clearHighlight()/resetPathState()
+	 * change whether this.panelEl is shown.
+	 */
+	private updateFindPathButtonState(): void {
+		this.findPathButton?.toggleClass('is-active', this.panelEl.isShown());
+	}
+
+	/**
 	 * `bounds.start` itself is the earliest note's own ctime, so a cursor
 	 * *at* it (`ctime <= cursor` in timeline.ts's visibleNodesAt()) already
 	 * matches that note - user feedback: with the scrubber sitting at the
@@ -1236,9 +1308,10 @@ export class GraphPane {
 			return;
 		}
 
-		this.pathResultActive = false;
+		this.resetPathState();
 		this.panelEl.empty();
 		this.panelEl.hide();
+		this.updateFindPathButtonState();
 
 		// An active filter stays in effect while scrubbing/playing (user
 		// feedback: "Wenn ein Filter gesetzt ist, wird dieser bei Animate
@@ -1381,12 +1454,30 @@ export class GraphPane {
 
 	openPathfindingModal(): void {
 		if (!this.graph) return;
-		new PathfindingModal(this.app, this.files, (request) => {
-			this.runPathSearch(request.source, request.target, request.directed);
-		}).open();
+		// lastPathSource/Target/Directed are only ever non-null/non-default
+		// while the result panel is actually showing something for them
+		// (found or not) - see lastPathSource's own docstring for why, so
+		// this can just pass them straight through with no extra "is a
+		// result currently active" check of its own.
+		const initial: PathfindingModalInitial = {
+			source: this.lastPathSource,
+			target: this.lastPathTarget,
+			directed: this.lastPathDirected,
+		};
+		new PathfindingModal(
+			this.app,
+			this.files,
+			(request) => {
+				this.runPathSearch(request.source, request.target, request.directed);
+			},
+			initial,
+		).open();
 	}
 
 	private runPathSearch(source: TFile, target: TFile, directed: boolean): void {
+		this.lastPathSource = source;
+		this.lastPathTarget = target;
+		this.lastPathDirected = directed;
 		// Rendering always uses an undirected graph (see buildVaultGraph); a
 		// directed search rebuilds its own graph just for this query rather
 		// than maintaining two synchronized live graphs. Every edge in the
@@ -1395,74 +1486,166 @@ export class GraphPane {
 		const searchGraph = directed ? buildVaultGraph(this.app, this.files, { directed: true }) : this.graph;
 		if (!searchGraph) return;
 
-		const result = findPaths(searchGraph, source.path, target.path);
+		const result = findPaths(searchGraph, source.path, target.path, MAX_PATH_ROUTES);
 		this.renderResult(result);
 	}
 
+	/**
+	 * Runs a search and stores its result - rendering itself is
+	 * renderPathPanel()'s job (also called by selectPathRoute(), so a route
+	 * switch re-renders exactly the same way a fresh search does).
+	 */
 	private renderResult(result: PathResult): void {
+		if (!result.found) {
+			// Not the full clearHighlight() - this keeps lastPathSource/
+			// Target/Directed intact (the panel is still open, just showing
+			// "no path found" for them - see lastPathSource's own
+			// docstring), it only needs the *reducers* reset in case a
+			// previous successful search's highlight was still showing.
+			this.pathRoutes = null;
+			this.clearPathReducers();
+			this.renderPathPanel();
+			return;
+		}
+		this.pathRoutes = result.paths;
+		this.selectedPathIndex = 0;
+		this.renderPathPanel();
+	}
+
+	/**
+	 * Fully rebuilds the path panel from current state (this.pathRoutes/
+	 * selectedPathIndex) - same "empty() then rebuild from scratch" pattern
+	 * every other panel here uses (renderColorAndSizePanel() etc.), rather
+	 * than patching in just the changed piece, so a route switch can't drift
+	 * from what a fresh search renders. Header chrome (title + a single "x"
+	 * that closes it) matches Filter/Color & size/Appearance's own
+	 * `clew-appearance-panel-header` - user feedback: this panel never had
+	 * one, it used to start straight in with a heading-less list. The "x"
+	 * is the only way to dismiss a result now (replaces a separate "Clear"
+	 * button that did the exact same thing).
+	 */
+	private renderPathPanel(): void {
+		// Find-path overrides Filter/Color & size/Appearance outright (see
+		// applyHighlight()'s reducers, and closeOtherPanels()'s own
+		// docstring) - closing them here keeps their panels from sitting
+		// open showing criteria that no longer reflect what's actually
+		// drawn on the graph, the same "only one panel's effect visible at a
+		// time" guarantee those three already give each other.
+		this.closeOtherPanels('findPath');
 		this.panelEl.empty();
 		this.panelEl.show();
+		this.updateFindPathButtonState();
 
-		if (!result.found) {
-			// "Kein Pfad gefunden" is a result, not an error (doc 3.2).
-			this.panelEl.createEl('p', { text: 'No path found between these notes.' });
+		const headerEl = this.panelEl.createDiv({ cls: 'clew-appearance-panel-header' });
+		headerEl.createEl('h4', { text: 'Find path' });
+		const closeButton = headerEl.createEl('button', { cls: 'clickable-icon' });
+		setIcon(closeButton, 'x');
+		setTooltip(closeButton, 'Close');
+		closeButton.addEventListener('click', () => {
 			this.clearHighlight();
+			this.renderLegend();
+			this.panelEl.hide();
+			this.updateFindPathButtonState();
+		});
+
+		if (!this.pathRoutes) {
+			// "Kein Pfad gefunden" is a result, not an error (doc 3.2).
+			this.panelEl.createEl('p', { text: 'No path found between these notes.', cls: 'clew-filter-empty-note' });
 			this.renderLegend();
 			return;
 		}
 
-		this.applyHighlight(result.paths);
-		this.pathResultActive = true;
+		// A row of small pills (shortest first), not one full-width row per
+		// route (previous version) - user feedback: 4 stacked rows just to
+		// pick a route was more space than the choice itself needed. Note
+		// count moves into each pill's tooltip plus the summary line below
+		// (for the one currently selected) rather than sitting in every row
+		// - same "showing every route at once was hard to read, pick one
+		// from a list" reasoning as selectPathRoute()/applyHighlight()
+		// already had for the graph highlight itself, just applied to this
+		// list's own layout too.
+		const pillsEl = this.panelEl.createDiv({ cls: 'clew-path-pills' });
+		this.pathRoutes.forEach((_path, index) => {
+			const label = index === 0 ? 'Shortest' : `Alt ${index}`;
+			const pillEl = pillsEl.createEl('button', { cls: 'clew-path-pill', text: label });
+			pillEl.toggleClass('is-selected', index === this.selectedPathIndex);
+			pillEl.addEventListener('click', () => this.selectPathRoute(index));
+		});
+
+		const selectedPath = this.pathRoutes[this.selectedPathIndex]!;
+		const selectedLabel = this.selectedPathIndex === 0 ? 'Shortest' : `Alternative ${this.selectedPathIndex}`;
+		this.panelEl.createEl('p', {
+			cls: 'clew-path-summary',
+			text: `${selectedLabel} · ${selectedPath.length} ${selectedPath.length === 1 ? 'note' : 'notes'}`,
+		});
+		const detailEl = this.panelEl.createEl('ol', { cls: 'clew-path-detail' });
+		for (const nodePath of selectedPath) {
+			const stepEl = detailEl.createEl('li', { cls: 'clew-path-step' });
+			const degree = this.graph?.degree(nodePath) ?? 0;
+			// Degree-scaled the same way sizeNodesByDegree() sizes nodes on the
+			// canvas itself - user feedback: distinguish hub notes right in
+			// this list too, not just by looking at the graph. A CSS custom
+			// property, not an inline width/height, so pathStepMarkerSize()'s
+			// number stays the one source of truth the stylesheet reads from.
+			stepEl.style.setProperty('--clew-path-step-marker-size', `${pathStepMarkerSize(degree)}px`);
+			stepEl.createSpan({ cls: 'clew-path-step-marker' });
+			const item = stepEl.createSpan({ text: basename(nodePath), cls: 'clew-path-item' });
+			item.addEventListener('click', () => void this.openNote(nodePath));
+		}
+
+		this.applyHighlight(selectedPath);
 		this.renderLegend();
-
-		result.paths.forEach((path, index) => {
-			this.panelEl.createEl('h4', {
-				text: index === 0 ? 'Path' : `Alternative ${index}`,
-			});
-			const list = this.panelEl.createEl('ol');
-			for (const nodePath of path) {
-				const item = list.createEl('li', { text: basename(nodePath), cls: 'clew-path-item' });
-				item.addEventListener('click', () => void this.openNote(nodePath));
-			}
-		});
-
-		const exportButton = this.panelEl.createEl('button', { text: 'Export path to canvas' });
-		exportButton.addEventListener('click', () => {
-			void exportPathToCanvas(this.app, result.paths[0]!);
-		});
-
-		const clearButton = this.panelEl.createEl('button', { text: 'Clear' });
-		clearButton.addEventListener('click', () => {
-			this.clearHighlight();
-			this.renderLegend();
-			this.panelEl.hide();
-		});
 	}
 
-	private applyHighlight(paths: string[][]): void {
+	/** Switches which route is drawn on the graph and shown in the note list - see renderPathPanel()'s docstring for why a full re-render, not a partial DOM patch. */
+	private selectPathRoute(index: number): void {
+		this.selectedPathIndex = index;
+		this.renderPathPanel();
+	}
+
+	/** Highlights a single route - every other node/edge (including any route not currently selected) gets the same treatment as "not on this path at all", not a distinct color (see selectPathRoute()'s docstring for why this replaced highlighting every route at once). */
+	private applyHighlight(path: string[]): void {
 		if (!this.renderer || !this.graph) return;
 
-		const primaryNodes = new Set(paths[0]);
-		const allNodes = new Set(paths.flat());
-		const primaryEdges = new Set(edgeKeysAlongPath(this.graph, paths[0]!));
-		const altEdges = new Set(paths.slice(1).flatMap((path) => edgeKeysAlongPath(this.graph!, path)));
+		const pathNodes = new Set(path);
+		const pathEdges = new Set(edgeKeysAlongPath(this.graph, path));
 
 		this.renderer.setSetting('nodeReducer', (node, attr) => {
-			if (primaryNodes.has(node))
+			if (pathNodes.has(node))
 				return { ...attr, color: this.theme.primaryPathColor, labelColor: this.theme.primaryPathColor, zIndex: 2, forceLabel: true };
-			if (allNodes.has(node)) return { ...attr, color: this.theme.altPathColor, labelColor: this.theme.altPathColor, zIndex: 1 };
 			return { ...attr, color: this.theme.dimNodeColor, labelColor: this.theme.dimNodeColor };
 		});
 
 		this.renderer.setSetting('edgeReducer', (edge, attr) => {
-			if (primaryEdges.has(edge)) return { ...attr, color: this.theme.primaryPathColor, size: 3, zIndex: 2 };
-			if (altEdges.has(edge)) return { ...attr, color: this.theme.altPathColor, zIndex: 1 };
+			if (pathEdges.has(edge)) return { ...attr, color: this.theme.primaryPathColor, size: 3, zIndex: 2 };
 			return { ...attr, color: this.theme.dimEdgeColor };
 		});
 	}
 
+	/**
+	 * Fully resets Find-path's state - the result itself, the remembered
+	 * search (lastPathSource/Target/Directed, see its own docstring), and
+	 * the reducers. Used wherever the result panel is genuinely being
+	 * closed or superseded (its own "x", closeOtherPanels(), a vault
+	 * refresh, Filter/Timeline taking the reducers over) - not by a "no
+	 * path found" result, which keeps the panel (and the remembered
+	 * search) around and only needs clearPathReducers() on its own.
+	 */
 	private clearHighlight(): void {
-		this.pathResultActive = false;
+		this.resetPathState();
+		this.clearPathReducers();
+	}
+
+	/** pathRoutes + lastPathSource/Target/Directed, all set back to "nothing shown, nothing remembered" - the non-reducer half of clearHighlight() (see its own docstring), also used directly by the other genuine close/supersede sites (setFiles(), applyTimeline(), applyFilter()'s "a filter just took over" branch) that don't need clearPathReducers() too, since they're about to repaint the canvas some other way right after anyway. */
+	private resetPathState(): void {
+		this.pathRoutes = null;
+		this.lastPathSource = null;
+		this.lastPathTarget = null;
+		this.lastPathDirected = false;
+	}
+
+	/** Just the nodeReducer/edgeReducer reset, without touching pathRoutes/lastPath* - see clearHighlight()'s docstring for why those two are kept separate. */
+	private clearPathReducers(): void {
 		this.renderer?.setSetting('nodeReducer', null);
 		this.renderer?.setSetting('edgeReducer', null);
 	}
@@ -1577,37 +1760,24 @@ export class GraphPane {
 	}
 
 	/**
-	 * GitHub issue #13: a small always-visible key explaining what the
-	 * current node/edge colors mean - without it, the graph's coloring
-	 * (which means something different depending on which mode is active)
-	 * is unexplained decoration. Called from every mode-transition point
-	 * rather than computed lazily on render, matching this file's existing
-	 * pattern of pushing state changes into their own DOM update (e.g.
-	 * button `is-active` classes) right where the state changes.
-	 *
-	 * Reflects what's actually painted right now, not merely which piece of
-	 * state happens to be set. Neither the filter nor node groups (Color &
-	 * size) get a legend entry of their own - user feedback - a filter's
-	 * active criteria (shown right in its own panel as chips) and a
-	 * group's own name (shown right in its row in the Color & size panel)
-	 * are already the label; while a filter is active, this just falls
-	 * through to whatever (if anything) a shown path result would show,
-	 * same as it did before the filter existed.
+	 * GitHub issue #13: originally a small always-visible key explaining
+	 * what the current node/edge colors mean. Neither the filter nor node
+	 * groups (Color & size) ever got a legend entry of their own - user
+	 * feedback - a filter's active criteria (shown right in its own panel
+	 * as chips) and a group's own name (shown right in its row in the
+	 * Color & size panel) are already the label. Find-path's own two
+	 * entries ("Shown path"/"Not on this path") were the last thing this
+	 * ever showed - also removed on user feedback ("Legende kann weg"): a
+	 * route's own accent-bordered row in its panel, plus the highlight on
+	 * the graph itself, already say which one is shown, without a legend
+	 * repeating it. Kept as a real method (not deleted outright) rather
+	 * than removing `legendEl`/every call site - still called from every
+	 * mode-transition point, so a future mode that *does* want a legend
+	 * entry only needs to add one back here, not re-wire all of those call
+	 * sites again.
 	 */
 	private renderLegend(): void {
 		this.legendEl.empty();
-
-		if (this.pathResultActive) {
-			this.addLegendItem(this.theme.primaryPathColor, 'Shortest path');
-			this.addLegendItem(this.theme.altPathColor, 'Alternative path');
-			this.addLegendItem(this.theme.dimNodeColor, 'Not on a shown path');
-		}
-	}
-
-	private addLegendItem(color: string, label: string): void {
-		const item = this.legendEl.createDiv({ cls: 'clew-legend-item' });
-		item.createSpan({ cls: 'clew-legend-swatch' }).style.backgroundColor = color;
-		item.createSpan({ text: label });
 	}
 
 	/**
@@ -2534,6 +2704,7 @@ export class GraphPane {
 			this.clearHighlight();
 			this.renderLegend();
 			this.updateEmptyState();
+			this.updateFindPathButtonState();
 			return;
 		}
 
@@ -2545,7 +2716,8 @@ export class GraphPane {
 		// not something the filter needs to clear.
 		this.panelEl.empty();
 		this.panelEl.hide();
-		this.pathResultActive = false;
+		this.resetPathState();
+		this.updateFindPathButtonState();
 
 		const visibleEdges = new Set(graph.edges().filter((edge) => graph.extremities(edge).every((node) => matches.has(node))));
 		this.renderer?.setSetting('nodeReducer', (node, attr) => ({ ...attr, hidden: !matches.has(node) }));
@@ -3380,6 +3552,3 @@ function toHexColor(color: string): string {
 	return `#${toHexPart(match[1]!)}${toHexPart(match[2]!)}${toHexPart(match[3]!)}`;
 }
 
-function basename(vaultPath: string): string {
-	return vaultPath.split('/').pop()?.replace(/\.md$/, '') ?? vaultPath;
-}

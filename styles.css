@@ -529,12 +529,22 @@
 	margin-bottom: 0;
 }
 
+/* Find-path's result panel - same box treatment (width, padding,
+   background/border/shadow) as .clew-appearance-panel, including its own
+   `clew-appearance-panel-header` for the title/close row - user feedback:
+   this panel used to look like nothing else in the plugin (no header,
+   plain heading-less content). Left at its own top-left position rather
+   than moved to Appearance's bottom-right corner - "same look", not "same
+   spot" - the other panel corners are already spoken for (Legend
+   bottom-left, Timeline bottom-center, Appearance bottom-right, Filter/
+   Color & size top-right below the toolbar). */
 .clew-path-panel {
 	position: absolute;
 	top: var(--size-4-2);
 	left: var(--size-4-2);
 	z-index: 10;
-	max-width: 280px;
+	width: 340px;
+	max-width: calc(100% - var(--size-4-4));
 	max-height: calc(100% - var(--size-4-4));
 	overflow-y: auto;
 	padding: var(--size-4-3);
@@ -542,6 +552,112 @@
 	border: 1px solid var(--background-modifier-border);
 	border-radius: var(--radius-m);
 	box-shadow: var(--shadow-s);
+}
+
+/* One pill per route (renderPathPanel()) in a single wrapping row, not one
+   full-width row per route (previous version) - user feedback: 4 stacked
+   rows just to pick a route cost more space than the choice itself needed.
+   Each route's note count moves to its own tooltip (setTooltip() in
+   graphPane.ts) plus .clew-path-summary below, for the one currently
+   selected, rather than sitting in every pill. */
+.clew-path-pills {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--size-4-1);
+	margin-bottom: var(--size-4-2);
+}
+
+.clew-path-pill {
+	padding: var(--size-4-1) var(--size-4-2);
+	border-radius: var(--radius-s);
+	background: var(--background-modifier-hover);
+	color: var(--text-normal);
+	font-size: var(--font-ui-small);
+	cursor: pointer;
+}
+
+.clew-path-pill:hover {
+	background: var(--background-modifier-active-hover);
+}
+
+/* The route currently drawn on the graph - a solid accent fill, same
+   "selected" language the toolbar's own is-active icons use
+   (.clew-toolbar button.is-active), not the left-accent-border language
+   .clew-criterion-edit uses elsewhere - that one marks "being edited" on a
+   full-width row; this is a small, otherwise-textless pill, where a solid
+   fill reads as "pressed" more clearly than a thin border would. */
+.clew-path-pill.is-selected {
+	background: var(--interactive-accent);
+	color: var(--text-on-accent);
+}
+
+.clew-path-pill.is-selected:hover {
+	background: var(--interactive-accent);
+}
+
+.clew-path-summary {
+	margin: 0 0 var(--size-4-2);
+	font-size: var(--font-ui-smaller);
+	color: var(--text-muted);
+}
+
+/* The selected route's note sequence, directly under the route list -
+   only ever one route's worth of notes shown at a time now (see
+   selectPathRoute()'s docstring), not one <ol> per route stacked below
+   each other like before. A vertical stepper (a marker dot per note, a
+   connecting line down to the next one) rather than a plain numbered list -
+   user feedback ("Stepper mit Verbindungslinie"): reads more like an actual
+   route through the graph than a bare `1. 2. 3.` count did. */
+.clew-path-detail {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+}
+
+.clew-path-step {
+	position: relative;
+	display: flex;
+	align-items: center;
+	gap: var(--size-4-2);
+	min-height: 22px;
+	padding: var(--size-4-1) 0 var(--size-4-1) 22px;
+}
+
+/* The connecting line - one full-height segment per step (not one long line
+   spanning the whole list), at a fixed x regardless of that step's own
+   marker size, skipped on the last step (nothing below it to connect to).
+   Consecutive steps stack with no gap between their <li> boxes, so these
+   segments read as one continuous line even though each is really its own
+   step's own :before. */
+.clew-path-step:not(:last-child)::before {
+	content: '';
+	position: absolute;
+	left: 8px;
+	top: 0;
+	bottom: 0;
+	width: 1px;
+	background: var(--background-modifier-border);
+	transform: translateX(-50%);
+}
+
+/* Sized per-step via the `--clew-path-step-marker-size` custom property
+   (pathStepMarkerSize() in graphPane.ts, degree-scaled the same way a
+   node's own size on the canvas grows) - a hub note's marker stands out in
+   this list the same way its larger node already does on the graph (its
+   link count used to also show as text next to it - removed on user
+   feedback, the marker's own size already carries that signal). Positioned
+   independently of the connecting line above (both fixed at the same x, so
+   a bigger dot still sits centered on the line rather than shifting it). */
+.clew-path-step-marker {
+	position: absolute;
+	left: 8px;
+	top: 50%;
+	z-index: 1;
+	width: var(--clew-path-step-marker-size, 8px);
+	height: var(--clew-path-step-marker-size, 8px);
+	border-radius: 50%;
+	background: var(--interactive-accent);
+	transform: translate(-50%, -50%);
 }
 
 .clew-path-item {

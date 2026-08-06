@@ -19,9 +19,9 @@ If you dragged it to pin it, switching layouts and back to Force should restore 
 
 It depends on the pace mode you picked (see [Timeline](../guide/timeline)). "Real time" maps playback onto your vault's actual date span, so a long quiet stretch in your notes' history means playback sits still for a while too, before a burst of newer notes appears quickly. "Even pace" instead advances evenly no matter how far apart notes were actually created, so something is always visibly happening - at the cost of the date shown sometimes jumping a lot between two ticks. Neither is wrong; pick whichever reads better for your vault.
 
-## Where's "Find path"?
+## "Find path" says no path found - is that a bug?
 
-Finding the shortest, hub-avoiding path between two notes (and exporting it to a Canvas file) is built but not switched on yet - see the note in the [README](https://github.com/christian-luger-at/obsidian-clew#what-you-can-do).
+No - it means the two notes genuinely aren't connected through any chain of links, in either direction. That's a real, useful result on its own (e.g. two completely separate topic areas that have never referenced each other), not an error.
 
 ## Is my vault too big for this?
 

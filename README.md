@@ -22,6 +22,7 @@ Obsidian's built-in graph shows everything at once, but it's a single fixed view
 - **Which topic areas have gone stale.** The "cluster freshness" criterion detects communities of linked notes, then compares how recently each one was edited relative to the others - so an old project's whole neighborhood can get its own color without you defining what "old" means note by note.
 - **How everything relates to one specific note.** The Radial layout rings out every other note by hop distance from a note you pick.
 - **How your vault grew over time.** The Timeline panel replays notes and links in creation order, revealing bursts of activity or long quiet stretches.
+- **How two specific notes connect.** Find path traces a route through the link graph between them, favoring notes with fewer links over big hub/index notes even if that route has more hops.
 
 Nothing here edits your notes - filters, groups, and appearance settings are Clew's own saved state, completely separate from your note content.
 
@@ -40,8 +41,7 @@ Nothing here edits your notes - filters, groups, and appearance settings are Cle
 - **Watch your vault grow.** The Timeline panel replays your notes and links in the order they were created - pick how long the replay takes and whether it paces evenly or maps onto real elapsed time.
 - **Tune the look live.** Node/edge size, color, physics, and label density are all adjustable while watching the graph react.
 - **Interact directly with the graph.** Click a node to open that note, hover one to highlight its connections, drag a note to pin it exactly where you want it.
-
-> **Not switched on yet:** finding the shortest, hub-avoiding path between any two notes, and exporting that path to a Canvas file. The groundwork already exists in the codebase, but the feature is disabled pending further testing.
+- **Find how two notes connect.** Pick a start and end note and Clew finds the shortest route through the link graph - favoring notes with fewer links over big hub notes, with a couple of alternative routes alongside.
 
 ## Installing the plugin
 

@@ -8,9 +8,9 @@
  * to resolve against in a plain Node/Vitest run. vitest.config.ts aliases
  * 'obsidian' to this file so that code keeps working under test.
  *
- * Deliberately minimal: only what src/graph/vaultGraph.ts and
- * src/graph/canvasExport.ts actually touch at runtime (TFile, normalizePath).
- * UI classes (Modal, ItemView, Setting, Plugin, ...) are not implemented -
+ * Deliberately minimal: only what src/graph/vaultGraph.ts actually touches
+ * at runtime (TFile). UI classes (Modal, ItemView, Setting, Plugin, ...) are
+ * not implemented -
  * tests exercising those would need a much heavier fake and aren't
  * attempted here; the value is in the graph-building logic, not the Obsidian
  * chrome around it.

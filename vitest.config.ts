@@ -28,7 +28,6 @@ export default defineConfig({
 				'src/graph/vaultGraph.ts',
 				'src/graph/pathfinding.ts',
 				'src/graph/stagnation.ts',
-				'src/graph/canvasExport.ts',
 				'src/graph/generateGraph.ts',
 				'src/graph/hierarchicalLayout.ts',
 				'src/graph/visualEncoding.ts',

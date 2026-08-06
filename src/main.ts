@@ -20,8 +20,8 @@ export default class ClewPlugin extends Plugin {
 			callback: () => void this.activateStandaloneGraphView(),
 		});
 
-		// See FIND_PATH_ENABLED's own docstring - the feature (and this
-		// command) isn't ready to ship yet, hidden without deleting it.
+		// See FIND_PATH_ENABLED's own docstring for the gate this command
+		// (and the toolbar icon) shares.
 		if (FIND_PATH_ENABLED) {
 			this.addCommand({
 				id: 'find-path',
