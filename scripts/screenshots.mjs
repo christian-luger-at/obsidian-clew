@@ -3,12 +3,15 @@
  * Automated documentation screenshots + README tour GIF.
  *
  * Drives the real Obsidian app over the Chrome DevTools Protocol: it builds
- * a small, curated screenshot vault (the same demo content
- * gen-test-vault.mjs generates, plus a couple of pre-configured filters/
- * groups so those panels aren't shown empty), launches Obsidian against it
- * with remote debugging enabled, opens the Clew graph view, captures each
- * panel in light and dark themes, and records a short scripted tour as an
- * animated GIF - all into docs/public/screens/.
+ * a ~290-note "world history" vault (gen-history-vault.mjs - a large,
+ * thematically coherent graph deliberately separate from gen-test-vault.mjs,
+ * whose small hand-crafted content DEVELOPMENT.md's QA checklist depends on
+ * by exact note name; see that script's own docstring for why), plus a
+ * couple of pre-configured filters/groups so those panels aren't shown
+ * empty, launches Obsidian against it with remote debugging enabled, opens
+ * the Clew graph view, captures each panel in light and dark themes, and
+ * records a short scripted tour as an animated GIF - all into
+ * docs/public/screens/.
  *
  * Usage:
  *   node scripts/screenshots.mjs              # requires Obsidian to be closed
@@ -35,23 +38,24 @@ const BACKUP = `${CONFIG}.clew-backup`;
 const QUIT = process.argv.includes('--quit');
 const PLUGIN_ID = 'clew';
 const VIEW_TYPE = 'clew-standalone-graph';
-// The demo vault's best-connected note (see gen-test-vault.mjs) - a good
-// subject for the "hover highlights connections" shot.
-const HOVER_NODE_ID = 'Notes/Hub.md';
+// The demo vault's best-connected note (see gen-history-vault.mjs - era hub
+// notes are the highest-degree nodes) - a good subject for the "hover
+// highlights connections" shot.
+const HOVER_NODE_ID = 'History/4-Modern/World War II Era.md';
 
 const log = (m) => console.log(`  ${m}`);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // ---------------------------------------------------------------------------
-// 1. A small, curated vault: the same demo content as `npm run gen-test-vault`,
-//    plus a couple of pre-configured filters/groups so the Filter and Color &
-//    size panels have something real to show instead of an empty list.
+// 1. The ~290-note world history vault (gen-history-vault.mjs), plus a
+//    couple of pre-configured filters/groups so the Filter and Color & size
+//    panels have something real to show instead of an empty list.
 // ---------------------------------------------------------------------------
 function buildVault() {
 	rmSync(VAULT, { recursive: true, force: true });
 	mkdirSync(join(VAULT, `.obsidian/plugins/${PLUGIN_ID}`), { recursive: true });
 
-	execFileSync('node', [join(REPO, 'scripts/gen-test-vault.mjs'), VAULT], { stdio: 'inherit' });
+	execFileSync('node', [join(REPO, 'scripts/gen-history-vault.mjs'), VAULT], { stdio: 'inherit' });
 
 	// Copy (not symlink) the built plugin, so its data.json stays in the vault.
 	for (const f of ['main.js', 'manifest.json', 'styles.css']) {
@@ -59,33 +63,32 @@ function buildVault() {
 	}
 	writeFileSync(join(VAULT, '.obsidian/community-plugins.json'), JSON.stringify([PLUGIN_ID]));
 
-	// Pre-seed a couple of filters/groups that match the demo vault's own
-	// "status" frontmatter (see gen-test-vault.mjs's Topic A/B/C notes) and
-	// its backdated "Old Cluster"/"Medium Age" notes, so both panels show
-	// realistic, already-filled-in state rather than "No filters yet."/
-	// "No groups yet.".
+	// Pre-seed a couple of filters/groups against the demo vault's own
+	// `period`/`era` frontmatter (see gen-history-vault.mjs), so both panels
+	// show realistic, already-filled-in state rather than "No filters
+	// yet."/"No groups yet.".
 	const data = {
 		filterCombineMode: 'or',
 		filterPresets: [
-			{ id: 'f1', name: 'Recently edited', enabled: true, criteria: [{ type: 'staleDays', days: 30, negate: true }] },
-			{ id: 'f2', name: 'Stale', enabled: false, criteria: [{ type: 'staleDays', days: 45 }] },
+			{ id: 'f1', name: 'Wars & conflicts', enabled: true, criteria: [{ type: 'text', query: 'War' }] },
+			{ id: 'f2', name: 'Ancient world', enabled: false, criteria: [{ type: 'property', key: 'period', operator: 'equals', value: 'Ancient' }] },
 		],
 		nodeGroups: [
 			{
 				id: 'g1',
-				name: 'Active',
-				color: '#22c55e',
+				name: 'Ancient',
+				color: '#f59e0b',
 				sizeMultiplier: null,
 				enabled: true,
-				criteria: [{ type: 'property', key: 'status', operator: 'equals', value: 'active' }],
+				criteria: [{ type: 'property', key: 'period', operator: 'equals', value: 'Ancient' }],
 			},
 			{
 				id: 'g2',
-				name: 'Archived',
-				color: '#64748b',
+				name: 'Contemporary',
+				color: '#3b82f6',
 				sizeMultiplier: null,
 				enabled: true,
-				criteria: [{ type: 'property', key: 'status', operator: 'equals', value: 'archived' }],
+				criteria: [{ type: 'property', key: 'period', operator: 'equals', value: 'Contemporary' }],
 			},
 		],
 	};
@@ -438,7 +441,7 @@ async function recordTour(page) {
 	await clickToolbarIcon(page, 'Filter');
 	await page.waitForSelector('.clew-filter-panel:visible', { timeout: 5000 });
 	await sleep(500);
-	const toggle = page.locator('.clew-group-row:has-text("Stale") .checkbox-container').first();
+	const toggle = page.locator('.clew-group-row:has-text("Ancient world") .checkbox-container').first();
 	await toggle.click();
 	await sleep(1800);
 	await toggle.click();

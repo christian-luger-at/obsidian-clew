@@ -39,6 +39,11 @@ spike-vault.zip
 # meaningfully committed anyway.
 test-vault/
 
+# Generated "world history" screenshot vault (scripts/gen-history-vault.mjs)
+# - same reasoning as test-vault/ above; its default output path if run
+# without an explicit target directory.
+history-vault/
+
 # Test coverage (vitest --coverage)
 coverage/
 

@@ -132,6 +132,7 @@ and the example layout in [AGENTS.md](AGENTS.md).
 | `npm run release:patch` \| `:minor` \| `:major` | Bump the version, build, and publish in one command |
 | `npm run spike:build` | Build the standalone graph-rendering spike harness (`spike/`) - see below |
 | `npm run gen-test-vault` | Generate the manual-QA vault (`test-vault/`) - see "Manual QA vault" below |
+| `npm run gen-history-vault` | Generate a ~290-note "world history" vault for screenshots/visual demos - see `scripts/gen-history-vault.mjs`'s own docstring for why this is a separate vault from `gen-test-vault.mjs`, not a replacement. `npm run docs:shots` runs this itself; run it directly only to inspect the vault on its own. |
 | `npm run sync-private-vault` | Build, then copy `main.js`/`manifest.json`/`styles.css` into the maintainer's personal vault (`scripts/sync-private-vault.sh`) - a real copy, not a symlink, so that vault only picks up a new build when explicitly re-synced, not mid-edit. Pass a path to target a different vault: `npm run sync-private-vault -- ~/some/other/vault`. |
 
 ## Testing

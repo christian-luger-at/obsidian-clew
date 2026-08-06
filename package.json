@@ -20,6 +20,7 @@
 		"release:major": "bash release.sh --bump major --publish",
 		"spike:build": "node spike/esbuild.mjs",
 		"gen-test-vault": "node scripts/gen-test-vault.mjs",
+		"gen-history-vault": "node scripts/gen-history-vault.mjs",
 		"sync-private-vault": "bash scripts/sync-private-vault.sh",
 		"docs:dev": "vitepress dev docs",
 		"docs:build": "vitepress build docs",
