@@ -17,9 +17,16 @@ import { bidirectional } from 'graphology-shortest-path/dijkstra';
 
 export type PathResult = { found: false } | { found: true; paths: string[][] };
 
-/** A vault path's display name (no folders, no `.md`) - used by graphPane.ts's path-result list. */
+/**
+ * A vault path's display name (no folders, no `.md`) - used by graphPane.ts's
+ * path-result list. No `?? vaultPath` fallback for a missing `.pop()` result
+ * - `split('/').pop()` always returns a string, never `undefined`, for any
+ * string input (including `''`), so that branch can never actually run; an
+ * earlier version had one anyway, which starved it of branch coverage (CI
+ * failure: pathfinding.ts's branch % dropped under the 80% threshold).
+ */
 export function basename(vaultPath: string): string {
-	return vaultPath.split('/').pop()?.replace(/\.md$/, '') ?? vaultPath;
+	return vaultPath.split('/').pop()!.replace(/\.md$/, '');
 }
 
 interface Candidate {
