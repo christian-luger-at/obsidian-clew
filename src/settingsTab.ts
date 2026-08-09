@@ -61,5 +61,33 @@ export class ClewSettingTab extends PluginSettingTab {
 					await this.plugin.saveSettings();
 				}),
 			);
+
+		new Setting(containerEl).setName('Default filters & colors').setHeading();
+		containerEl.createEl('p', {
+			text: 'Ready-made filters/color groups, built on notes linked but not created yet. Available in the graph view\'s Filter/Color & size panels - each still needs its own checkbox turned on there to actually apply.',
+			cls: 'setting-item-description',
+		});
+
+		new Setting(containerEl)
+			.setName('Default filters')
+			.setDesc('"Show existing notes" / "Show non-existing notes" in the Filter panel.')
+			.addToggle((toggle) =>
+				toggle.setValue(this.plugin.settings.showDefaultFilters).onChange(async (value) => {
+					this.plugin.settings.showDefaultFilters = value;
+					this.plugin.syncDefaultPresets();
+					await this.plugin.saveSettings();
+				}),
+			);
+
+		new Setting(containerEl)
+			.setName('Default color group')
+			.setDesc('"Non-existing notes" (orange) in the Color & size panel.')
+			.addToggle((toggle) =>
+				toggle.setValue(this.plugin.settings.showDefaultColorGroups).onChange(async (value) => {
+					this.plugin.settings.showDefaultColorGroups = value;
+					this.plugin.syncDefaultPresets();
+					await this.plugin.saveSettings();
+				}),
+			);
 	}
 }

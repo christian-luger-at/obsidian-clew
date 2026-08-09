@@ -45,6 +45,35 @@ export interface FilterPreset extends CriteriaOwner {
 	name: string;
 }
 
+/**
+ * Two ready-made filters built on the `existence` criterion (nodeGroups.ts)
+ * - user feedback: rather than expecting everyone to discover "+ new
+ * filter" → "Existence" on their own, ship the two most obviously useful
+ * combinations out of the box. Fixed `id`s (not user-editable) so
+ * settings.ts's `showDefaultFilters` toggle (main.ts's syncDefaultPresets())
+ * can reliably find and add/remove exactly these two, regardless of
+ * whether the user has since renamed or recolored them. `enabled: false` -
+ * shipping "Show non-existing notes" pre-enabled would hide every real
+ * note in every vault the moment someone updates the plugin; the point of
+ * this toggle is to make them *available* in the Filter panel, not to
+ * silently change what's currently on screen. Same reasoning as
+ * DEFAULT_NODE_GROUPS in nodeGroups.ts.
+ */
+export const DEFAULT_FILTER_PRESETS: FilterPreset[] = [
+	{
+		id: 'default-filter-show-existing',
+		name: 'Show existing notes',
+		enabled: false,
+		criteria: [{ type: 'existence', exists: true }],
+	},
+	{
+		id: 'default-filter-show-nonexisting',
+		name: 'Show non-existing notes',
+		enabled: false,
+		criteria: [{ type: 'existence', exists: false }],
+	},
+];
+
 export type NoteFilterFacts = NodeGroupFacts;
 
 /** Whether no filter is enabled - the caller's cue to fall back to "nothing active" (show everything) instead of evaluating an empty OR/AND (which would otherwise mean "show nothing" either way, the opposite of "no filter"). */

@@ -388,6 +388,35 @@ manual copy step. Then open `test-vault` in Obsidian and check:
     repaint both ghost nodes with that color/size instead of the default
     gray/small - same mechanism as any other group, just targeting ghost
     nodes specifically.
+  - **Default filters/color group** (`filter.ts`'s `DEFAULT_FILTER_PRESETS`,
+    `nodeGroups.ts`'s `DEFAULT_NODE_GROUPS` - fixed `id`s, added/removed by
+    `main.ts`'s `syncDefaultPresets()`): on a fresh install (or the QA
+    vault's own `data.json`, if any, deleted), the Filter panel should
+    already list "Show existing notes" and "Show non-existing notes"
+    (unchecked), and Color & size should already list "Non-existing notes"
+    in orange (also unchecked) - all three ready to enable, not needing
+    "+ add" → "Existence" from scratch. In Settings → Community plugins →
+    Clew, turn "Default filters" off - both filter rows should disappear
+    from the Filter panel the next time it's opened (even mid-session, no
+    reload needed - `syncDefaultPresets()` runs immediately on toggle).
+    Turn it back on - they reappear, freshly reset (any rename/recolor you
+    made is gone - toggling off is what removes them, not a private
+    "hidden but remembered" state). Same check for "Default color group"
+    against the orange group. Enabling one of the default filters (e.g.
+    "Show non-existing notes") should behave exactly like a user-built
+    Existence filter - because it is one.
+  - **Not deletable or editable from the panel** (user feedback: "diese
+    Einträge dürfen vom Benutzer nicht gelöscht werden [...] und auch
+    nicht editierbar"): all three default rows should show **neither** a
+    pencil (edit) **nor** a trash icon in both the Filter and Color & size
+    panel, unlike every user-created filter/group -
+    `isDefaultFilterId()`/`isDefaultGroupId()` in `graphPane.ts` skip
+    rendering both specifically for these three fixed `id`s. The row's own
+    enabled checkbox is untouched, still there and still live - a default
+    filter/group can be turned on/off exactly like any other, it just can't
+    be renamed, recolored, have its criteria changed, or be deleted. The
+    only way to remove one at all is the Settings-tab toggles (checked
+    above).
 - **Cluster freshness** (an "Activity" criterion on a node group - see
   "Color & size" below and `nodeGroups.ts`): create a group with a single
   Activity criterion, reading "Notes in [an inactive area of the vault]" -

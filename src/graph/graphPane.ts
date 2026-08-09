@@ -17,10 +17,11 @@ import { LayoutMode, LAYOUT_MODE_LABELS, LayoutModal } from './layoutModal';
 import { ConfirmModal } from './confirmModal';
 import { computeCommunityStats, detectCommunities, staleness } from './stagnation';
 import { readThemeColors, ThemeColors, blendToward } from './theme';
-import { evaluateFilters, FilterCombineMode, FilterPreset, isAnyFilterEnabled, MAX_FILTER_PRESETS } from './filter';
+import { DEFAULT_FILTER_PRESETS, evaluateFilters, FilterCombineMode, FilterPreset, isAnyFilterEnabled, MAX_FILTER_PRESETS } from './filter';
 import {
 	CriteriaOwner,
 	DEFAULT_GROUP_COLORS,
+	DEFAULT_NODE_GROUPS,
 	describeCriterion,
 	evaluateGroups,
 	GroupCriterion,
@@ -144,6 +145,30 @@ const CRITERION_TYPE_LABELS: Record<GroupCriterionType, string> = {
 	minLinks: 'Links',
 	existence: 'Existence',
 };
+
+/**
+ * Whether `id` belongs to filter.ts's DEFAULT_FILTER_PRESETS/nodeGroups.ts's
+ * DEFAULT_NODE_GROUPS - user feedback: "diese Einträge dürfen vom Benutzer
+ * nicht gelöscht werden [...] und auch nicht editierbar". renderFilterRow()/
+ * renderGroupRow() use these to skip rendering the pencil (edit) *and*
+ * trash icon entirely for a default row, rather than rendering either and
+ * having toggleEditingFilter()/deleteFilter() (or their group equivalents)
+ * silently refuse - an absent control reads as "this isn't something you
+ * change," a present but non-functional one would just read as broken. The
+ * row's own enabled toggle is untouched by this (still there, still live) -
+ * "not editable" means its name/color/criteria are fixed, not that it can't
+ * be switched on/off like any other filter/group. The only way to remove
+ * one at all is Settings → Community plugins → Clew (settingsTab.ts's
+ * showDefaultFilters/showDefaultColorGroups toggles, applied via
+ * ClewPlugin.syncDefaultPresets()).
+ */
+function isDefaultFilterId(id: string): boolean {
+	return DEFAULT_FILTER_PRESETS.some((preset) => preset.id === id);
+}
+
+function isDefaultGroupId(id: string): boolean {
+	return DEFAULT_NODE_GROUPS.some((group) => group.id === id);
+}
 
 /** Parses a criterion's number inputs (staleDays/minLinks) - empty/invalid/negative all mean "0", same as the field never being touched. */
 function parsePositiveInt(value: string): number | null {
@@ -2787,8 +2812,10 @@ export class GraphPane {
 
 		row.createSpan({ cls: 'clew-group-name', text: preset.name });
 
-		new ExtraButtonComponent(row).setIcon('pencil').setTooltip('Edit').onClick(() => this.toggleEditingFilter(preset.id));
-		new ExtraButtonComponent(row).setIcon('trash').setTooltip('Delete').onClick(() => this.deleteFilter(preset.id));
+		if (!isDefaultFilterId(preset.id)) {
+			new ExtraButtonComponent(row).setIcon('pencil').setTooltip('Edit').onClick(() => this.toggleEditingFilter(preset.id));
+			new ExtraButtonComponent(row).setIcon('trash').setTooltip('Delete').onClick(() => this.deleteFilter(preset.id));
+		}
 
 		new ToggleComponent(row).setValue(preset.enabled).onChange((value) => {
 			preset.enabled = value;
@@ -3245,8 +3272,10 @@ export class GraphPane {
 		row.createSpan({ cls: 'clew-group-swatch' }).style.backgroundColor = group.color;
 		row.createSpan({ cls: 'clew-group-name', text: group.name });
 
-		new ExtraButtonComponent(row).setIcon('pencil').setTooltip('Edit').onClick(() => this.toggleEditingGroup(group.id));
-		new ExtraButtonComponent(row).setIcon('trash').setTooltip('Delete').onClick(() => this.deleteGroup(group.id));
+		if (!isDefaultGroupId(group.id)) {
+			new ExtraButtonComponent(row).setIcon('pencil').setTooltip('Edit').onClick(() => this.toggleEditingGroup(group.id));
+			new ExtraButtonComponent(row).setIcon('trash').setTooltip('Delete').onClick(() => this.deleteGroup(group.id));
+		}
 
 		// After delete, not near the drag handle (user feedback) - the
 		// enable toggle is the row's own "is this active" state, not part

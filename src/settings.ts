@@ -192,6 +192,22 @@ export interface ClewSettings {
 	timeline: ClewTimelineSettings;
 	/** See ClewDiagnosticsSettings's own docstring. */
 	diagnostics: ClewDiagnosticsSettings;
+	/**
+	 * Whether the two ready-made filters (filter.ts's
+	 * DEFAULT_FILTER_PRESETS - "Show existing notes"/"Show non-existing
+	 * notes") are present in `filterPresets` at all - Obsidian's own
+	 * Settings tab (settingsTab.ts), not the graph view's own panels, same
+	 * reasoning as `diagnostics` above (a one-time "what do I even want
+	 * available" choice). main.ts's syncDefaultPresets() adds/removes them
+	 * by their fixed `id`s whenever this changes, rather than this flag
+	 * being checked live everywhere a filter list is read - so a user's own
+	 * customization of one (renamed, recolored, more criteria added)
+	 * survives as long as this stays on; toggling off removes it, toggling
+	 * back on re-seeds a fresh copy.
+	 */
+	showDefaultFilters: boolean;
+	/** Same mechanism as showDefaultFilters, for nodeGroups.ts's DEFAULT_NODE_GROUPS ("Non-existing notes", orange) instead. */
+	showDefaultColorGroups: boolean;
 }
 
 export interface ClewTimelineSettings {

@@ -222,6 +222,29 @@ export const DEFAULT_GROUP_COLORS = [
 ];
 
 /**
+ * One ready-made group, orange, built on the `existence` criterion - user
+ * feedback: ship the obvious "make missing notes visually pop" combination
+ * out of the box rather than expecting everyone to build it themselves via
+ * "+ Add" → "Existence". Fixed `id` (not user-editable) so settings.ts's
+ * `showDefaultColorGroups` toggle (main.ts's syncDefaultPresets()) can
+ * reliably find and add/remove exactly this one. `enabled: false` - same
+ * reasoning as filter.ts's DEFAULT_FILTER_PRESETS: the toggle makes it
+ * *available* in the Color & size panel, it doesn't silently recolor
+ * anyone's graph the moment they update the plugin. `#f97316` is this
+ * file's own DEFAULT_GROUP_COLORS[1] (orange) above, not a new one-off hex.
+ */
+export const DEFAULT_NODE_GROUPS: NodeGroup[] = [
+	{
+		id: 'default-group-show-nonexisting',
+		name: 'Non-existing notes',
+		color: '#f97316',
+		sizeMultiplier: null,
+		enabled: false,
+		criteria: [{ type: 'existence', exists: false }],
+	},
+];
+
+/**
  * Frontmatter values can be a string, number, boolean, list, or nested
  * object - `String(value)` on an object/array would silently collapse to
  * "[object Object]", so each shape gets a sensible lowercase text form to
