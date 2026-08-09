@@ -34,6 +34,10 @@ export interface LayoutRunOptions {
 	gravity?: number;
 	/** Overall repulsion/attraction force scale - user-tunable, see settings.ts's ClewAppearanceSettings.scalingRatio. */
 	scalingRatio?: number;
+	/** "Dissuade Hubs" - user-tunable, see settings.ts's ClewAppearanceSettings.dissuadeHubs. */
+	outboundAttractionDistribution?: boolean;
+	/** Log-distance attraction - user-tunable, see settings.ts's ClewAppearanceSettings.linLogMode. */
+	linLogMode?: boolean;
 	onSettled?: (elapsedMs: number) => void;
 }
 
@@ -47,12 +51,16 @@ export function runLayout(graph: Graph, options: LayoutRunOptions = {}): LayoutR
 		barnesHutOptimize = graph.order > EXACT_REPULSION_NODE_LIMIT,
 		gravity = 0.3,
 		scalingRatio = 10,
+		outboundAttractionDistribution = false,
+		linLogMode = false,
 		onSettled,
 	} = options;
 
 	const supervisor = new FA2LayoutSupervisor(graph, {
 		settings: {
 			barnesHutOptimize,
+			outboundAttractionDistribution,
+			linLogMode,
 			// Must be true: normal (non-strong) gravity's pull weakens with
 			// distance, so an isolated or weakly-connected note (a real
 			// vault's disconnected/orphan notes - not something the

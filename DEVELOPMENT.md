@@ -991,7 +991,15 @@ manual copy step. Then open `test-vault` in Obsidian and check:
   the "Base node size" slider - nodes should visibly resize within a
   fraction of a second, no camera jump/re-settle (cheap repaint, not a
   layout restart). Drag "Gravity" or "Scaling ratio" - the force layout
-  should visibly restart and re-settle with the new spread. Pick "Circular"
+  should visibly restart and re-settle with the new spread. Toggle
+  "Dissuade hubs" (ForceAtlas2's `outboundAttractionDistribution`) on a
+  hub-heavy vault - the hub's neighbors should visibly spread out around
+  it instead of stacking on top of it, and the layout should restart the
+  same as a slider drag does. Toggle "Tighter clusters"
+  (`linLogMode`) - linked notes should pull into noticeably denser,
+  more separated clumps. Both toggles live in the same "Physics (force
+  layout)" section as Gravity/Scaling ratio - only visible while "Force"
+  is the active layout, same as the sliders. Pick "Circular"
   from the "Layout" dialog, then drag "Circular layout radius" - the ring
   should resize live; pick "Radial" (choose a focus note) and drag
   "Radial ring spacing" - same live effect, centered on the same focus note

@@ -215,9 +215,13 @@ function debounce(fn: () => void, delayMs: number): () => void {
 interface AppearanceSliderSpec {
 	// Excludes edgeColorOverride/nodeColorOverride (non-numeric string |
 	// null settings, their own color-picker UI instead of a slider) and
-	// showEdgeDirection (a boolean, its own toggle UI instead) - see
-	// renderAppearancePanel()'s "Nodes"/"Edges" sections.
-	key: Exclude<keyof ClewAppearanceSettings, 'edgeColorOverride' | 'nodeColorOverride' | 'showEdgeDirection'>;
+	// showEdgeDirection/dissuadeHubs/linLogMode (booleans, their own toggle
+	// UI instead) - see renderAppearancePanel()'s "Nodes"/"Edges"/"Physics"
+	// sections.
+	key: Exclude<
+		keyof ClewAppearanceSettings,
+		'edgeColorOverride' | 'nodeColorOverride' | 'showEdgeDirection' | 'dissuadeHubs' | 'linLogMode'
+	>;
 	name: string;
 	desc: string;
 	min: number;
@@ -326,31 +330,36 @@ interface AppearanceSliderGroup {
 	showForLayout?: (mode: LayoutMode) => boolean;
 }
 
-const APPEARANCE_SLIDER_GROUPS: AppearanceSliderGroup[] = [
+/**
+ * Physics's two sliders - pulled out of APPEARANCE_SLIDER_GROUPS below
+ * (unlike its siblings there) since the group now also needs two toggles
+ * (dissuadeHubs/linLogMode) alongside them - rendered as its own bespoke
+ * section in renderAppearancePanel(), same reasoning as NODE_SIZE_SLIDERS/
+ * EDGE_INTENSITY_SLIDER needing their own section once a color picker/
+ * toggle had to sit next to them too.
+ */
+const PHYSICS_SLIDERS: AppearanceSliderSpec[] = [
 	{
-		heading: 'Physics (force layout)',
-		showForLayout: (mode) => mode === 'force',
-		sliders: [
-			{
-				key: 'gravity',
-				name: 'Gravity',
-				desc: 'Pull toward the center.',
-				min: 0.01,
-				max: 0.5,
-				step: 0.01,
-				apply: 'layout',
-			},
-			{
-				key: 'scalingRatio',
-				name: 'Scaling ratio',
-				desc: 'Repulsion between notes.',
-				min: 1,
-				max: 50,
-				step: 1,
-				apply: 'layout',
-			},
-		],
+		key: 'gravity',
+		name: 'Gravity',
+		desc: 'Pull toward the center.',
+		min: 0.01,
+		max: 0.5,
+		step: 0.01,
+		apply: 'layout',
 	},
+	{
+		key: 'scalingRatio',
+		name: 'Scaling ratio',
+		desc: 'Repulsion between notes, relative to how strongly linked notes pull together.',
+		min: 1,
+		max: 50,
+		step: 1,
+		apply: 'layout',
+	},
+];
+
+const APPEARANCE_SLIDER_GROUPS: AppearanceSliderGroup[] = [
 	{
 		heading: 'Labels',
 		sliders: [
@@ -1390,6 +1399,39 @@ export class GraphPane {
 				}),
 			);
 		if (this.plugin.settings.appearance.showEdgeDirection) this.renderAppearanceSlider(EDGE_ARROW_SIZE_SLIDER);
+
+		// Physics's own bespoke section (not the generic APPEARANCE_SLIDER_
+		// GROUPS loop below, unlike its Labels/Radial/Circular/Hierarchical
+		// siblings) - it needs two toggles alongside its two sliders, same
+		// reasoning as "Show edge direction" sitting next to Edge intensity
+		// above. Chat decision, 2026-08-09: "implementiere
+		// outboundAttractionDistribution und linLogMode" - both are
+		// ForceAtlas2 settings with no natural slider range (they're
+		// on/off), so toggles, not a third/fourth slider.
+		if (this.layoutMode === 'force') {
+			new Setting(this.appearancePanelEl).setName('Physics (force layout)').setHeading();
+			for (const spec of PHYSICS_SLIDERS) this.renderAppearanceSlider(spec);
+			new Setting(this.appearancePanelEl)
+				.setName('Dissuade hubs')
+				.setDesc("Spreads a heavily-linked note's neighbors out around it instead of clumping them on top of it.")
+				.addToggle((toggle) =>
+					toggle.setValue(this.plugin.settings.appearance.dissuadeHubs).onChange((value) => {
+						this.plugin.settings.appearance.dissuadeHubs = value;
+						void this.plugin.saveSettings();
+						this.reapplyActiveLayout();
+					}),
+				);
+			new Setting(this.appearancePanelEl)
+				.setName('Tighter clusters')
+				.setDesc('Pulls closely-linked notes into denser, more separated clusters.')
+				.addToggle((toggle) =>
+					toggle.setValue(this.plugin.settings.appearance.linLogMode).onChange((value) => {
+						this.plugin.settings.appearance.linLogMode = value;
+						void this.plugin.saveSettings();
+						this.reapplyActiveLayout();
+					}),
+				);
+		}
 
 		for (const group of APPEARANCE_SLIDER_GROUPS) {
 			if (group.showForLayout && !group.showForLayout(this.layoutMode)) continue;
@@ -2736,10 +2778,18 @@ export class GraphPane {
 		this.renderer?.refresh();
 	}, 100);
 
-	/** ForceAtlas2 options shared by every runLayout() call site - gravity/scalingRatio are user-tunable (Settings tab), only the duration differs per call site (initial settle vs. the short post-drag re-settle). */
-	private layoutOptions(durationMs: number): { durationMs: number; gravity: number; scalingRatio: number } {
+	/** ForceAtlas2 options shared by every runLayout() call site - gravity/scalingRatio/dissuadeHubs/linLogMode are all user-tunable (Appearance panel's Physics group), only the duration differs per call site (initial settle vs. the short post-drag re-settle). */
+	private layoutOptions(
+		durationMs: number,
+	): { durationMs: number; gravity: number; scalingRatio: number; outboundAttractionDistribution: boolean; linLogMode: boolean } {
 		const appearance = this.plugin.settings.appearance;
-		return { durationMs, gravity: appearance.gravity, scalingRatio: appearance.scalingRatio };
+		return {
+			durationMs,
+			gravity: appearance.gravity,
+			scalingRatio: appearance.scalingRatio,
+			outboundAttractionDistribution: appearance.dissuadeHubs,
+			linLogMode: appearance.linLogMode,
+		};
 	}
 
 	/**

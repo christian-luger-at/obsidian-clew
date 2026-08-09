@@ -32,8 +32,39 @@ export interface ClewAppearanceSettings {
 	nodeDegreeGrowth: number;
 	/** ForceAtlas2's gravity setting (layoutRunner.ts) - pull toward the center. */
 	gravity: number;
-	/** ForceAtlas2's scalingRatio setting - overall repulsion/attraction force scale. */
+	/**
+	 * ForceAtlas2's scalingRatio setting - not an independent "repulsion"
+	 * force despite the UI label (Chat decision, 2026-08-09: "Stimmen die
+	 * aktuell implementierten Wertegrenzen?" - ForceAtlas2 has no separate
+	 * per-edge attraction dial; every edge pulls with the same fixed
+	 * strength, see vaultGraph.ts's own docstring on deliberately not
+	 * setting an edge `weight` attribute). This scales repulsion *relative
+	 * to* that fixed attraction, so raising it reads as "more repulsion"
+	 * even though it's really "repulsion winning more of the tug-of-war."
+	 */
 	scalingRatio: number;
+	/**
+	 * ForceAtlas2's outboundAttractionDistribution setting ("Dissuade
+	 * Hubs" in Gephi) - redistributes a hub note's outbound attraction
+	 * across its neighbors by degree, instead of every neighbor pulling
+	 * with the same fixed strength regardless of how many other notes the
+	 * hub also links to. Makes a hub's neighbors spread out around it
+	 * instead of clumping directly on top of it. Off by default (matches
+	 * ForceAtlas2's own default) - a hub-heavy vault is exactly the case
+	 * this helps with, but it's a real change to how notes settle, not a
+	 * universally-better default.
+	 */
+	dissuadeHubs: boolean;
+	/**
+	 * ForceAtlas2's linLogMode setting - attraction grows with log(distance)
+	 * instead of linearly with it, which pulls tightly-linked notes into
+	 * noticeably denser, more separated clusters (Gephi's own docs describe
+	 * this as better for "community"-shaped graphs). Off by default (matches
+	 * ForceAtlas2's own default and the graph's existing look) - a bigger
+	 * visual change than a plain slider nudge, opt-in rather than a new
+	 * baseline everyone's used to seeing switches under them.
+	 */
+	linLogMode: boolean;
 	/** sigma's labelRenderedSizeThreshold (renderer.ts) - on-screen node size a label must cross to render. */
 	labelSizeThreshold: number;
 	/** sigma's labelDensity (renderer.ts) - how many labels are allowed to render per area at a given zoom. */
@@ -105,6 +136,8 @@ export const DEFAULT_APPEARANCE_SETTINGS: ClewAppearanceSettings = {
 	nodeDegreeGrowth: 0.6,
 	gravity: 0.3,
 	scalingRatio: 10,
+	dissuadeHubs: false,
+	linLogMode: false,
 	labelSizeThreshold: 9,
 	labelDensity: 0.5,
 	radialRingSpacing: 120,
