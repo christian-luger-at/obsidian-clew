@@ -34,7 +34,7 @@ export default class ClewPlugin extends Plugin {
 				checkCallback: (checking) => {
 					const pane = GraphPane.getActive();
 					if (!pane) return false;
-					if (!checking) pane.openPathfindingModal();
+					if (!checking) pane.togglePathfindingPanel();
 					return true;
 				},
 			});

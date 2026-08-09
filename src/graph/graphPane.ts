@@ -10,10 +10,10 @@ import { computeRadialLayout } from './radialLayout';
 import { computeCircularLayout } from './circularLayout';
 import { basename, findPaths, PathResult } from './pathfinding';
 import { findOrphans, findBrokenLinks, findIsolatedClusters } from './diagnostics';
-import { PathfindingModal, PathfindingModalInitial } from './pathfindingModal';
+import { NoteSuggest } from './noteSuggest';
 
 import { RadialLayoutModal } from './radialLayoutModal';
-import { LayoutMode, LAYOUT_MODE_LABELS, LayoutModal } from './layoutModal';
+import { LayoutMode, LAYOUT_MODE_LABELS, LAYOUT_OPTIONS } from './layoutModal';
 import { ConfirmModal } from './confirmModal';
 import { computeCommunityStats, detectCommunities, staleness } from './stagnation';
 import { readThemeColors, ThemeColors, blendToward } from './theme';
@@ -101,7 +101,7 @@ const MAX_PATH_ROUTES = 4;
 const DIAGNOSTICS_PAGE_SIZE = 20;
 
 /**
- * "Find path" (toolbar icon + `openPathfindingModal()` + the command in
+ * "Find path" (toolbar icon + `togglePathfindingPanel()` + the command in
  * main.ts). Was `false` ("not ready to ship yet") while its panel didn't
  * participate in closeOtherPanels()'s mutual exclusion with Filter/Color &
  * size/Appearance and always surfaced up to 5 alternative routes - both
@@ -467,8 +467,17 @@ export class GraphPane {
 	private editingFilterCriterionIndex: number | null = null;
 	private filterCriterionEditSnapshot: GroupCriterion | null = null;
 	private readonly layoutButton: HTMLButtonElement;
+	/** Layout's own panel (renderLayoutPanel()) - folded in from a dedicated LayoutModal as part of the Dialog-Management redesign, round 2 (see this class's own zone-comment in the constructor). */
+	private readonly layoutPanelEl: HTMLElement;
 	/** Only assigned when FIND_PATH_ENABLED - see its own docstring. Every use below is optional-chained for that reason, not because the button can otherwise go missing once created. */
 	private findPathButton: HTMLButtonElement | null = null;
+	/** Find-path's *input* form (renderPathfindingPanel()) - separate from panelEl, which is its *result* - folded in from a dedicated PathfindingModal as part of the Dialog-Management redesign, round 2. Only assigned when FIND_PATH_ENABLED, same reasoning as findPathButton. */
+	private pathfindingPanelEl: HTMLElement | null = null;
+	/** Draft state for the Pathfinding panel's From/To/Directed fields, mirroring PathfindingModalInitial - live instance fields instead of local closures so the panel's own submit handler (built once in renderPathfindingPanel()) always reads the latest picks. */
+	private pathfindingSourceFile: TFile | null = null;
+	private pathfindingTargetFile: TFile | null = null;
+	private pathfindingDirected = false;
+	private pathfindingErrorEl: HTMLElement | null = null;
 	private readonly colorAndSizeButton: HTMLButtonElement;
 	private readonly colorAndSizePanelEl: HTMLElement;
 	// Reassigned on every renderColorAndSizePanel() call, same reasoning as
@@ -523,8 +532,8 @@ export class GraphPane {
 	 * whatever the user had already expanded. Reset together by
 	 * resetDiagnosticsListState(), called only when the panel is freshly
 	 * opened (toggleDiagnosticsPanel()) - reopening it should start clean,
-	 * same as Find-path's modal starting empty after an explicit close (see
-	 * openPathfindingModal()'s docstring for that precedent).
+	 * same as Find-path's panel starting empty after an explicit close (see
+	 * lastPathSource's own docstring for that precedent).
 	 */
 	private diagnosticsOrphanVisibleCount = DIAGNOSTICS_PAGE_SIZE;
 	private diagnosticsBrokenLinkVisibleCount = DIAGNOSTICS_PAGE_SIZE;
@@ -552,10 +561,10 @@ export class GraphPane {
 	/** Which of pathRoutes is currently shown on the graph - only that one route's notes/edges are highlighted, every other route treated the same as "not on any path" (user feedback: showing every route's nodes/edges at once, each in its own color, was hard to read - one route at a time, picked from the list, is clearer). Reset to the shortest route (0) on every new search. */
 	private selectedPathIndex = 0;
 	/**
-	 * The source/target/directed openPathfindingModal() last ran a search
+	 * The source/target/directed renderPathfindingPanel() last ran a search
 	 * with - reset alongside pathRoutes (see resetPathState()), so they're
 	 * only ever non-null/non-default while a result is actually showing.
-	 * openPathfindingModal() pre-fills the "From"/"To"/"Directed" fields
+	 * renderPathfindingPanel() pre-fills the "From"/"To"/"Directed" fields
 	 * from these - user feedback: reopening the dialog while a result is
 	 * still up should let you tweak that same search (e.g. just swap the
 	 * target) rather than starting from two empty fields every time; but
@@ -630,19 +639,20 @@ export class GraphPane {
 		this.emptyStateEl = this.containerEl.createDiv({ cls: 'clew-empty-state' });
 		this.emptyStateEl.hide();
 
-		// A vertical icon rail (left edge) rather than a horizontal row of
-		// 6 text buttons - user feedback: the text-button row got covered/
-		// blended into a large, busy graph (no backing panel, and it wrapped
-		// onto multiple lines as controls were added). Icon + tooltip keeps
-		// each control recognizable at a glance without the width a label
-		// needs; `.clew-toolbar`'s own background/border/shadow (styles.css)
-		// gives it the same solid "floating panel" look as the legend and
-		// appearance panel already have, instead of sitting directly on the
-		// canvas. `.clew-topbar` is a flex-column positioning wrapper
-		// (top-right) - the filter panel (filterPanelEl below) is its second
-		// child, dropping straight down below the rail rather than jumping
-		// to the opposite (bottom-right) corner like the appearance panel -
-		// user feedback that it doesn't need to match Appearance's position.
+		// A horizontal icon rail (top-left) rather than a row of 6 text
+		// buttons - user feedback: the text-button row got covered/blended
+		// into a large, busy graph (no backing panel, and it wrapped onto
+		// multiple lines as controls were added). Icon + tooltip keeps each
+		// control recognizable at a glance without the width a label needs;
+		// `.clew-toolbar`'s own background/border/shadow (styles.css) gives
+		// it the same solid "floating panel" look as the legend and dialog
+		// panels already have, instead of sitting directly on the canvas.
+		// Horizontal, not vertical (user feedback: "Die Navigation soll
+		// horizontal und nicht vertikal sein" - a vertical rail read as
+		// awkward once it moved from the right edge to top-left). `.clew-topbar`
+		// is a flex-column positioning wrapper (top-left) - every panel (see
+		// the panel-creation block below) hangs directly off it, each
+		// dropping straight down below the rail as its own child.
 		const topbarEl = this.containerEl.createDiv({ cls: 'clew-topbar' });
 		const toolbarEl = topbarEl.createDiv({ cls: 'clew-toolbar' });
 
@@ -664,7 +674,7 @@ export class GraphPane {
 		// active toolbar toggles get, since the tooltip already says which
 		// mode is active.
 		this.layoutButton = iconButton('layout-grid', `Layout: ${LAYOUT_MODE_LABELS.force}`);
-		this.layoutButton.addEventListener('click', () => this.openLayoutModal());
+		this.layoutButton.addEventListener('click', () => this.toggleLayoutPanel());
 
 		// Panning/zooming away with no way back was a real gap - the camera
 		// only got reset automatically as a side effect of switching layouts
@@ -700,7 +710,7 @@ export class GraphPane {
 
 		if (FIND_PATH_ENABLED) {
 			this.findPathButton = iconButton('route', 'Find path…');
-			this.findPathButton.addEventListener('click', () => this.openPathfindingModal());
+			this.findPathButton.addEventListener('click', () => this.togglePathfindingPanel());
 		}
 
 		// Chat decision, 2026-08-04: a ctime-based time-lapse instead of the
@@ -723,38 +733,54 @@ export class GraphPane {
 		this.diagnosticsButton = iconButton('stethoscope', 'Diagnostics…');
 		this.diagnosticsButton.addEventListener('click', () => this.toggleDiagnosticsPanel());
 
-		// Both live inside topbarEl, right below the icon rail (see
-		// topbarEl's own comment above) - not siblings of appearancePanelEl,
-		// so neither shares a corner with it (each still gets its own
-		// distinct screen position). Only one of the three is ever actually
-		// shown at a time though - see closeOtherPanels(). Empty shells here
-		// - contents are (re)built fresh every time they open, same
-		// reasoning as renderAppearancePanel().
+		// Dialog-Management redesign, round 2 (user feedback: first "keine
+		// einheitliche Darstellung von Dialogen [...] mal zentral, mal
+		// rechts oben, mal rechts unter der Navigation", then - once Layout
+		// and Find-path's input still stood out as native Obsidian Modals -
+		// "'Find path' und 'Layout' sind immer noch Dialoge, die anders
+		// aussehen [...] Navigation oben links, alle Dialoge [...] links
+		// oben unter der Navigation"). One zone now, not two: every dialog
+		// this view has, regardless of what it configures or answers, is a
+		// child of topbarEl (top-left, below the icon rail) and shares the
+		// exact same `.clew-filter-panel` shell - Filter/Color & size/
+		// Appearance/Layout/Pathfinding's input form/Find-path's result/
+		// Diagnostics. Layout and Pathfinding used to be separate Obsidian
+		// `Modal`s (centered, Obsidian's own chrome) - folded in here so
+		// nothing reads as a different kind of UI depending on which button
+		// opened it.
+		//
+		// Still only one panel showing at a time, full stop - see
+		// closeOtherPanels() - this redesign only ever changes *where* a
+		// panel renders, never when it's shown. Legend (its own passive,
+		// always-visible corner) and Timeline (a scrubber bar, not a dialog
+		// at all) are deliberately outside this zone - see their own
+		// comments below.
+		this.layoutPanelEl = topbarEl.createDiv({ cls: 'clew-filter-panel' });
+		this.layoutPanelEl.hide();
 		this.filterPanelEl = topbarEl.createDiv({ cls: 'clew-filter-panel' });
 		this.filterPanelEl.hide();
 		this.colorAndSizePanelEl = topbarEl.createDiv({ cls: 'clew-filter-panel' });
 		this.colorAndSizePanelEl.hide();
+		if (FIND_PATH_ENABLED) {
+			this.pathfindingPanelEl = topbarEl.createDiv({ cls: 'clew-filter-panel' });
+			this.pathfindingPanelEl.hide();
+		}
+		this.panelEl = topbarEl.createDiv({ cls: 'clew-filter-panel' });
+		this.panelEl.hide();
+		this.appearancePanelEl = topbarEl.createDiv({ cls: 'clew-filter-panel' });
+		this.appearancePanelEl.hide();
 		this.diagnosticsPanelEl = topbarEl.createDiv({ cls: 'clew-filter-panel' });
 		this.diagnosticsPanelEl.hide();
 
-		// Top-left - opposite the top-right icon rail/filter panel, so it
-		// doesn't compete with either for space.
-		this.panelEl = this.containerEl.createDiv({ cls: 'clew-path-panel' });
-		this.panelEl.hide();
-
-		// Bottom-left - opposite the bottom-right appearance panel and the
-		// top-right icon rail/filter panel, so it doesn't compete with
-		// either for space.
+		// Bottom-left - a passive, always-visible corner (once renderLegend()
+		// has content to show), not an on-demand dialog like the zone above,
+		// so it stays its own second category rather than joining it.
 		this.legendEl = this.containerEl.createDiv({ cls: 'clew-legend' });
 
-		// Bottom-right - the one remaining free corner.
-		this.appearancePanelEl = this.containerEl.createDiv({ cls: 'clew-appearance-panel' });
-		this.appearancePanelEl.hide();
-
-		// Bottom-center - a horizontal scrubber bar, not another corner
-		// panel, so it doesn't compete with Filter/Color & size/Appearance
-		// for space (see toggleTimelinePanel()'s docstring for why it also
-		// doesn't need closeOtherPanels()).
+		// Bottom-center - a horizontal scrubber bar, not a corner panel at
+		// all, so it doesn't compete with either zone for space (see
+		// toggleTimelinePanel()'s docstring for why it also doesn't need
+		// closeOtherPanels()).
 		this.timelinePanelEl = this.containerEl.createDiv({ cls: 'clew-timeline-panel' });
 		this.timelinePanelEl.hide();
 
@@ -1179,7 +1205,13 @@ export class GraphPane {
 	 * docstring for why Timeline never calls closeOtherPanels() at all; it
 	 * clears a shown path result itself, directly, inside applyTimeline().
 	 */
-	private closeOtherPanels(keep: 'filter' | 'colorAndSize' | 'appearance' | 'findPath' | 'diagnostics'): void {
+	private closeOtherPanels(keep: 'filter' | 'colorAndSize' | 'appearance' | 'findPath' | 'diagnostics' | 'layout' | 'pathfindingInput'): void {
+		if (keep !== 'layout' && this.layoutPanelEl.isShown()) {
+			this.layoutPanelEl.hide();
+		}
+		if (keep !== 'pathfindingInput' && this.pathfindingPanelEl?.isShown()) {
+			this.pathfindingPanelEl.hide();
+		}
 		if (keep !== 'filter' && this.filterPanelEl.isShown()) {
 			this.filterPanelEl.hide();
 			this.editingFilterId = null;
@@ -1739,26 +1771,119 @@ export class GraphPane {
 		if (GraphPane.active === this) GraphPane.active = null;
 	}
 
-	openPathfindingModal(): void {
-		if (!this.graph) return;
-		// lastPathSource/Target/Directed are only ever non-null/non-default
-		// while the result panel is actually showing something for them
-		// (found or not) - see lastPathSource's own docstring for why, so
-		// this can just pass them straight through with no extra "is a
-		// result currently active" check of its own.
-		const initial: PathfindingModalInitial = {
-			source: this.lastPathSource,
-			target: this.lastPathTarget,
-			directed: this.lastPathDirected,
-		};
-		new PathfindingModal(
-			this.app,
-			this.files,
-			(request) => {
-				this.runPathSearch(request.source, request.target, request.directed);
-			},
-			initial,
-		).open();
+	/**
+	 * Shows/hides Find-path's *input* form (pathfindingPanelEl) - folded in
+	 * from a dedicated PathfindingModal as part of the Dialog-Management
+	 * redesign, round 2 (user feedback: "'Find path' und 'Layout' sind
+	 * immer noch Dialoge, die anders aussehen" - a native Obsidian Modal
+	 * read as visually distinct from the `.clew-filter-panel` box treatment
+	 * every other dialog already used). Same toggle shape as
+	 * toggleFilterPanel()/toggleColorAndSizePanel() - this is the command's
+	 * and toolbar button's entry point, so it's still public/named
+	 * `togglePathfindingPanel`, matching main.ts's `find-path` command.
+	 */
+	togglePathfindingPanel(): void {
+		if (!this.pathfindingPanelEl) return; // FIND_PATH_ENABLED off - see its own docstring
+		if (this.pathfindingPanelEl.isShown()) {
+			this.pathfindingPanelEl.hide();
+			return;
+		}
+		this.renderPathfindingPanel();
+		this.closeOtherPanels('pathfindingInput');
+		this.pathfindingPanelEl.show();
+	}
+
+	/**
+	 * Rebuilt from scratch each time the panel opens (not built once and
+	 * left standing), same pattern as every other panel here - lets it
+	 * always start from the current lastPathSource/Target/Directed (see
+	 * those fields' own docstrings for when that's "the last search" vs.
+	 * empty) without tracking a separate "is this stale" flag.
+	 */
+	private renderPathfindingPanel(): void {
+		if (!this.pathfindingPanelEl) return;
+		this.pathfindingSourceFile = this.lastPathSource;
+		this.pathfindingTargetFile = this.lastPathTarget;
+		this.pathfindingDirected = this.lastPathDirected;
+
+		this.pathfindingPanelEl.empty();
+		const headerEl = this.pathfindingPanelEl.createDiv({ cls: 'clew-appearance-panel-header' });
+		headerEl.createEl('h4', { text: 'Find path between two notes' });
+		const closeButton = headerEl.createEl('button', { cls: 'clickable-icon' });
+		setIcon(closeButton, 'x');
+		setTooltip(closeButton, 'Close');
+		closeButton.addEventListener('click', () => this.pathfindingPanelEl?.hide());
+
+		this.pathfindingPanelEl.createEl('p', {
+			text: 'Finds a route through the link graph from one note to the other, favoring notes with fewer links over big hub/index notes even if that route has more hops - and shows a couple of alternative routes alongside the shortest one. "no path found" is a real, useful result: it means the two notes aren\'t connected at all.',
+			cls: 'clew-modal-description',
+		});
+
+		// "From"/"To" get a shared class fixing their label-column width
+		// (clew-note-picker-setting, styles.css) - without it, Obsidian's
+		// Setting layout sizes the label column to fit each name's own text,
+		// so "From" (longer) left noticeably less room for its input than
+		// "To" did, making the two fields different widths.
+		const fromSetting = new Setting(this.pathfindingPanelEl).setName('From');
+		fromSetting.settingEl.addClass('clew-note-picker-setting');
+		fromSetting.addText((text) => {
+			text.setPlaceholder('Start note…');
+			if (this.pathfindingSourceFile) text.setValue(this.pathfindingSourceFile.basename);
+			text.inputEl.addClass('clew-note-picker-input');
+			const suggest = new NoteSuggest(this.app, text.inputEl, this.files);
+			suggest.onSelect((file) => {
+				this.pathfindingSourceFile = file;
+				suggest.setValue(file.basename);
+				suggest.close();
+				this.pathfindingErrorEl?.setText('');
+			});
+		});
+
+		const toSetting = new Setting(this.pathfindingPanelEl).setName('To');
+		toSetting.settingEl.addClass('clew-note-picker-setting');
+		toSetting.addText((text) => {
+			text.setPlaceholder('End note…');
+			if (this.pathfindingTargetFile) text.setValue(this.pathfindingTargetFile.basename);
+			text.inputEl.addClass('clew-note-picker-input');
+			const suggest = new NoteSuggest(this.app, text.inputEl, this.files);
+			suggest.onSelect((file) => {
+				this.pathfindingTargetFile = file;
+				suggest.setValue(file.basename);
+				suggest.close();
+				this.pathfindingErrorEl?.setText('');
+			});
+		});
+
+		new Setting(this.pathfindingPanelEl)
+			.setName('Directed')
+			.setDesc(
+				'Off (default): a link between two notes can be followed either way, regardless of which note it was written in. On: links can only be followed in the direction they were written - if only one note links to another, a path can go from the first to the second but not back.',
+			)
+			.addToggle((toggle) =>
+				toggle.setValue(this.pathfindingDirected).onChange((value) => (this.pathfindingDirected = value)),
+			);
+
+		// In-panel, not a Notice (top-right toast) - the panel is still open
+		// right in front of the user, so the error belongs right next to the
+		// fields it's about, not somewhere else on screen.
+		this.pathfindingErrorEl = this.pathfindingPanelEl.createEl('p', { cls: 'clew-modal-error' });
+
+		new Setting(this.pathfindingPanelEl).addButton((button) =>
+			button
+				.setButtonText('Find path')
+				.setCta()
+				.onClick(() => {
+					if (!this.pathfindingSourceFile || !this.pathfindingTargetFile) {
+						this.pathfindingErrorEl?.setText('Pick both a start and an end note.');
+						return;
+					}
+					const source = this.pathfindingSourceFile;
+					const target = this.pathfindingTargetFile;
+					const directed = this.pathfindingDirected;
+					this.pathfindingPanelEl?.hide();
+					this.runPathSearch(source, target, directed);
+				}),
+		);
 	}
 
 	private runPathSearch(source: TFile, target: TFile, directed: boolean): void {
@@ -2151,31 +2276,94 @@ export class GraphPane {
 		this.renderLegend();
 	}
 
+	/** Shows/hides the Layout panel - same toggle shape as every other dialog now (Dialog-Management redesign, round 2; see the panel-creation block in the constructor). Folded in from a dedicated LayoutModal - see layoutModal.ts's own docstring on LAYOUT_OPTIONS. */
+	private toggleLayoutPanel(): void {
+		if (this.layoutPanelEl.isShown()) {
+			this.layoutPanelEl.hide();
+			return;
+		}
+		this.renderLayoutPanel();
+		this.closeOtherPanels('layout');
+		this.layoutPanelEl.show();
+	}
+
 	/**
-	 * Opens the "Layout" dialog (layoutModal.ts) fresh each time, rather than
-	 * a persistent DOM structure - it's only a few options and this way "is
+	 * Rebuilt from scratch each time the panel opens, rather than a
+	 * persistent DOM structure - it's only a few options and this way "is
 	 * hierarchical too large for this graph" is always read straight from
 	 * the current graph, not tracked as separate instance state that could
-	 * drift out of sync with it. Replaced an earlier dropdown menu (user
-	 * feedback: picking a layout should come with an explanation of what
-	 * each one is for) - see LayoutModal's own docstring for why radial
-	 * routes to openRadialLayoutModal() instead of being just another
-	 * onSelect case.
+	 * drift out of sync with it. Whole-row-clickable option cards (not a
+	 * Setting with a small per-row button off to the side) - user feedback
+	 * that per-row buttons "fühlen sich nicht gut an" (see layoutModal.ts's
+	 * own docstring for the fuller reasoning, from when this was a Modal).
+	 * Radial always routes to openRadialLayoutModal() (a real note-picker
+	 * dialog - simple enough to stay a Modal, see its own docstring) instead
+	 * of switching straight to it, since radial always needs a focus note
+	 * chosen first.
 	 */
-	private openLayoutModal(): void {
+	private renderLayoutPanel(): void {
 		const tooLargeForHierarchical = (this.graph?.order ?? 0) > HIERARCHICAL_LAYOUT_NODE_LIMIT;
-		new LayoutModal(
-			this.app,
-			this.layoutMode,
-			tooLargeForHierarchical,
-			(mode) => {
-				if (mode === this.layoutMode) return;
-				if (mode === 'force') this.setForceLayout();
-				else if (mode === 'hierarchical') this.setHierarchicalLayout();
-				else if (mode === 'circular') this.setCircularLayout();
-			},
-			() => this.openRadialLayoutModal(),
-		).open();
+
+		this.layoutPanelEl.empty();
+		const headerEl = this.layoutPanelEl.createDiv({ cls: 'clew-appearance-panel-header' });
+		headerEl.createEl('h4', { text: 'Layout' });
+		const closeButton = headerEl.createEl('button', { cls: 'clickable-icon' });
+		setIcon(closeButton, 'x');
+		setTooltip(closeButton, 'Close');
+		closeButton.addEventListener('click', () => this.layoutPanelEl.hide());
+
+		this.layoutPanelEl.createEl('p', {
+			text: "Choose how notes are arranged. Switching layout doesn't change the current filter or coloring, just the positions.",
+			cls: 'clew-modal-description',
+		});
+
+		const listEl = this.layoutPanelEl.createDiv({ cls: 'clew-layout-option-list' });
+
+		for (const option of LAYOUT_OPTIONS) {
+			const isActive = this.layoutMode === option.mode;
+			const isRadial = option.mode === 'radial';
+			const isDisabled = option.mode === 'hierarchical' && tooLargeForHierarchical;
+
+			const rowEl = listEl.createDiv({ cls: 'clew-layout-option' });
+			rowEl.toggleClass('is-active', isActive);
+			rowEl.toggleClass('is-disabled', isDisabled);
+
+			const textEl = rowEl.createDiv({ cls: 'clew-layout-option-text' });
+			textEl.createDiv({ cls: 'clew-layout-option-name', text: LAYOUT_MODE_LABELS[option.mode] });
+			textEl.createDiv({
+				cls: 'clew-layout-option-desc',
+				text: isDisabled ? `${option.description} (Too many notes for this layout.)` : option.description,
+			});
+
+			// Trailing indicator: a checkmark for the active mode, plus - for
+			// radial specifically, active or not - an explicit hint that
+			// clicking it opens the note picker rather than just re-selecting
+			// it. Every other, non-active, non-disabled row gets a plain
+			// chevron as a "clicking this switches to it" affordance.
+			const trailingEl = rowEl.createDiv({ cls: 'clew-layout-option-trailing' });
+			if (isActive) setIcon(trailingEl.createSpan({ cls: 'clew-layout-option-check' }), 'check');
+			if (isRadial) {
+				trailingEl.createSpan({
+					cls: 'clew-layout-option-hint',
+					text: isActive ? 'Choose a different note…' : 'Choose note…',
+				});
+			}
+			if (!isDisabled && (!isActive || isRadial)) setIcon(trailingEl.createSpan(), 'chevron-right');
+
+			if (isDisabled) continue; // nothing to select - no click handler at all
+
+			rowEl.addEventListener('click', () => {
+				this.layoutPanelEl.hide();
+				if (isRadial) {
+					this.openRadialLayoutModal();
+					return;
+				}
+				if (option.mode === this.layoutMode) return;
+				if (option.mode === 'force') this.setForceLayout();
+				else if (option.mode === 'hierarchical') this.setHierarchicalLayout();
+				else if (option.mode === 'circular') this.setCircularLayout();
+			});
+		}
 	}
 
 	/**
@@ -3438,7 +3626,7 @@ export class GraphPane {
 	 * The "+ add" menu shared by a Color & size group's criteria and
 	 * Filter's own criteria (see CriteriaEditorContext's docstring) - same
 	 * Menu-based pattern the "Layout" toolbar button used before it became
-	 * a dialog (see openLayoutModal()) rather than a separate type
+	 * a dialog (see toggleLayoutPanel()) rather than a separate type
 	 * dropdown + "add" button next to it - user feedback: picking a type,
 	 * then having to also click a second control to actually add it, was
 	 * an extra step for what's really one action ("add a criterion of this
@@ -3550,7 +3738,7 @@ export class GraphPane {
 
 		// A single button opening a type-picker menu (same Menu-based pattern
 		// the "Layout" toolbar button used before it became a dialog - see
-		// openLayoutModal()) rather than a separate type
+		// toggleLayoutPanel()) rather than a separate type
 		// dropdown + "add" button next to it - user feedback: picking a
 		// type, then having to also click a second control to actually add
 		// it, was an extra step for what's really one action ("add a

@@ -224,10 +224,10 @@ Every `npm run build` after that updates both vaults automatically - no
 manual copy step. Then open `test-vault` in Obsidian and check:
 
 - **Find path** (route icon) is enabled - `FIND_PATH_ENABLED` in graphPane.ts
-  gates both the toolbar icon and the command in main.ts; flip it back to
-  `false` if there's ever again a reason to hide the feature without
-  deleting it (pathfinding.ts/PathfindingModal would stay as-is, just
-  unreferenced, same as before it was re-enabled). Its result
+  gates the toolbar icon, `togglePathfindingPanel()`'s input panel, and the
+  command in main.ts; flip it back to `false` if there's ever again a
+  reason to hide the feature without deleting it (pathfinding.ts would stay
+  as-is, just unreferenced, same as before it was re-enabled). Its result
   panel now has the same header chrome (title + a single "x" that closes
   it) every other panel here uses - it used to just start straight in with
   a heading-less list.
@@ -299,6 +299,27 @@ manual copy step. Then open `test-vault` in Obsidian and check:
   panel open showing criteria that no longer matched what was drawn.
   Conversely, with a path result showing, opening Filter/Color & size/
   Appearance should close the path result panel and clear its highlight.
+- **Dialog zones, round 2** (user feedback: first "keine einheitliche
+  Darstellung von Dialogen [...] mal zentral, mal rechts oben, mal rechts
+  unter der Navigation", then - once Layout and Find-path's input still
+  stood out as native Obsidian Modals - "'Find path' und 'Layout' sind
+  immer noch Dialoge, die anders aussehen [...] Navigation oben links [...]
+  alle Dialoge [...] links oben unter der Navigation"). One zone now, not
+  two: every dialog this view has - Filter, Color & size, Appearance,
+  Layout, Find-path's input form, Find-path's result, Diagnostics - is a
+  `.clew-filter-panel` child of `.clew-topbar` (top-left, below the icon
+  rail). Layout and Find-path's input form used to each be their own
+  Obsidian `Modal` (centered, Obsidian's own chrome) - open both from the
+  toolbar and confirm they now render as the same box, in the same
+  top-left slot, as Filter/Color & size/Appearance/Diagnostics, not
+  centered on screen. Legend (bottom-left, passive) and Timeline
+  (bottom-center, a scrubber bar) stay outside the zone, unchanged. Every
+  panel is still mutually exclusive exactly as before (`closeOtherPanels()`)
+  - this only ever changes *where* the open one renders, never *whether* a
+  second one can be open alongside it (it still can't). `RadialLayoutModal`
+  and the delete-confirmation `ConfirmModal` are the two remaining native
+  Modals - deliberately left as Modals (simple, one-shot "pick one thing
+  and confirm" dialogs, not asked about either round).
 - **Diagnostics** (stethoscope icon): three read-only, always-fresh lists -
   `diagnostics.ts` computes them purely from the current graph, no saved
   state of its own. Open the panel and check:
@@ -638,9 +659,10 @@ manual copy step. Then open `test-vault` in Obsidian and check:
   in `onSettled`, so the previous layout's zoom stayed on screen for the
   entire settle while nodes visibly grew underneath it). Should read as a
   smooth zoom-out, not a stutter or a flash of the wrong framing.
-- **Layout selection** (`layoutModal.ts`): a single "Layout: Force" toolbar
-  button (its own tooltip always shows the current mode) opens a dialog -
-  not a dropdown menu (user feedback: picking a layout should come with an
+- **Layout selection** (`renderLayoutPanel()` in graphPane.ts, options
+  data in `layoutModal.ts`): a single "Layout: Force" toolbar button (its
+  own tooltip always shows the current mode) opens a panel - not a dropdown
+  menu (user feedback: picking a layout should come with an
   explanation of what each one is actually for, not just a bare name), and
   not a per-row "Active"/"Use" button either (user feedback that felt off:
   a tiny click target at the row's edge, disconnected from the name/
@@ -928,8 +950,10 @@ manual copy step. Then open `test-vault` in Obsidian and check:
   Activating the filter on top of a shown path result should switch the
   legend to the filter's own "Shown" label, not leave it describing the
   path underneath.
-- **Appearance panel**: click the sliders icon in the top-right icon rail -
-  a panel opens bottom-right with "Nodes" and "Edges" sections (each with
+- **Appearance panel**: click the sliders icon in the top-left icon rail -
+  a panel opens in the dialog zone (top-left, directly below the icon
+  rail - same slot as Filter/Color & size, see "Dialog zones, round 2"
+  above) with "Nodes" and "Edges" sections (each with
   their own color picker and sliders), then grouped sliders (Physics /
   Labels / Radial or Circular or Hierarchical layout spacing), and a
   "Reset to defaults" button; clicking the icon again closes it. The

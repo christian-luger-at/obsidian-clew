@@ -49,8 +49,8 @@
 	justify-content: center;
 }
 
-/* Same floating-panel look as .clew-legend/.clew-appearance-panel, so it
-   reads as part of the same UI system rather than a one-off dialog. */
+/* Same floating-panel look as .clew-legend/.clew-filter-panel, so it reads
+   as part of the same UI system rather than a one-off dialog. */
 .clew-empty-state-card {
 	display: flex;
 	flex-direction: column;
@@ -89,30 +89,40 @@
 	margin-top: var(--size-4-1);
 }
 
-/* Positions the icon rail (.clew-toolbar) and the filter panel
-   (.clew-filter-panel), top-right - a flex column so the panel drops
-   straight down below the rail rather than sharing a corner with the
-   appearance panel (user feedback: it doesn't need to match Appearance's
-   own bottom-right position). align-items: flex-end keeps both children
-   right-aligned even though the panel is wider than the icon rail. */
+/* Positions the icon rail (.clew-toolbar) and every dialog panel (every
+   .clew-filter-panel child - Filter/Color & size/Appearance/Layout/
+   Pathfinding's input form/Find-path's result/Diagnostics), top-left - a
+   flex column so each panel drops straight down below the rail (and below
+   whichever panel came before it, though only one is ever actually shown -
+   see graphPane.ts's closeOtherPanels()). Dialog-Management redesign,
+   round 2 (user feedback: "Navigation oben links im Fenster [...] alle
+   Dialoge [...] links oben unter der Navigation") - a single zone
+   (previously top-right; an even earlier round briefly split this into a
+   second "Result" zone top-left, folded back into one here) so every
+   dialog this view has lives in exactly one place, not "wherever its own
+   feature happened to put it". align-items: flex-start keeps every child
+   left-aligned even though a panel is wider than the icon rail. */
 .clew-topbar {
 	position: absolute;
 	top: var(--size-4-2);
-	right: var(--size-4-2);
+	left: var(--size-4-2);
 	z-index: 10;
 	display: flex;
 	flex-direction: column;
-	align-items: flex-end;
+	align-items: flex-start;
 	gap: var(--size-4-1);
 }
 
-/* A vertical icon rail rather than a horizontal row of text buttons - see
-   its construction in graphPane.ts for why. The background/border/shadow
-   match .clew-legend/.clew-appearance-panel, so it reads as a floating
-   panel instead of sitting directly on (and blending into) a busy graph. */
+/* A horizontal icon rail (not vertical - user feedback: "Die Navigation
+   soll horizontal und nicht vertikal sein" - a vertical rail read as
+   awkward now that it sits top-left instead of hugging the right edge) and
+   not a row of text buttons either - see its construction in graphPane.ts
+   for why icons over labels. The background/border/shadow match
+   .clew-legend/.clew-filter-panel, so it reads as a floating panel instead
+   of sitting directly on (and blending into) a busy graph. */
 .clew-toolbar {
 	display: flex;
-	flex-direction: column;
+	flex-direction: row;
 	gap: var(--size-4-1);
 	padding: var(--size-4-1);
 	background: var(--background-primary);
@@ -143,15 +153,15 @@
 	color: var(--text-on-accent);
 }
 
-/* Drops down from the icon rail (a flex-column child of .clew-topbar,
-   see there) rather than floating in its own absolutely-positioned
-   bottom-right corner like .clew-appearance-panel - user feedback: it
-   doesn't need to match Appearance's position. max-height: 70vh (not a
-   percentage of the panel's own auto-sized flex parent, which wouldn't
-   resolve) keeps it from running off the bottom of a tall vault's worth
-   of tags/properties. Reuses .clew-appearance-panel-header for its own
-   title+close-button row (same class, see graphPane.ts's
-   renderFilterPanel()) rather than a near-duplicate rule here. */
+/* Every dialog panel's shared shell (Filter/Color & size/Appearance/
+   Layout/Pathfinding's input form/Find-path's result/Diagnostics) - drops
+   down from the icon rail (a flex-column child of .clew-topbar, see
+   there), no position of its own. max-height: 70vh (not a percentage of the
+   panel's own auto-sized flex parent, which wouldn't resolve) keeps it from
+   running off the bottom of a tall vault's worth of tags/properties/
+   sliders. Reuses .clew-appearance-panel-header for its own title+close-
+   button row (same class, see graphPane.ts's renderFilterPanel()) rather
+   than a near-duplicate rule here. */
 .clew-filter-panel {
 	width: 360px;
 	max-width: calc(100vw - var(--size-4-4));
@@ -308,9 +318,9 @@
 
 /* A group's full edit form (renderGroupEditForm()) - set apart from the
    collapsed rows around it with its own background/rounding, same
-   reasoning .clew-appearance-panel itself is set apart from the bare
-   canvas behind it, so it reads as "you're now editing this one" rather
-   than blending into the row list. */
+   reasoning .clew-filter-panel itself is set apart from the bare canvas
+   behind it, so it reads as "you're now editing this one" rather than
+   blending into the row list. */
 .clew-group-edit {
 	margin: var(--size-4-1) 0;
 	padding: var(--size-4-2);
@@ -529,31 +539,6 @@
 	margin-bottom: 0;
 }
 
-/* Find-path's result panel - same box treatment (width, padding,
-   background/border/shadow) as .clew-appearance-panel, including its own
-   `clew-appearance-panel-header` for the title/close row - user feedback:
-   this panel used to look like nothing else in the plugin (no header,
-   plain heading-less content). Left at its own top-left position rather
-   than moved to Appearance's bottom-right corner - "same look", not "same
-   spot" - the other panel corners are already spoken for (Legend
-   bottom-left, Timeline bottom-center, Appearance bottom-right, Filter/
-   Color & size top-right below the toolbar). */
-.clew-path-panel {
-	position: absolute;
-	top: var(--size-4-2);
-	left: var(--size-4-2);
-	z-index: 10;
-	width: 340px;
-	max-width: calc(100% - var(--size-4-4));
-	max-height: calc(100% - var(--size-4-4));
-	overflow-y: auto;
-	padding: var(--size-4-3);
-	background: var(--background-primary);
-	border: 1px solid var(--background-modifier-border);
-	border-radius: var(--radius-m);
-	box-shadow: var(--shadow-s);
-}
-
 /* One pill per route (renderPathPanel()) in a single wrapping row, not one
    full-width row per route (previous version) - user feedback: 4 stacked
    rows just to pick a route cost more space than the choice itself needed.
@@ -767,22 +752,10 @@
 	border-radius: 50%;
 }
 
-.clew-appearance-panel {
-	position: absolute;
-	bottom: var(--size-4-2);
-	right: var(--size-4-2);
-	z-index: 10;
-	width: 340px;
-	max-width: calc(100% - var(--size-4-4));
-	max-height: calc(100% - var(--size-4-4));
-	overflow-y: auto;
-	padding: var(--size-4-3);
-	background: var(--background-primary);
-	border: 1px solid var(--background-modifier-border);
-	border-radius: var(--radius-m);
-	box-shadow: var(--shadow-s);
-}
-
+/* Shared by every dialog panel's own title/close row (Filter/Color &
+   size/Appearance/Layout/Pathfinding's input form/Find-path's result/
+   Diagnostics, all .clew-filter-panel) - one header treatment regardless
+   of which panel it's in. */
 .clew-appearance-panel-header {
 	display: flex;
 	align-items: center;
@@ -794,12 +767,12 @@
 	margin: 0;
 }
 
-/* Bottom-center scrubber bar - its own horizontal region rather than
-   another corner panel like Filter/Color & size/Appearance, since a
-   timeline reads more like a video player's transport controls than a
-   settings list (see toggleTimelinePanel()'s docstring in graphPane.ts).
-   Sits centered along the bottom edge, between .clew-legend (bottom-left)
-   and .clew-appearance-panel (bottom-right). */
+/* Bottom-center scrubber bar - its own horizontal region rather than a
+   Configuration/Result-zone panel, since a timeline reads more like a video
+   player's transport controls than a settings list (see
+   toggleTimelinePanel()'s docstring in graphPane.ts). Sits centered along
+   the bottom edge, clear of .clew-legend at the opposite (bottom-left)
+   corner. */
 .clew-timeline-panel {
 	position: absolute;
 	bottom: var(--size-4-2);
@@ -887,24 +860,24 @@
 	text-align: right;
 }
 
-/** Shared by every Clew modal that explains what it does under its title (RadialLayoutModal, PathfindingModal, ...). */
+/** Shared by every Clew dialog that explains what it does under its title - both a remaining native Modal (RadialLayoutModal) and a panel (Layout, Find-path's input form). Kept the `modal` name from when Layout/Pathfinding were Modals too - still describes what it is (a dialog's own intro text), not where it lives. */
 .clew-modal-description {
 	color: var(--text-muted);
 	margin-top: 0;
 }
 
-/** Shared by every Clew modal's note-picker text input (RadialLayoutModal's "Center on", PathfindingModal's "From"/"To", ...) - Obsidian's default Setting text-input width is too narrow for a note path. */
+/** Shared by every Clew dialog's note-picker text input (RadialLayoutModal's "Center on", Find-path's "From"/"To", ...) - Obsidian's default Setting text-input width is too narrow for a note path. */
 .clew-note-picker-input {
 	width: 100%;
 	flex-grow: 1;
 }
 
-/** Fixes the label column to the same width across every note-picker Setting in a dialog (PathfindingModal's "From"/"To") - otherwise Obsidian sizes it to each label's own text, leaving a shorter label's input wider than a longer label's. */
+/** Fixes the label column to the same width across every note-picker Setting in a dialog (Find-path's "From"/"To") - otherwise Obsidian sizes it to each label's own text, leaving a shorter label's input wider than a longer label's. */
 .clew-note-picker-setting .setting-item-info {
 	flex: 0 0 80px;
 }
 
-/** Shared by every Clew modal with an in-dialog validation error (RadialLayoutModal, PathfindingModal, ...) - never a Notice (top-right toast), since the modal is already open right in front of the user. */
+/** Shared by every Clew dialog with an in-dialog validation error (RadialLayoutModal, Find-path's input form, ...) - never a Notice (top-right toast), since the dialog is already open right in front of the user. */
 .clew-modal-error {
 	color: var(--text-error);
 	min-height: 1em;
@@ -914,7 +887,7 @@
 	display: none;
 }
 
-/* LayoutModal's option list - a "radio card" per layout (whole row
+/* The Layout panel's option list - a "radio card" per layout (whole row
    clickable, not a Setting with a small button off to the side) - user
    feedback that the earlier per-row-button version "fühlen sich nicht gut
    an" (didn't feel good): a tiny click target disconnected from the name/
