@@ -947,6 +947,12 @@ export class GraphPane {
 	 * file set) to not need caching. No bulk actions here on purpose (see
 	 * diagnostics.ts's own docstring) - every entry just opens the note it's
 	 * about, same as Find-path's result list.
+	 *
+	 * Which of the three sections actually render is controlled by
+	 * settings.diagnostics (Obsidian's own Settings tab, see
+	 * settingsTab.ts) - not computed here just to be filtered out, so a
+	 * disabled section costs nothing (findBrokenLinks() etc. simply isn't
+	 * called).
 	 */
 	private renderDiagnosticsPanel(): void {
 		this.diagnosticsPanelEl.empty();
@@ -960,30 +966,43 @@ export class GraphPane {
 		if (!this.graph) return;
 		const graph = this.graph;
 		const filePaths = new Set(this.files.map((file) => file.path));
+		const settings = this.plugin.settings.diagnostics;
 
-		const orphans = findOrphans(graph);
-		const brokenLinks = findBrokenLinks(this.app.metadataCache.unresolvedLinks, filePaths);
-		const isolatedClusters = findIsolatedClusters(graph);
+		if (!settings.showOrphans && !settings.showBrokenLinks && !settings.showIsolatedClusters) {
+			this.diagnosticsPanelEl.createEl('p', {
+				text: 'Every diagnostics section is turned off - re-enable them under Settings → Community plugins → Clew.',
+				cls: 'clew-filter-empty-note',
+			});
+			return;
+		}
 
-		this.diagnosticsPanelEl.createEl('h5', { text: `Orphans (${orphans.length})`, cls: 'clew-diagnostics-heading' });
-		this.renderPaginatedDiagnosticsList(
-			orphans,
-			(listEl, path) => this.createDiagnosticsEntry(listEl, basename(path), path),
-			'No orphaned notes - every note has at least one link.',
-			() => this.diagnosticsOrphanVisibleCount,
-			(value) => (this.diagnosticsOrphanVisibleCount = value),
-		);
+		if (settings.showOrphans) {
+			const orphans = findOrphans(graph);
+			this.diagnosticsPanelEl.createEl('h5', { text: `Orphans (${orphans.length})`, cls: 'clew-diagnostics-heading' });
+			this.renderPaginatedDiagnosticsList(
+				orphans,
+				(listEl, path) => this.createDiagnosticsEntry(listEl, basename(path), path),
+				'No orphaned notes - every note has at least one link.',
+				() => this.diagnosticsOrphanVisibleCount,
+				(value) => (this.diagnosticsOrphanVisibleCount = value),
+			);
+		}
 
-		this.diagnosticsPanelEl.createEl('h5', { text: `Broken links (${brokenLinks.length})`, cls: 'clew-diagnostics-heading' });
-		this.renderPaginatedDiagnosticsList(
-			brokenLinks,
-			(listEl, link) => this.createDiagnosticsEntry(listEl, `${basename(link.source)} → ${link.target}`, link.source),
-			'No broken links - every link resolves to a note.',
-			() => this.diagnosticsBrokenLinkVisibleCount,
-			(value) => (this.diagnosticsBrokenLinkVisibleCount = value),
-		);
+		if (settings.showBrokenLinks) {
+			const brokenLinks = findBrokenLinks(this.app.metadataCache.unresolvedLinks, filePaths);
+			this.diagnosticsPanelEl.createEl('h5', { text: `Broken links (${brokenLinks.length})`, cls: 'clew-diagnostics-heading' });
+			this.renderPaginatedDiagnosticsList(
+				brokenLinks,
+				(listEl, link) => this.createDiagnosticsEntry(listEl, `${basename(link.source)} → ${link.target}`, link.source),
+				'No broken links - every link resolves to a note.',
+				() => this.diagnosticsBrokenLinkVisibleCount,
+				(value) => (this.diagnosticsBrokenLinkVisibleCount = value),
+			);
+		}
 
-		this.renderIsolatedClustersSection(isolatedClusters);
+		if (settings.showIsolatedClusters) {
+			this.renderIsolatedClustersSection(findIsolatedClusters(graph));
+		}
 	}
 
 	/**

@@ -1,13 +1,16 @@
 import { Plugin, WorkspaceLeaf } from 'obsidian';
-import { DEFAULT_APPEARANCE_SETTINGS, DEFAULT_TIMELINE_SETTINGS, ClewSettings } from './settings';
+import { DEFAULT_APPEARANCE_SETTINGS, DEFAULT_DIAGNOSTICS_SETTINGS, DEFAULT_TIMELINE_SETTINGS, ClewSettings } from './settings';
 import { CLEW_STANDALONE_GRAPH_VIEW, StandaloneGraphView } from './graph/standaloneGraphView';
 import { FIND_PATH_ENABLED, GraphPane } from './graph/graphPane';
+import { ClewSettingTab } from './settingsTab';
 
 export default class ClewPlugin extends Plugin {
 	settings!: ClewSettings;
 
 	async onload() {
 		await this.loadSettings();
+
+		this.addSettingTab(new ClewSettingTab(this.app, this));
 
 		this.registerView(CLEW_STANDALONE_GRAPH_VIEW, (leaf) => new StandaloneGraphView(leaf, this));
 
@@ -67,6 +70,7 @@ export default class ClewPlugin extends Plugin {
 			filterCombineMode: loaded?.filterCombineMode ?? 'or',
 			nodeGroups: [...(loaded?.nodeGroups ?? [])],
 			timeline: { ...DEFAULT_TIMELINE_SETTINGS, ...loaded?.timeline },
+			diagnostics: { ...DEFAULT_DIAGNOSTICS_SETTINGS, ...loaded?.diagnostics },
 		};
 	}
 

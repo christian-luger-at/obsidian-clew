@@ -104,7 +104,8 @@ That's it! Your updated plugin is now active.
 ```bash
 src/
   main.ts                  # plugin entry point and lifecycle management
-  settings.ts              # settings interface, defaults, SettingTab UI
+  settings.ts              # settings interfaces + defaults (the persisted data shape)
+  settingsTab.ts           # Obsidian's own Settings screen entry (Settings → Community plugins → Clew)
   graph/
     generateGraph.ts       # deterministic synthetic graph generator (shared by spike/ and scripts/gen-graph-vault.mjs)
     vaultGraph.ts           # builds a graphology graph from vault files + the link graph
@@ -336,6 +337,16 @@ manual copy step. Then open `test-vault` in Obsidian and check:
     `notes` array. What to verify once triggered: a "+ N more" row appears
     once a list exceeds `DIAGNOSTICS_PAGE_SIZE`, and clicking it reveals
     the next page without losing what's already shown.
+  - **Per-section on/off** (Obsidian's own Settings → Community plugins →
+    Clew, not a graph-view panel - see `settingsTab.ts`): all three toggles
+    default on. Turn "Broken links" off (user feedback: not everyone
+    considers unresolved links a problem - some deliberately link to notes
+    they haven't written yet) - the Broken links heading/list should
+    disappear from the Diagnostics panel the next time it's opened
+    (`renderDiagnosticsPanel()` reads the setting fresh each render, no
+    reload needed), `findBrokenLinks()` shouldn't even be called while it's
+    off. Turn all three off - the panel should show a single explanatory
+    line instead of an empty shell.
 - **Cluster freshness** (an "Activity" criterion on a node group - see
   "Color & size" below and `nodeGroups.ts`): create a group with a single
   Activity criterion, reading "Notes in [an inactive area of the vault]" -

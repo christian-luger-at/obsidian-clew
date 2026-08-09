@@ -118,6 +118,30 @@ export const DEFAULT_APPEARANCE_SETTINGS: ClewAppearanceSettings = {
 	edgeArrowSize: 1,
 };
 
+/**
+ * Which of the Diagnostics panel's three sections (graphPane.ts's
+ * renderDiagnosticsPanel()) are shown - user feedback: broken links aren't
+ * always a real problem (many people deliberately link to notes that don't
+ * exist yet, a common "stub first, write later" workflow), so someone who
+ * doesn't want that noise should be able to turn just that section off,
+ * without losing Orphans/Isolated clusters too. Lives in Obsidian's own
+ * Settings tab (settingsTab.ts), not the graph view's own panels - unlike
+ * ClewAppearanceSettings above, this isn't something you'd tune while
+ * watching the graph react; it's a one-time "what do I even want to see"
+ * choice.
+ */
+export interface ClewDiagnosticsSettings {
+	showOrphans: boolean;
+	showBrokenLinks: boolean;
+	showIsolatedClusters: boolean;
+}
+
+export const DEFAULT_DIAGNOSTICS_SETTINGS: ClewDiagnosticsSettings = {
+	showOrphans: true,
+	showBrokenLinks: true,
+	showIsolatedClusters: true,
+};
+
 export interface ClewSettings {
 	/**
 	 * Manually dragged node positions, keyed by note path - GitHub issue
@@ -166,6 +190,8 @@ export interface ClewSettings {
 	 * docstring: opening the panel always starts at the beginning).
 	 */
 	timeline: ClewTimelineSettings;
+	/** See ClewDiagnosticsSettings's own docstring. */
+	diagnostics: ClewDiagnosticsSettings;
 }
 
 export interface ClewTimelineSettings {
