@@ -9,6 +9,7 @@ import { runHierarchicalLayout, HIERARCHICAL_LAYOUT_NODE_LIMIT } from './hierarc
 import { computeRadialLayout } from './radialLayout';
 import { computeCircularLayout } from './circularLayout';
 import { basename, findPaths, PathResult } from './pathfinding';
+import { findOrphans, findBrokenLinks, findIsolatedClusters } from './diagnostics';
 import { PathfindingModal, PathfindingModalInitial } from './pathfindingModal';
 
 import { RadialLayoutModal } from './radialLayoutModal';
@@ -84,6 +85,19 @@ const MIN_FIT_EXTENT = 32;
  * decision made for this panel specifically.
  */
 const MAX_PATH_ROUTES = 4;
+
+/**
+ * How many entries a Diagnostics list (Orphans/Broken links/Isolated
+ * clusters) shows before offering "+ N more" - user feedback ("Denk daran,
+ * dass u.U. viele Daten anzeigt werden müssen"): a vault with hundreds of
+ * orphans should never render hundreds of `<li>`s at once just because the
+ * panel opened. No search box (an earlier version had one) - user feedback:
+ * "wenn jemand alles (oder das meiste) fixen will, muss er alle Einträge
+ * sehen" - someone working through the whole list has no query to type, so
+ * search would only add UI, not narrow anything useful; "+ N more" alone
+ * covers the actual concern (never rendering hundreds of `<li>`s unprompted).
+ */
+const DIAGNOSTICS_PAGE_SIZE = 20;
 
 /**
  * "Find path" (toolbar icon + `openPathfindingModal()` + the command in
@@ -470,6 +484,25 @@ export class GraphPane {
 	/** Lowercased "title\ncontent" per note path - only populated when at least one enabled group has a `text` criterion (see nodeGroups.ts's needsContentSearch()); refreshed by refreshNoteContentCache(). Reading every note's body is a real I/O cost, so this stays empty (and unused) otherwise. */
 	private noteContentCache = new Map<string, string>();
 	private readonly appearanceButton: HTMLButtonElement;
+	private readonly diagnosticsButton: HTMLButtonElement;
+	private readonly diagnosticsPanelEl: HTMLElement;
+	/** Index into the current isolatedClusters list of the one currently highlighted on the graph (toggleClusterHighlight()), or null if none is. Only one at a time - see toggleClusterHighlight()'s docstring. */
+	private highlightedClusterIndex: number | null = null;
+	/**
+	 * Per-section "how many shown so far" state for the Diagnostics panel's
+	 * Orphans/Broken links/Isolated clusters lists - instance fields, not
+	 * local to renderDiagnosticsPanel(), so they survive a full panel
+	 * re-render triggered by something unrelated (e.g. toggleClusterHighlight()
+	 * calling renderDiagnosticsPanel() again) instead of silently collapsing
+	 * whatever the user had already expanded. Reset together by
+	 * resetDiagnosticsListState(), called only when the panel is freshly
+	 * opened (toggleDiagnosticsPanel()) - reopening it should start clean,
+	 * same as Find-path's modal starting empty after an explicit close (see
+	 * openPathfindingModal()'s docstring for that precedent).
+	 */
+	private diagnosticsOrphanVisibleCount = DIAGNOSTICS_PAGE_SIZE;
+	private diagnosticsBrokenLinkVisibleCount = DIAGNOSTICS_PAGE_SIZE;
+	private diagnosticsClusterVisibleCount = DIAGNOSTICS_PAGE_SIZE;
 	private renderer: Sigma | null = null;
 	private layout: LayoutRun | null = null;
 	private graph: Graph | null = null;
@@ -654,6 +687,16 @@ export class GraphPane {
 		this.appearanceButton = iconButton('sliders-horizontal', 'Appearance…');
 		this.appearanceButton.addEventListener('click', () => this.toggleAppearancePanel());
 
+		// Feature-list item "Strukturelle Diagnose-Panels": surfaces orphans,
+		// broken links, and isolated clusters as clickable lists instead of
+		// only ever showing them via color (minLinks filter, Ghost-Nodes,
+		// stagnation coloring) - the diagnostics themselves stay pure
+		// (diagnostics.ts), this button just opens a panel onto them. No
+		// "is-active" state to track (unlike Filter/Color & size, there's no
+		// persisted on/off setting here) - same as Appearance's button.
+		this.diagnosticsButton = iconButton('stethoscope', 'Diagnostics…');
+		this.diagnosticsButton.addEventListener('click', () => this.toggleDiagnosticsPanel());
+
 		// Both live inside topbarEl, right below the icon rail (see
 		// topbarEl's own comment above) - not siblings of appearancePanelEl,
 		// so neither shares a corner with it (each still gets its own
@@ -665,6 +708,8 @@ export class GraphPane {
 		this.filterPanelEl.hide();
 		this.colorAndSizePanelEl = topbarEl.createDiv({ cls: 'clew-filter-panel' });
 		this.colorAndSizePanelEl.hide();
+		this.diagnosticsPanelEl = topbarEl.createDiv({ cls: 'clew-filter-panel' });
+		this.diagnosticsPanelEl.hide();
 
 		// Top-left - opposite the top-right icon rail/filter panel, so it
 		// doesn't compete with either for space.
@@ -875,6 +920,199 @@ export class GraphPane {
 		}
 	}
 
+	private toggleDiagnosticsPanel(): void {
+		if (this.diagnosticsPanelEl.isShown()) {
+			this.diagnosticsPanelEl.hide();
+			this.clearClusterHighlight();
+		} else {
+			this.closeOtherPanels('diagnostics');
+			this.resetDiagnosticsListState();
+			this.renderDiagnosticsPanel();
+			this.diagnosticsPanelEl.show();
+		}
+	}
+
+	private resetDiagnosticsListState(): void {
+		this.diagnosticsOrphanVisibleCount = DIAGNOSTICS_PAGE_SIZE;
+		this.diagnosticsBrokenLinkVisibleCount = DIAGNOSTICS_PAGE_SIZE;
+		this.diagnosticsClusterVisibleCount = DIAGNOSTICS_PAGE_SIZE;
+	}
+
+	/**
+	 * Feature-list item "Strukturelle Diagnose-Panels": three read-only
+	 * lists (orphans, broken links, isolated clusters) built fresh from
+	 * `this.graph` every time the panel opens - same "rebuilt from scratch,
+	 * not left standing" reasoning as Filter/Color & size, and cheap enough
+	 * (diagnostics.ts's checks are all linear/near-linear over the current
+	 * file set) to not need caching. No bulk actions here on purpose (see
+	 * diagnostics.ts's own docstring) - every entry just opens the note it's
+	 * about, same as Find-path's result list.
+	 */
+	private renderDiagnosticsPanel(): void {
+		this.diagnosticsPanelEl.empty();
+		const headerEl = this.diagnosticsPanelEl.createDiv({ cls: 'clew-appearance-panel-header' });
+		headerEl.createEl('h4', { text: 'Diagnostics' });
+		const closeButton = headerEl.createEl('button', { cls: 'clickable-icon' });
+		setIcon(closeButton, 'x');
+		setTooltip(closeButton, 'Close');
+		closeButton.addEventListener('click', () => this.toggleDiagnosticsPanel());
+
+		if (!this.graph) return;
+		const graph = this.graph;
+		const filePaths = new Set(this.files.map((file) => file.path));
+
+		const orphans = findOrphans(graph);
+		const brokenLinks = findBrokenLinks(this.app.metadataCache.unresolvedLinks, filePaths);
+		const isolatedClusters = findIsolatedClusters(graph);
+
+		this.diagnosticsPanelEl.createEl('h5', { text: `Orphans (${orphans.length})`, cls: 'clew-diagnostics-heading' });
+		this.renderPaginatedDiagnosticsList(
+			orphans,
+			(listEl, path) => this.createDiagnosticsEntry(listEl, basename(path), path),
+			'No orphaned notes - every note has at least one link.',
+			() => this.diagnosticsOrphanVisibleCount,
+			(value) => (this.diagnosticsOrphanVisibleCount = value),
+		);
+
+		this.diagnosticsPanelEl.createEl('h5', { text: `Broken links (${brokenLinks.length})`, cls: 'clew-diagnostics-heading' });
+		this.renderPaginatedDiagnosticsList(
+			brokenLinks,
+			(listEl, link) => this.createDiagnosticsEntry(listEl, `${basename(link.source)} → ${link.target}`, link.source),
+			'No broken links - every link resolves to a note.',
+			() => this.diagnosticsBrokenLinkVisibleCount,
+			(value) => (this.diagnosticsBrokenLinkVisibleCount = value),
+		);
+
+		this.renderIsolatedClustersSection(isolatedClusters);
+	}
+
+	/**
+	 * A "+ N more" cap at DIAGNOSTICS_PAGE_SIZE, no search box (see that
+	 * constant's docstring for why) - shared by Orphans and Broken links,
+	 * the two Diagnostics sections that are an actual list of
+	 * distinctly-named entries (Isolated clusters isn't - see
+	 * renderIsolatedClustersSection()).
+	 */
+	private renderPaginatedDiagnosticsList<T>(
+		items: T[],
+		renderEntry: (listEl: HTMLElement, item: T) => void,
+		emptyText: string,
+		getVisibleCount: () => number,
+		setVisibleCount: (value: number) => void,
+	): void {
+		if (items.length === 0) {
+			this.diagnosticsPanelEl.createEl('p', { text: emptyText, cls: 'clew-filter-empty-note' });
+			return;
+		}
+
+		const listEl = this.diagnosticsPanelEl.createEl('ul', { cls: 'clew-diagnostics-list' });
+		const renderList = () => {
+			listEl.empty();
+			const visible = items.slice(0, getVisibleCount());
+			for (const item of visible) renderEntry(listEl, item);
+			if (items.length > visible.length) {
+				const moreEl = listEl.createEl('li', { cls: 'clew-diagnostics-more' });
+				const moreButton = moreEl.createEl('button', { text: `+ ${items.length - visible.length} more` });
+				moreButton.addEventListener('click', () => {
+					setVisibleCount(getVisibleCount() + DIAGNOSTICS_PAGE_SIZE);
+					renderList();
+				});
+			}
+		};
+		renderList();
+	}
+
+	/**
+	 * No search box here, unlike renderSearchableDiagnosticsList() above -
+	 * a cluster has no single name to search by (it's a count + a
+	 * highlight toggle, see toggleClusterHighlight()'s docstring for why
+	 * there's no member list at all any more), so search wouldn't have
+	 * anything meaningful to match against. Still paginated at
+	 * DIAGNOSTICS_PAGE_SIZE though - a vault with dozens of disconnected
+	 * pockets of notes shouldn't render dozens of rows unprompted either.
+	 */
+	private renderIsolatedClustersSection(isolatedClusters: string[][]): void {
+		this.diagnosticsPanelEl.createEl('h5', { text: `Isolated clusters (${isolatedClusters.length})`, cls: 'clew-diagnostics-heading' });
+		if (isolatedClusters.length === 0) {
+			this.diagnosticsPanelEl.createEl('p', {
+				text: 'No isolated clusters - every linked group of notes connects back to the rest of the vault.',
+				cls: 'clew-filter-empty-note',
+			});
+			return;
+		}
+
+		const containerEl = this.diagnosticsPanelEl.createDiv();
+		const renderRows = () => {
+			containerEl.empty();
+			const visibleCount = this.diagnosticsClusterVisibleCount;
+			isolatedClusters.slice(0, visibleCount).forEach((cluster, index) => {
+				const rowEl = containerEl.createDiv({ cls: 'clew-diagnostics-cluster-row' });
+				rowEl.createSpan({ text: `${cluster.length} notes` });
+				const isActive = this.highlightedClusterIndex === index;
+				const toggleButton = rowEl.createEl('button', { text: isActive ? 'Clear highlight' : 'Show in graph' });
+				toggleButton.addEventListener('click', () => this.toggleClusterHighlight(index, cluster));
+			});
+			if (isolatedClusters.length > visibleCount) {
+				const moreRowEl = containerEl.createDiv({ cls: 'clew-diagnostics-more' });
+				const moreButton = moreRowEl.createEl('button', { text: `+ ${isolatedClusters.length - visibleCount} more` });
+				moreButton.addEventListener('click', () => {
+					this.diagnosticsClusterVisibleCount += DIAGNOSTICS_PAGE_SIZE;
+					renderRows();
+				});
+			}
+		};
+		renderRows();
+	}
+
+	/**
+	 * Highlights (or un-highlights) one isolated cluster on the graph - only
+	 * one at a time (setting a new index implicitly replaces whatever was
+	 * highlighted before, same "mutually exclusive, overrides whatever else
+	 * was drawn" precedent as Find-path's own route highlight - see
+	 * applyHighlight()'s docstring). Re-renders the panel afterward so every
+	 * row's button label reflects the new state, not just the clicked one.
+	 */
+	private toggleClusterHighlight(index: number, cluster: string[]): void {
+		if (this.highlightedClusterIndex === index) {
+			this.clearClusterHighlight();
+		} else {
+			this.highlightedClusterIndex = index;
+			this.highlightNodeSet(new Set(cluster));
+		}
+		this.renderDiagnosticsPanel();
+	}
+
+	/** Same dim treatment as applyHighlight() (Find-path), generalized from "nodes along one path" to "any given node set" - an isolated cluster has no meaningful path/edge direction to draw, just membership. */
+	private highlightNodeSet(nodes: Set<string>): void {
+		if (!this.renderer || !this.graph) return;
+		const graph = this.graph;
+
+		this.renderer.setSetting('nodeReducer', (node, attr) => {
+			if (nodes.has(node)) return { ...attr, color: this.theme.primaryPathColor, labelColor: this.theme.primaryPathColor, zIndex: 2, forceLabel: true };
+			return { ...attr, color: this.theme.dimNodeColor, labelColor: this.theme.dimNodeColor };
+		});
+
+		this.renderer.setSetting('edgeReducer', (edge, attr) => {
+			const [source, target] = graph.extremities(edge);
+			if (nodes.has(source) && nodes.has(target)) return { ...attr, color: this.theme.primaryPathColor, size: 3, zIndex: 2 };
+			return { ...attr, color: this.theme.dimEdgeColor };
+		});
+	}
+
+	/** Clears a cluster highlight set by toggleClusterHighlight() - same "just null both reducers" mechanism as Find-path's clearPathReducers(), with the same caveat: an enabled Filter/Color & size group underneath doesn't reappear on its own, since closing/superseding a highlight has never restored one (see clearHighlight()'s own docstring). */
+	private clearClusterHighlight(): void {
+		if (this.highlightedClusterIndex === null) return;
+		this.highlightedClusterIndex = null;
+		this.renderer?.setSetting('nodeReducer', null);
+		this.renderer?.setSetting('edgeReducer', null);
+	}
+
+	/** One clickable `<li>` that opens `vaultPath` - shared by every Diagnostics list entry (orphans, broken-link sources). */
+	private createDiagnosticsEntry(listEl: HTMLElement, label: string, vaultPath: string): void {
+		const itemEl = listEl.createEl('li', { cls: 'clew-diagnostics-item', text: label });
+		itemEl.addEventListener('click', () => void this.openNote(vaultPath));
+	}
+
 	/**
 	 * Hides whichever of Filter/Color & size/Appearance/Find-path's result is
 	 * currently open, other than `keep` - user feedback: only one of these
@@ -896,7 +1134,7 @@ export class GraphPane {
 	 * docstring for why Timeline never calls closeOtherPanels() at all; it
 	 * clears a shown path result itself, directly, inside applyTimeline().
 	 */
-	private closeOtherPanels(keep: 'filter' | 'colorAndSize' | 'appearance' | 'findPath'): void {
+	private closeOtherPanels(keep: 'filter' | 'colorAndSize' | 'appearance' | 'findPath' | 'diagnostics'): void {
 		if (keep !== 'filter' && this.filterPanelEl.isShown()) {
 			this.filterPanelEl.hide();
 			this.editingFilterId = null;
@@ -912,6 +1150,10 @@ export class GraphPane {
 		if (keep !== 'appearance' && this.appearancePanelEl.isShown()) {
 			this.appearancePanelEl.hide();
 			this.appearanceButton.removeClass('is-active');
+		}
+		if (keep !== 'diagnostics' && this.diagnosticsPanelEl.isShown()) {
+			this.diagnosticsPanelEl.hide();
+			this.clearClusterHighlight();
 		}
 		if (keep !== 'findPath' && this.panelEl.isShown()) {
 			this.panelEl.empty();

@@ -114,6 +114,7 @@ src/
     standaloneGraphView.ts   # the "Clew graph view" - ribbon icon / "Open graph view" command, whole vault
     pathfinding.ts           # Yen's k-shortest-paths, hub-avoidance weighting
     pathfindingModal.ts      # note-picker modal for path finding
+    diagnostics.ts           # orphans / broken links / isolated clusters, backing the Diagnostics panel
 ```
 
 As the plugin grows, keep `main.ts` limited to lifecycle (load/unload, registering
@@ -148,7 +149,7 @@ npm run test:coverage
 ```
 
 [Vitest](https://vitest.dev). Covers the pure graph-algorithm modules directly
-(`pathfinding.ts`, `stagnation.ts`), plus `vaultGraph.ts` - the actual
+(`pathfinding.ts`, `stagnation.ts`, `diagnostics.ts`), plus `vaultGraph.ts` - the actual
 node/edge-construction pipeline, exercised
 against realistic fixtures (hub notes, isolated notes, cross-cluster links
 outside the given file set, cover images, directed vs. undirected).
@@ -297,6 +298,44 @@ manual copy step. Then open `test-vault` in Obsidian and check:
   panel open showing criteria that no longer matched what was drawn.
   Conversely, with a path result showing, opening Filter/Color & size/
   Appearance should close the path result panel and clear its highlight.
+- **Diagnostics** (list-checks icon): three read-only, always-fresh lists -
+  `diagnostics.ts` computes them purely from the current graph, no saved
+  state of its own. Open the panel and check:
+  - **Orphans** should list `Isolated` (degree 0) and nothing else from the
+    main cluster - `Island X`/`Island Y` do NOT belong here, they have a
+    link to each other (see "Isolated clusters" below).
+  - **Broken links** should list `Hub → Nonexistent Note` - the one
+    deliberately unresolved link `gen-test-vault.mjs` seeds for exactly this
+    check.
+  - **Isolated clusters** should list one row, "2 notes" - the vault's main
+    body (`Hub` and everything reachable from it) is deliberately excluded
+    (it's what everything else is "isolated" *from*, see
+    `findIsolatedClusters()`'s docstring), and `Isolated` itself doesn't
+    reappear here either (a size-1 component - already covered by Orphans
+    above). No member list is shown here (user feedback: a cluster's note
+    list can get long and unwieldy) - click "Show in graph" instead: `Island
+    X`/`Island Y` should highlight on the canvas (same visual treatment as a
+    Find-path route), everything else dims, and the button becomes "Clear
+    highlight". Click it again (or close the Diagnostics panel, or open
+    Filter/Color & size/Appearance/Find-path) to clear the highlight.
+  - Clicking an Orphans/Broken links entry should open that note - same as
+    Find-path's result list. A highlighted cluster's notes are clickable
+    directly on the graph instead (same as everywhere else).
+  - Opening Diagnostics while Filter/Color & size/Appearance/Find-path is
+    open should close the other one (`closeOtherPanels()`), same mutual
+    exclusion as every other panel.
+  - **Pagination** (user feedback: "u.U. viele Daten anzeigt werden
+    müssen" - a vault with hundreds of orphans shouldn't render hundreds
+    of `<li>`s unprompted; a later round explicitly dropped a search box
+    that an earlier version had - "wenn jemand alles [...] fixen will,
+    muss er alle Einträge sehen", so a search that narrows the list isn't
+    what someone working through the whole thing wants): the 19-note QA
+    vault is too small to trigger this on its own (`DIAGNOSTICS_PAGE_SIZE`
+    is 20) - temporarily lower it in `graphPane.ts` to check by hand, or
+    add a batch of throwaway orphan notes to `gen-test-vault.mjs`'s
+    `notes` array. What to verify once triggered: a "+ N more" row appears
+    once a list exceeds `DIAGNOSTICS_PAGE_SIZE`, and clicking it reveals
+    the next page without losing what's already shown.
 - **Cluster freshness** (an "Activity" criterion on a node group - see
   "Color & size" below and `nodeGroups.ts`): create a group with a single
   Activity criterion, reading "Notes in [an inactive area of the vault]" -

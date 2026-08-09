@@ -30,9 +30,9 @@ export default defineConfig({
 				'src/graph/stagnation.ts',
 				'src/graph/generateGraph.ts',
 				'src/graph/hierarchicalLayout.ts',
-				'src/graph/visualEncoding.ts',
 				'src/graph/radialLayout.ts',
 				'src/graph/circularLayout.ts',
+				'src/graph/diagnostics.ts',
 			],
 			reporter: ['text', 'json-summary'],
 			// Mirrors obsidian-focus-first's thresholds: per-file so no single

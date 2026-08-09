@@ -668,6 +668,71 @@
 	color: var(--text-accent);
 }
 
+/* Diagnostics panel (graphPane.ts's renderDiagnosticsPanel()) - three
+   sections (Orphans/Broken links/Isolated clusters) stacked in the same
+   .clew-filter-panel shell as Filter/Color & size. Headings/list/item
+   reuse the same look-and-feel as Find-path's own result list
+   (.clew-path-item above) rather than introducing a third visual language
+   for "a clickable list of notes" in this file. */
+.clew-diagnostics-heading {
+	margin: var(--size-4-3) 0 var(--size-4-1) 0;
+	font-size: var(--font-ui-smaller);
+	color: var(--text-muted);
+	text-transform: uppercase;
+	letter-spacing: 0.02em;
+}
+
+.clew-diagnostics-heading:first-child {
+	margin-top: 0;
+}
+
+.clew-diagnostics-list {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+}
+
+.clew-diagnostics-item {
+	cursor: pointer;
+	padding: var(--size-4-1) 0;
+}
+
+.clew-diagnostics-item:hover {
+	color: var(--text-accent);
+}
+
+/* "+ N more" row, appended after a paginated list's DIAGNOSTICS_PAGE_SIZE
+   cap (Orphans/Broken links' own <li>, Isolated clusters' own <div> below
+   .clew-diagnostics-cluster-row) - plain text-button styling, not
+   .clickable-icon (there's no icon here), so it reads as "reveal more of
+   this same list", not a distinct action. */
+.clew-diagnostics-more button {
+	background: none;
+	border: none;
+	padding: var(--size-4-1) 0;
+	color: var(--text-accent);
+	cursor: pointer;
+	font-size: var(--font-ui-smaller);
+}
+
+.clew-diagnostics-more button:hover {
+	text-decoration: underline;
+}
+
+/* One row per isolated cluster: a note count plus a "Show in graph" toggle
+   (toggleClusterHighlight()) - no member list here, unlike Orphans/Broken
+   links above (user feedback: a cluster's own note list can get long and
+   unwieldy; highlighting it directly on the canvas scales to any size). */
+.clew-diagnostics-cluster-row {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--size-4-2);
+	padding: var(--size-4-1) 0;
+	color: var(--text-muted);
+	font-size: var(--font-ui-small);
+}
+
 .clew-legend {
 	position: absolute;
 	bottom: var(--size-4-2);

@@ -45,7 +45,11 @@ const notes = [
 	// one color and Topic B/its details as another; size by "priority"
 	// should make Topic A - Detail 2 visibly the largest node, Topic C the
 	// smallest, everything else in between.
-	{ name: 'Hub', links: ['Topic A', 'Topic B', 'Topic C', 'With Cover'] },
+	// The 'Nonexistent Note' link never resolves to a file - deliberately,
+	// so the Diagnostics panel's "Broken links" section always has at least
+	// one real entry to show in this vault (see DEVELOPMENT.md's "Manual QA
+	// vault" section).
+	{ name: 'Hub', links: ['Topic A', 'Topic B', 'Topic C', 'With Cover', 'Nonexistent Note'] },
 	{ name: 'Topic A', links: ['Hub', 'Topic A - Detail 1', 'Topic A - Detail 2'], frontmatter: { status: 'active', priority: 3 } },
 	{ name: 'Topic A - Detail 1', links: ['Topic A'], frontmatter: { status: 'active', priority: 2 } },
 	{ name: 'Topic A - Detail 2', links: ['Topic A', 'Bridge Note'], frontmatter: { status: 'active', priority: 5 } },
@@ -118,3 +122,4 @@ console.log('  - Find path: anything -> "Island X"/"Island Y" should report no p
 console.log('  - Stagnation heatmap: "Old Cluster A/B/C" should be the stalest (red), "Medium Age A/B" a middling color, everything else fresh (blue)');
 console.log('  - "With Cover" should render its cover image as the node');
 console.log('  - "Visual encoding...": color by "status" groups Topic A/its details vs. Topic B/its details vs. Topic C; size by "priority" makes Topic A - Detail 2 the largest, notes without a priority (Isolated, Island X/Y, etc.) keep the default size');
+console.log('  - Diagnostics: "Isolated" under Orphans, "Hub -> Nonexistent Note" under Broken links, one "2 notes" row under Isolated clusters ("Show in graph" should highlight Island X/Island Y)');
