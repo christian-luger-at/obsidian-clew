@@ -977,6 +977,23 @@ manual copy step. Then open `test-vault` in Obsidian and check:
   Activating the filter on top of a shown path result should switch the
   legend to the filter's own "Shown" label, not leave it describing the
   path underneath.
+- **Appearance panel uses the dialog zone's full height, not the 70vh
+  every other panel caps at** (user feedback: "Ganze Höhe für Dialog
+  nutzen" - it has by far the most content of any panel here). Open it in
+  a short/split pane (not just the full app window) - the panel's own
+  scrollbar should kick in before its bottom edge ever runs past the
+  pane's own bottom edge; previously (a `vh`-based max-height, resolving
+  against the whole browser viewport rather than this specific pane) it
+  could extend past a shorter pane's bottom, invisibly cut off there by
+  `.clew-graph-view`'s `overflow: clip` with no way to scroll to the
+  missing part. In a tall enough pane, every section (Nodes through Reset
+  to defaults) should fit with no scrolling at all. Also click on the bare
+  graph canvas in the empty space below the toolbar/wherever a panel isn't
+  currently covering (`.clew-topbar` now spans the pane's full height to
+  make the percentage sizing above possible, with `pointer-events: none`
+  on the empty parts of that box specifically so this doesn't silently
+  swallow clicks meant for the canvas) - normal graph interaction (drag to
+  pan, click a node) should work exactly as before there.
 - **Appearance panel**: click the sliders icon in the top-left icon rail -
   a panel opens in the dialog zone (top-left, directly below the icon
   rail - same slot as Filter/Color & size, see "Dialog zones, round 2"

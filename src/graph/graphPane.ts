@@ -802,7 +802,11 @@ export class GraphPane {
 		this.panelEl.hide();
 		this.focusPanelEl = topbarEl.createDiv({ cls: 'clew-filter-panel' });
 		this.focusPanelEl.hide();
-		this.appearancePanelEl = topbarEl.createDiv({ cls: 'clew-filter-panel' });
+		// Also 'clew-appearance-panel' (styles.css) - Appearance uses the
+		// full dialog-zone height instead of the 70vh every other panel caps
+		// at, user feedback: "Ganze Höhe für Dialog nutzen" (it has by far
+		// the most content of any panel here).
+		this.appearancePanelEl = topbarEl.createDiv({ cls: ['clew-filter-panel', 'clew-appearance-panel'] });
 		this.appearancePanelEl.hide();
 		this.diagnosticsPanelEl = topbarEl.createDiv({ cls: 'clew-filter-panel' });
 		this.diagnosticsPanelEl.hide();

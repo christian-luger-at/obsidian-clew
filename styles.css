@@ -106,11 +106,29 @@
 	position: absolute;
 	top: var(--size-4-2);
 	left: var(--size-4-2);
+	/* Also sets `bottom`, not just `top` - gives this a definite computed
+	   height (top-to-bottom span) instead of the auto/content-sized height
+	   it had before, which is what lets .clew-appearance-panel's own
+	   percentage max-height (below) resolve against *this pane's* actual
+	   height instead of having to fall back to a viewport-relative unit
+	   that ignores the pane's real size entirely - verified directly (a
+	   throwaway repro with a short .clew-graph-view): `vh` sized the panel
+	   off the bottom of a short pane/split view, with nothing able to
+	   scroll to the cut-off part, since .clew-graph-view's own
+	   `overflow: clip` (see its own docstring) hides that overflow rather
+	   than leaving it reachable. */
+	bottom: var(--size-4-2);
 	z-index: 10;
 	display: flex;
 	flex-direction: column;
 	align-items: flex-start;
 	gap: var(--size-4-1);
+	/* This box now spans the pane's full height (see `bottom` above), most
+	   of it empty past the toolbar/whichever single panel is open - without
+	   this, that empty space would still intercept clicks meant for the
+	   graph canvas underneath it. Re-enabled on the toolbar and every panel
+	   below, the only children that should actually be clickable. */
+	pointer-events: none;
 }
 
 /* A horizontal icon rail (not vertical - user feedback: "Die Navigation
@@ -129,6 +147,9 @@
 	border: 1px solid var(--background-modifier-border);
 	border-radius: var(--radius-m);
 	box-shadow: var(--shadow-s);
+	/* Opts back in to receiving clicks - see .clew-topbar's own comment on
+	   why its parent turns them off. */
+	pointer-events: auto;
 }
 
 .clew-toolbar button.is-active {
@@ -156,10 +177,17 @@
 /* Every dialog panel's shared shell (Filter/Color & size/Appearance/
    Layout/Pathfinding's input form/Find-path's result/Diagnostics) - drops
    down from the icon rail (a flex-column child of .clew-topbar, see
-   there), no position of its own. max-height: 70vh (not a percentage of the
-   panel's own auto-sized flex parent, which wouldn't resolve) keeps it from
-   running off the bottom of a tall vault's worth of tags/properties/
-   sliders. Reuses .clew-appearance-panel-header for its own title+close-
+   there), no position of its own. max-height: 70vh keeps it from running
+   off the bottom of a tall vault's worth of tags/properties/sliders - vh,
+   not a percentage, since a percentage max-height needs its containing
+   block to have a *definite* height to resolve against, which nothing up
+   the tree had before .clew-topbar's own `bottom` was added (see there).
+   Kept as vh here rather than switched to the now-available percentage -
+   unlike Appearance below, no other panel has come close to needing more
+   than 70vh, so there's nothing to gain from chasing exact pane-relative
+   sizing on this shared default. `pointer-events: auto` opts back in to
+   clicks - see .clew-topbar's own comment on why its parent turns them
+   off. Reuses .clew-appearance-panel-header for its own title+close-
    button row (same class, see graphPane.ts's renderFilterPanel()) rather
    than a near-duplicate rule here. */
 .clew-filter-panel {
@@ -172,6 +200,24 @@
 	border: 1px solid var(--background-modifier-border);
 	border-radius: var(--radius-m);
 	box-shadow: var(--shadow-s);
+	pointer-events: auto;
+}
+
+/* Appearance specifically gets the full dialog-zone height, not the 70vh
+   every other panel caps at (user feedback: "Ganze Höhe für Dialog
+   nutzen") - it has by far the most content of any panel here (Nodes,
+   Edges, Physics, Labels, every layout-specific spacing group, pinned
+   positions, Reset to defaults), so 70vh cut it off mid-list on anything
+   but a tall window. `100%` here (not another vh value) resolves against
+   .clew-topbar's own now-definite height (see its `bottom` comment) - the
+   pane's *actual* available height, not the browser's, so this can't run
+   past the bottom of a shorter pane/split view the way a vh value did
+   (verified directly: a throwaway repro with a short .clew-graph-view had
+   a vh-sized panel extend past the pane's own bottom edge, invisibly
+   clipped there by .clew-graph-view's `overflow: clip` with no way to
+   scroll to the cut-off part). */
+.clew-appearance-panel {
+	max-height: 100%;
 }
 
 /* Obsidian's own default `.clickable-icon:hover` only swaps in a very
