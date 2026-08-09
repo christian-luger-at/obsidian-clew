@@ -10,6 +10,7 @@ import { computeRadialLayout } from './radialLayout';
 import { computeCircularLayout } from './circularLayout';
 import { basename, findPaths, PathResult } from './pathfinding';
 import { findOrphans, findBrokenLinks, findIsolatedClusters } from './diagnostics';
+import { computeEgoSubgraph } from './egoGraph';
 import { NoteSuggest } from './noteSuggest';
 
 import { RadialLayoutModal } from './radialLayoutModal';
@@ -478,6 +479,21 @@ export class GraphPane {
 	private pathfindingTargetFile: TFile | null = null;
 	private pathfindingDirected = false;
 	private pathfindingErrorEl: HTMLElement | null = null;
+	/** Toolbar button for the Focus (ego-graph) panel - GitHub backlog item 3, "Lokaler/Ego-Graph-Modus". */
+	private readonly focusButton: HTMLButtonElement;
+	/** Focus's own panel (renderFocusPanel()) - a single panel handles both picking a note/hop depth and, once applied, showing the active focus's summary + a "Change"/"Clear" pair, unlike Find-path's separate input-form/result panels (Focus has no multi-route result to browse, so one panel covers both states). */
+	private readonly focusPanelEl: HTMLElement;
+	/**
+	 * The note currently focused - non-null only while Focus is actually
+	 * showing something, same "only non-null while active" convention as
+	 * lastPathSource (see its own docstring). Exclusive with Find-path/
+	 * Diagnostics' cluster highlight/an active filter's own hiding, same
+	 * "whoever set the reducers last wins" mechanism those already use -
+	 * see applyFocus()'s docstring.
+	 */
+	private focusFile: TFile | null = null;
+	/** Hop depth (1-3) the panel remembers - both while Focus is active and, once cleared, as the pre-fill for reopening the panel fresh, same reasoning as lastPathDirected. */
+	private focusHops = 1;
 	private readonly colorAndSizeButton: HTMLButtonElement;
 	private readonly colorAndSizePanelEl: HTMLElement;
 	// Reassigned on every renderColorAndSizePanel() call, same reasoning as
@@ -713,6 +729,14 @@ export class GraphPane {
 			this.findPathButton.addEventListener('click', () => this.togglePathfindingPanel());
 		}
 
+		// GitHub backlog item 3, "Lokaler/Ego-Graph-Modus": picks one note and
+		// hides everything more than a chosen number of hops away from it -
+		// `is-active` tracks whether the panel is showing, same convention as
+		// findPathButton (see updateFocusButtonState()'s docstring for why
+		// that's "panel shown", not "a focus is currently applied").
+		this.focusButton = iconButton('crosshair', 'Focus…');
+		this.focusButton.addEventListener('click', () => this.toggleFocusPanel());
+
 		// Chat decision, 2026-08-04: a ctime-based time-lapse instead of the
 		// full "real time slider" backlog item (GitHub issue #6, which needs
 		// a background snapshot index that doesn't exist yet) - see
@@ -744,7 +768,7 @@ export class GraphPane {
 		// child of topbarEl (top-left, below the icon rail) and shares the
 		// exact same `.clew-filter-panel` shell - Filter/Color & size/
 		// Appearance/Layout/Pathfinding's input form/Find-path's result/
-		// Diagnostics. Layout and Pathfinding used to be separate Obsidian
+		// Focus/Diagnostics. Layout and Pathfinding used to be separate Obsidian
 		// `Modal`s (centered, Obsidian's own chrome) - folded in here so
 		// nothing reads as a different kind of UI depending on which button
 		// opened it.
@@ -767,6 +791,8 @@ export class GraphPane {
 		}
 		this.panelEl = topbarEl.createDiv({ cls: 'clew-filter-panel' });
 		this.panelEl.hide();
+		this.focusPanelEl = topbarEl.createDiv({ cls: 'clew-filter-panel' });
+		this.focusPanelEl.hide();
 		this.appearancePanelEl = topbarEl.createDiv({ cls: 'clew-filter-panel' });
 		this.appearancePanelEl.hide();
 		this.diagnosticsPanelEl = topbarEl.createDiv({ cls: 'clew-filter-panel' });
@@ -801,6 +827,16 @@ export class GraphPane {
 		this.activateLayoutMode('force');
 		this.resetPathState();
 		this.updateFindPathButtonState();
+		// A note in the current focus's ego-network (or the focus note
+		// itself) could easily be the very thing that changed - same
+		// "don't trust stale state across a rebuild" reasoning as the path
+		// reset above, and Focus's own reducers are moot anyway once
+		// renderer.kill() below tears down the Sigma instance they were set
+		// on.
+		this.focusPanelEl.empty();
+		this.focusPanelEl.hide();
+		this.resetFocusState();
+		this.updateFocusButtonState();
 		// A vault refresh mid-playback (a note created/edited while playing)
 		// would otherwise keep animating against a file set/graph that no
 		// longer matches what's about to be rebuilt below.
@@ -1185,8 +1221,8 @@ export class GraphPane {
 	}
 
 	/**
-	 * Hides whichever of Filter/Color & size/Appearance/Find-path's result is
-	 * currently open, other than `keep` - user feedback: only one of these
+	 * Hides whichever of Filter/Color & size/Appearance/Find-path's result/
+	 * Focus is currently open, other than `keep` - user feedback: only one of these
 	 * should be open at a time ("immer nur einen Dialog anzeigen"), reversing
 	 * an earlier decision that let Filter/Color & size/Appearance stack in
 	 * their own corners. Called right before a toggle*Panel() method (or
@@ -1205,12 +1241,24 @@ export class GraphPane {
 	 * docstring for why Timeline never calls closeOtherPanels() at all; it
 	 * clears a shown path result itself, directly, inside applyTimeline().
 	 */
-	private closeOtherPanels(keep: 'filter' | 'colorAndSize' | 'appearance' | 'findPath' | 'diagnostics' | 'layout' | 'pathfindingInput'): void {
+	private closeOtherPanels(
+		keep: 'filter' | 'colorAndSize' | 'appearance' | 'findPath' | 'diagnostics' | 'layout' | 'pathfindingInput' | 'focus',
+	): void {
 		if (keep !== 'layout' && this.layoutPanelEl.isShown()) {
 			this.layoutPanelEl.hide();
 		}
 		if (keep !== 'pathfindingInput' && this.pathfindingPanelEl?.isShown()) {
 			this.pathfindingPanelEl.hide();
+		}
+		if (keep !== 'focus' && this.focusPanelEl.isShown()) {
+			this.focusPanelEl.hide();
+			// clearFocus(), not just hiding - same reasoning as Find-path's
+			// own 'findPath' branch below: nothing else here is about to
+			// overwrite Focus's reducers on a mere panel toggle, so leaving
+			// them in place would strand the graph showing a stale ego-set
+			// after switching to an unrelated panel.
+			this.clearFocus();
+			this.updateFocusButtonState();
 		}
 		if (keep !== 'filter' && this.filterPanelEl.isShown()) {
 			this.filterPanelEl.hide();
@@ -1631,6 +1679,10 @@ export class GraphPane {
 		this.panelEl.empty();
 		this.panelEl.hide();
 		this.updateFindPathButtonState();
+		this.resetFocusState();
+		this.focusPanelEl.empty();
+		this.focusPanelEl.hide();
+		this.updateFocusButtonState();
 
 		// An active filter stays in effect while scrubbing/playing (user
 		// feedback: "Wenn ein Filter gesetzt ist, wird dieser bei Animate
@@ -2062,6 +2114,157 @@ export class GraphPane {
 		this.renderer?.setSetting('edgeReducer', null);
 	}
 
+	/** Shows/hides the Focus panel - same toggle shape as every other dialog (Dialog-Management redesign, round 2). GitHub backlog item 3, "Lokaler/Ego-Graph-Modus". */
+	toggleFocusPanel(): void {
+		if (this.focusPanelEl.isShown()) {
+			this.focusPanelEl.hide();
+			return;
+		}
+		this.renderFocusPanel();
+		this.closeOtherPanels('focus');
+		this.focusPanelEl.show();
+	}
+
+	/**
+	 * Rebuilt from scratch each time it opens or reapplies (not built once
+	 * and left standing), same pattern as every other panel here. A single
+	 * form covers both "nothing focused yet" and "already focused" -
+	 * pre-filled from focusFile/focusHops either way (both null/1 when
+	 * nothing's focused, same "only non-null while active" convention as
+	 * lastPathSource - see focusFile's own docstring) - with a live note
+	 * count appended only once something's actually applied. One panel,
+	 * not Find-path's separate input-form/result pair - Focus has no
+	 * multi-route result to browse, so there's nothing a second panel
+	 * would add.
+	 *
+	 * No "Apply"/"Update" button (user feedback: "Update Focus button not
+	 * needed. If Note or Hops change, the graph is refreshed") - picking a
+	 * note applies immediately, and changing Hops while a note is already
+	 * focused reapplies immediately too (this is a live view you watch the
+	 * graph react to, same reasoning as Filter's own live panel - not a
+	 * one-shot dialog you submit). Changing Hops before any note is picked
+	 * just remembers the pick for whenever one is. No "Clear focus" button
+	 * either (same feedback, one message covering both: "Clear button kann
+	 * auch weggelassen werden") - the header's own "x" already clears
+	 * Focus on close (see closeButton below), so a second control doing
+	 * the same thing was redundant.
+	 */
+	private renderFocusPanel(): void {
+		const graph = this.graph;
+
+		this.focusPanelEl.empty();
+		const headerEl = this.focusPanelEl.createDiv({ cls: 'clew-appearance-panel-header' });
+		headerEl.createEl('h4', { text: 'Focus' });
+		const closeButton = headerEl.createEl('button', { cls: 'clickable-icon' });
+		setIcon(closeButton, 'x');
+		setTooltip(closeButton, 'Close');
+		closeButton.addEventListener('click', () => {
+			this.clearFocus();
+			this.focusPanelEl.hide();
+			this.updateFocusButtonState();
+		});
+
+		this.focusPanelEl.createEl('p', {
+			text: "Shows one note plus its neighbors up to a chosen number of hops away - everything else is hidden, the same way Find-path's result overrides the rest of the graph.",
+			cls: 'clew-modal-description',
+		});
+
+		// hopsDraft, not focusHops directly - only read once a note is
+		// actually picked/already focused (either by applyFocus() below or
+		// by the dropdown's own onChange reapplying), so turning the
+		// dropdown before anything's focused doesn't try to apply with a
+		// null file.
+		let hopsDraft = this.focusHops;
+
+		const noteSetting = new Setting(this.focusPanelEl).setName('Note');
+		noteSetting.settingEl.addClass('clew-note-picker-setting');
+		noteSetting.addText((text) => {
+			text.setPlaceholder('Focus note…');
+			if (this.focusFile) text.setValue(this.focusFile.basename);
+			text.inputEl.addClass('clew-note-picker-input');
+			const suggest = new NoteSuggest(this.app, text.inputEl, this.files);
+			suggest.onSelect((file) => {
+				suggest.setValue(file.basename);
+				suggest.close();
+				this.applyFocus(file, hopsDraft);
+			});
+		});
+
+		new Setting(this.focusPanelEl).setName('Hops').addDropdown((dropdown) => {
+			for (const hops of [1, 2, 3]) dropdown.addOption(String(hops), String(hops));
+			dropdown.setValue(String(hopsDraft));
+			dropdown.onChange((value) => {
+				hopsDraft = Number(value);
+				if (this.focusFile) this.applyFocus(this.focusFile, hopsDraft);
+			});
+		});
+
+		if (this.focusFile && graph) {
+			const egoSet = computeEgoSubgraph(graph, this.focusFile.path, this.focusHops);
+			this.focusPanelEl.createEl('p', {
+				cls: 'clew-filter-empty-note',
+				text: `Showing ${egoSet.size} ${egoSet.size === 1 ? 'note' : 'notes'}.`,
+			});
+		}
+	}
+
+	/**
+	 * Hides everything outside `file`'s ego-network (computeEgoSubgraph(),
+	 * egoGraph.ts) via the same nodeReducer/edgeReducer mechanism every
+	 * other highlight/filter here uses - `hidden: true` on anything outside
+	 * the set, an edge only staying visible when *both* extremities do
+	 * (same "showing a match's edge to a hidden neighbor looks broken"
+	 * reasoning as applyFilter()'s own edge visibility).
+	 *
+	 * Exclusive with Find-path/an enabled filter's own hiding/Diagnostics'
+	 * cluster highlight - not merged with any of them (GitHub backlog item
+	 * 3 flagged this as a decision to make up front; user chose exclusive
+	 * over additive). closeOtherPanels('focus') is called here too, not
+	 * just at panel-open time (toggleFocusPanel()) - same belt-and-braces
+	 * reasoning as renderPathPanel() calling it on every render: a filter
+	 * edited *after* the panel was already open still needs clearing right
+	 * before Focus's own reducers go in, not just once at open time.
+	 */
+	private applyFocus(file: TFile, hops: number): void {
+		if (!this.graph) return;
+		const graph = this.graph;
+		this.closeOtherPanels('focus');
+		this.resetPathState();
+		this.updateFindPathButtonState();
+
+		this.focusFile = file;
+		this.focusHops = hops;
+
+		const egoSet = computeEgoSubgraph(graph, file.path, hops);
+		this.renderer?.setSetting('nodeReducer', (node, attr) => ({ ...attr, hidden: !egoSet.has(node) }));
+		this.renderer?.setSetting('edgeReducer', (edge, attr) => ({
+			...attr,
+			hidden: !graph.extremities(edge).every((node) => egoSet.has(node)),
+		}));
+
+		this.renderFocusPanel();
+		this.updateFocusButtonState();
+		this.renderLegend();
+	}
+
+	/** Fully resets Focus's state and reducers - the header's "x", and every other genuine close/supersede site (setFiles(), applyTimeline(), applyFilter(), closeOtherPanels(), refreshTheme()), same shape as Find-path's clearHighlight(). */
+	private clearFocus(): void {
+		this.resetFocusState();
+		this.renderer?.setSetting('nodeReducer', null);
+		this.renderer?.setSetting('edgeReducer', null);
+	}
+
+	/** focusFile/focusHops back to "nothing focused, nothing remembered" - the non-reducer half of clearFocus(), also used directly by sites that are about to repaint the canvas some other way right after anyway (applyFilter()'s "a filter just took over" branch), same reasoning as resetPathState(). */
+	private resetFocusState(): void {
+		this.focusFile = null;
+		this.focusHops = 1;
+	}
+
+	/** Same "tied to the panel being open" convention as updateFindPathButtonState() - see its own docstring for why. */
+	private updateFocusButtonState(): void {
+		this.focusButton.toggleClass('is-active', this.focusPanelEl.isShown());
+	}
+
 	/**
 	 * The "nothing else active" color/size - a node's color/size comes from
 	 * the first *enabled* node group (see nodeGroups.ts) whose criteria it
@@ -2237,8 +2440,8 @@ export class GraphPane {
 	 *
 	 * Simplest correct behavior, not the most clever one: drops back to the
 	 * neutral default coloring rather than trying to detect which mode
-	 * (path result / the filter) was active and replay it with fresh
-	 * colors - matches the existing precedent that every mode already
+	 * (path result / Focus / the filter) was active and replay it with
+	 * fresh colors - matches the existing precedent that every mode already
 	 * resets on a vault refresh (setFiles()), and a user-initiated theme
 	 * switch is rare enough that this isn't worth the added complexity of
 	 * remembering and reapplying arbitrary mode state. Layout mode (force
@@ -2264,13 +2467,17 @@ export class GraphPane {
 
 		this.panelEl.empty();
 		this.panelEl.hide();
+		this.focusPanelEl.empty();
+		this.focusPanelEl.hide();
 		this.paintVisualEncoding();
 		// Re-applies the saved filter with fresh theme colors instead of
 		// unconditionally clearing it - it's saved state now (see
 		// settings.ts's ClewSettings.filterQuery), not something a theme
 		// switch should reset. Already a no-op when there's nothing to
 		// filter (isEmptyQuery() branch inside, same as clearHighlight()
-		// would have done).
+		// would have done) - either way it also resets Find-path/Focus's own
+		// state (see applyFilter()'s own docstring), so nothing further is
+		// needed here for those two.
 		this.applyFilter();
 		this.renderer?.refresh();
 		this.renderLegend();
@@ -3223,22 +3430,30 @@ export class GraphPane {
 
 		if (!matches) {
 			this.clearHighlight();
+			this.clearFocus();
+			this.focusPanelEl.empty();
+			this.focusPanelEl.hide();
+			this.updateFocusButtonState();
 			this.renderLegend();
 			this.updateEmptyState();
 			this.updateFindPathButtonState();
 			return;
 		}
 
-		// Mutually exclusive with a shown path result, same as it is with
-		// find-path itself - clears its state directly rather than only
-		// overwriting reducers, so re-toggling one of them later doesn't
-		// resurrect stale UI. Active node groups (if any) are left alone -
-		// they're a baseline the filter reducer temporarily paints over,
-		// not something the filter needs to clear.
+		// Mutually exclusive with a shown path result/an active Focus, same
+		// as it is with find-path itself - clears their state directly
+		// rather than only overwriting reducers, so re-toggling one of them
+		// later doesn't resurrect stale UI. Active node groups (if any) are
+		// left alone - they're a baseline the filter reducer temporarily
+		// paints over, not something the filter needs to clear.
 		this.panelEl.empty();
 		this.panelEl.hide();
 		this.resetPathState();
 		this.updateFindPathButtonState();
+		this.focusPanelEl.empty();
+		this.focusPanelEl.hide();
+		this.resetFocusState();
+		this.updateFocusButtonState();
 
 		const visibleEdges = new Set(graph.edges().filter((edge) => graph.extremities(edge).every((node) => matches.has(node))));
 		this.renderer?.setSetting('nodeReducer', (node, attr) => ({ ...attr, hidden: !matches.has(node) }));

@@ -114,8 +114,9 @@ src/
     graphPane.ts             # rendering + find-path UI, composed into the view below
     standaloneGraphView.ts   # the "Clew graph view" - ribbon icon / "Open graph view" command, whole vault
     pathfinding.ts           # Yen's k-shortest-paths, hub-avoidance weighting
-    pathfindingModal.ts      # note-picker modal for path finding
+    layoutModal.ts           # Layout's option data (its panel now lives in graphPane.ts)
     diagnostics.ts           # orphans / broken links / isolated clusters, backing the Diagnostics panel
+    egoGraph.ts              # BFS ego-network, backing the Focus panel
 ```
 
 As the plugin grows, keep `main.ts` limited to lifecycle (load/unload, registering
@@ -150,7 +151,7 @@ npm run test:coverage
 ```
 
 [Vitest](https://vitest.dev). Covers the pure graph-algorithm modules directly
-(`pathfinding.ts`, `stagnation.ts`, `diagnostics.ts`), plus `vaultGraph.ts` - the actual
+(`pathfinding.ts`, `stagnation.ts`, `diagnostics.ts`, `egoGraph.ts`), plus `vaultGraph.ts` - the actual
 node/edge-construction pipeline, exercised
 against realistic fixtures (hub notes, isolated notes, cross-cluster links
 outside the given file set, cover images, directed vs. undirected).
@@ -299,6 +300,32 @@ manual copy step. Then open `test-vault` in Obsidian and check:
   panel open showing criteria that no longer matched what was drawn.
   Conversely, with a path result showing, opening Filter/Color & size/
   Appearance should close the path result panel and clear its highlight.
+- **Focus** (crosshair icon, `egoGraph.ts`'s `computeEgoSubgraph()`) -
+  GitHub backlog item 3, "Lokaler/Ego-Graph-Modus". No "Apply"/"Update"
+  button (user feedback: "Update Focus button not needed. If Note or Hops
+  change, the graph is refreshed") and no separate "Clear focus" button
+  either (user feedback: "Clear button kann auch weggelassen werden") -
+  picking `Hub` as the note (Hops still at its default, 1) should apply
+  immediately: only `Hub` and its direct neighbors remain visible,
+  everything else hidden, and the panel should switch to showing "Showing
+  N notes." Raise Hops to 2 (no extra click) - more notes should appear
+  right away (whatever's two hops out), the note count updating to match.
+  Click the panel's own "x" - the full graph should reappear and the panel
+  goes back to a blank picker form (closing is the only way to clear a
+  focus, same as it's the only way to dismiss a Find-path result). Changing
+  Hops *before* any note is picked should just be remembered, not error or
+  apply anything. **Exclusive, not additive**
+  (a decision this backlog item explicitly flagged - "additiv zu
+  bestehenden Filtern oder exklusiv?", user chose exclusive): with a
+  filter enabled, opening Focus and applying it should override the
+  filter's own hiding outright (same as Find-path does) - the filter stays
+  "on" in Filter's own panel, it just stops being what's visually applied.
+  Conversely, editing a filter (or running a Find-path search, or opening
+  Diagnostics' cluster highlight) while Focus is showing something should
+  clear Focus and its own hiding, not leave a stale ego-set applied
+  underneath whatever just took over. A vault refresh (a note
+  created/edited/deleted) or a theme switch should also drop Focus back to
+  a blank picker, same as it does for Find-path's result.
 - **Dialog zones, round 2** (user feedback: first "keine einheitliche
   Darstellung von Dialogen [...] mal zentral, mal rechts oben, mal rechts
   unter der Navigation", then - once Layout and Find-path's input still

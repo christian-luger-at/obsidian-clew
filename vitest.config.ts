@@ -17,7 +17,7 @@ export default defineConfig({
 		coverage: {
 			provider: 'v8',
 			// Scoped to the pure graph-algorithm modules, not all of src/: the
-			// rest (graphPane.ts, standaloneGraphView.ts, pathfindingModal.ts,
+			// rest (graphPane.ts, standaloneGraphView.ts, layoutModal.ts,
 			// radialLayoutModal.ts, noteSuggest.ts, renderer.ts, layoutRunner.ts,
 			// main.ts, settings.ts) is Obsidian UI/view-lifecycle or sigma.js
 			// rendering wiring that would need a real Obsidian instance or a
@@ -33,6 +33,7 @@ export default defineConfig({
 				'src/graph/radialLayout.ts',
 				'src/graph/circularLayout.ts',
 				'src/graph/diagnostics.ts',
+				'src/graph/egoGraph.ts',
 			],
 			reporter: ['text', 'json-summary'],
 			// Mirrors obsidian-focus-first's thresholds: per-file so no single
