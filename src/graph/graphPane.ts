@@ -142,6 +142,7 @@ const CRITERION_TYPE_LABELS: Record<GroupCriterionType, string> = {
 	// A plain category name instead, same role as folder/filename/tag/text.
 	staleDays: 'Last edited',
 	minLinks: 'Links',
+	existence: 'Existence',
 };
 
 /** Parses a criterion's number inputs (staleDays/minLinks) - empty/invalid/negative all mean "0", same as the field never being touched. */
@@ -1958,7 +1959,19 @@ export class GraphPane {
 			graph.setNodeAttribute(node, 'size', baseSize * group.sizeMultiplier);
 		}
 		graph.forEachNode((node, attr) => {
-			const defaultColor = attr.type === 'image' ? this.theme.imageNodeColor : this.resolvedNodeColor();
+			// Ghost nodes (vaultGraph.ts's `kind: 'ghost'`) default to
+			// ghostNodeColor - NOT dimNodeColor (a real bug this exact line
+			// had: dimNodeColor blends most of the way toward the
+			// background, meant for briefly de-emphasizing something during
+			// a hover/highlight, not a permanently visible default - a ghost
+			// node painted with it all but disappeared into the canvas,
+			// user-reported "der Knoten wird aber nicht angezeigt"). A
+			// Color & size group can still override it via the "existence"
+			// criterion (nodeGroups.ts), same as any other node -
+			// buildCriteriaFacts() emits an `exists: false` fact for every
+			// ghost node specifically so that criterion has something to
+			// match against.
+			const defaultColor = attr.kind === 'ghost' ? this.theme.ghostNodeColor : attr.type === 'image' ? this.theme.imageNodeColor : this.resolvedNodeColor();
 			graph.setNodeAttribute(node, 'color', groupByNode.get(node)?.color ?? defaultColor);
 		});
 	}
@@ -1977,6 +1990,17 @@ export class GraphPane {
 	 * needsClusterFreshness() and this file's allCriteriaOwners()), so a
 	 * vault with no `text`/`clusterFreshness` criteria in use never pays
 	 * for either.
+	 *
+	 * Also emits one fact entry per ghost node (vaultGraph.ts's `kind:
+	 * 'ghost'`, see addGhostNodes()) - `exists: false` and otherwise mostly
+	 * empty (no folder/tags/frontmatter/content, since a ghost node isn't a
+	 * real file to read any of that from), backing the `existence`
+	 * criterion. An earlier version left ghost nodes out of this map
+	 * entirely, on the theory that "no facts" already meant "never matches
+	 * a filter/group" - true for every *other* criterion, but it also
+	 * meant nothing could deliberately target a ghost node either; explicit
+	 * `exists: false` facts are what makes that possible without changing
+	 * how any existing criterion behaves.
 	 */
 	private buildCriteriaFacts(): Map<string, NodeGroupFacts> {
 		const clusterStalenessByNode = needsClusterFreshness(this.allCriteriaOwners()) ? this.computeClusterStaleness() : null;
@@ -1993,8 +2017,23 @@ export class GraphPane {
 				clusterStaleness: clusterStalenessByNode?.get(file.path) ?? null,
 				mtime: this.mtimeByPath.get(file.path) ?? file.stat.mtime,
 				degree: this.graph?.degree(file.path) ?? 0,
+				exists: true,
 			});
 		}
+		this.graph?.forEachNode((node, attr) => {
+			if (attr.kind !== 'ghost') return;
+			result.set(node, {
+				label: (attr.label as string | undefined) ?? node,
+				folder: '',
+				content: '',
+				tags: [],
+				frontmatter: {},
+				clusterStaleness: null,
+				mtime: 0,
+				degree: this.graph?.degree(node) ?? 0,
+				exists: false,
+			});
+		});
 		return result;
 	}
 
@@ -2449,6 +2488,12 @@ export class GraphPane {
 		if (!this.renderer) return;
 		this.renderer.on('clickNode', (payload) => {
 			if (this.dragMoved) return;
+			// A ghost node (vaultGraph.ts's `kind: 'ghost'`) has no file
+			// behind it - openNote() would already silently no-op on one
+			// (getAbstractFileByPath() finds nothing), but skipping it here
+			// explicitly documents that "no click-to-open" is deliberate,
+			// not an accidental side effect of a lookup miss.
+			if (this.graph?.getNodeAttribute(payload.node, 'kind') === 'ghost') return;
 			void this.openNote(payload.node);
 		});
 	}
@@ -3329,6 +3374,13 @@ export class GraphPane {
 				return { type, days: 30 };
 			case 'minLinks':
 				return { type, count: 1 };
+			// Defaults to targeting ghost nodes (exists: false), not real
+			// notes - "existing notes" is already every note's default state
+			// with no criterion at all, so the useful starting point for
+			// someone reaching for this criterion is almost always the other
+			// value.
+			case 'existence':
+				return { type, exists: false };
 		}
 	}
 
@@ -3394,6 +3446,7 @@ export class GraphPane {
 		addOption('staleDays', 'Not edited at least (days)');
 		addOption('clusterFreshness', 'Activity');
 		addOption('minLinks', 'Minimum number of links');
+		addOption('existence', 'Existence (real vs. missing note)');
 		menu.showAtMouseEvent(evt);
 	}
 
@@ -3690,6 +3743,19 @@ export class GraphPane {
 				controlsEl.createSpan({ cls: 'clew-criterion-label', text: 'links' });
 				break;
 			}
+			case 'existence':
+				// No negate word (like clusterFreshness/property above) - the
+				// dropdown already offers an equivalent either/or choice, see
+				// ExistenceCriterion's own docstring in nodeGroups.ts.
+				new DropdownComponent(controlsEl)
+					.addOption('existing', 'Existing notes')
+					.addOption('missing', 'Notes linked but not created yet')
+					.setValue(criterion.exists ? 'existing' : 'missing')
+					.onChange((value) => {
+						criterion.exists = value === 'existing';
+						applyLive();
+					});
+				break;
 		}
 
 		// Check/cancel now sit at the end of the same row as the fields

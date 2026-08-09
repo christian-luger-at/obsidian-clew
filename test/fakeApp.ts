@@ -30,15 +30,25 @@ export function createFakeApp(notes: FakeNote[]): FakeAppHandle {
 	const filesByPath = new Map(mockFiles.map((file) => [file.path, file]));
 	const notesByPath = new Map(notes.map((note) => [note.path, note]));
 
+	// A link only counts as "resolved" if it actually matches another note
+	// in this fake vault - anything else is "unresolved", same split real
+	// Obsidian makes between metadataCache.resolvedLinks/unresolvedLinks
+	// (see vaultGraph.ts's addGhostNodes(), the one thing under test here
+	// that actually needs unresolvedLinks to be populated correctly).
 	const resolvedLinks: Record<string, Record<string, number>> = {};
+	const unresolvedLinks: Record<string, Record<string, number>> = {};
 	for (const note of notes) {
 		if (!note.links?.length) continue;
-		resolvedLinks[note.path] = Object.fromEntries(note.links.map((target) => [target, 1]));
+		for (const target of note.links) {
+			const bucket = notesByPath.has(target) ? resolvedLinks : unresolvedLinks;
+			(bucket[note.path] ??= {})[target] = (bucket[note.path]?.[target] ?? 0) + 1;
+		}
 	}
 
 	const fakeApp = {
 		metadataCache: {
 			resolvedLinks,
+			unresolvedLinks,
 			getFileCache: (file: MockTFile) => {
 				const note = notesByPath.get(file.path);
 				return note?.frontmatter ? { frontmatter: note.frontmatter } : null;

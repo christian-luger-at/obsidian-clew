@@ -55,7 +55,11 @@ const notes = [
 	{ name: 'Topic A - Detail 2', links: ['Topic A', 'Bridge Note'], frontmatter: { status: 'active', priority: 5 } },
 	{ name: 'Topic B', links: ['Hub', 'Topic B - Detail 1'], frontmatter: { status: 'draft', priority: 1 } },
 	{ name: 'Topic B - Detail 1', links: ['Topic B', 'Bridge Note'], frontmatter: { status: 'draft', priority: 1 } },
-	{ name: 'Topic C', links: ['Hub'], frontmatter: { status: 'archived' } },
+	// A second, distinct broken link (Hub's "Nonexistent Note" above is the
+	// first) - two different missing targets means two distinct ghost
+	// nodes to check in the graph itself (vaultGraph.ts's addGhostNodes()),
+	// not just the Diagnostics panel's list.
+	{ name: 'Topic C', links: ['Hub', 'Draft Idea'], frontmatter: { status: 'archived' } },
 	// Direct-ish shortcut between the two topic clusters, bypassing Hub -
 	// findPaths (k=5) should surface this as an alternative to the
 	// Hub-routed path, and it should rank ahead of the naive route once
@@ -122,4 +126,5 @@ console.log('  - Find path: anything -> "Island X"/"Island Y" should report no p
 console.log('  - Stagnation heatmap: "Old Cluster A/B/C" should be the stalest (red), "Medium Age A/B" a middling color, everything else fresh (blue)');
 console.log('  - "With Cover" should render its cover image as the node');
 console.log('  - "Visual encoding...": color by "status" groups Topic A/its details vs. Topic B/its details vs. Topic C; size by "priority" makes Topic A - Detail 2 the largest, notes without a priority (Isolated, Island X/Y, etc.) keep the default size');
-console.log('  - Diagnostics: "Isolated" under Orphans, "Hub -> Nonexistent Note" under Broken links, one "2 notes" row under Isolated clusters ("Show in graph" should highlight Island X/Island Y)');
+console.log('  - Diagnostics: "Isolated" under Orphans, "Hub -> Nonexistent Note" and "Topic C -> Draft Idea" under Broken links, one "2 notes" row under Isolated clusters ("Show in graph" should highlight Island X/Island Y)');
+console.log('  - Ghost nodes: "Nonexistent Note" and "Draft Idea" should render in the graph itself as grayed-out nodes (same size as a real note), not just in the Diagnostics list - click does nothing, hovering Hub/Topic C highlights them as neighbors like any other link');

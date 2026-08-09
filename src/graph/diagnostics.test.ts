@@ -23,6 +23,24 @@ describe('diagnostics', () => {
 
 			expect(findOrphans(g)).toEqual([]);
 		});
+
+		it('counts a note whose only link is to a ghost node as an orphan', () => {
+			const g = new Graph({ type: 'undirected' });
+			g.addNode('A.md');
+			g.addNode('ghost:Missing Note', { kind: 'ghost' });
+			g.addEdge('A.md', 'ghost:Missing Note');
+
+			expect(findOrphans(g)).toEqual(['A.md']);
+		});
+
+		it('never lists a ghost node itself as an orphan', () => {
+			const g = new Graph({ type: 'undirected' });
+			g.addNode('A.md');
+			g.addNode('ghost:Missing Note', { kind: 'ghost' });
+			g.addEdge('A.md', 'ghost:Missing Note');
+
+			expect(findOrphans(g)).not.toContain('ghost:Missing Note');
+		});
 	});
 
 	describe('findBrokenLinks', () => {
@@ -71,6 +89,30 @@ describe('diagnostics', () => {
 
 			expect(components).toHaveLength(2);
 			expect(components.every((c) => c.length === 1)).toBe(true);
+		});
+
+		it('does not let a shared ghost node bridge two otherwise-unrelated notes into one component', () => {
+			const g = new Graph({ type: 'undirected' });
+			g.addNode('A');
+			g.addNode('B');
+			g.addNode('ghost:Missing Note', { kind: 'ghost' });
+			g.addEdge('A', 'ghost:Missing Note');
+			g.addEdge('B', 'ghost:Missing Note');
+
+			const components = findConnectedComponents(g).map((c) => c.slice().sort());
+
+			expect(components).toEqual([['A'], ['B']]);
+		});
+
+		it('excludes ghost nodes from every component entirely', () => {
+			const g = new Graph({ type: 'undirected' });
+			g.addNode('A');
+			g.addNode('ghost:Missing Note', { kind: 'ghost' });
+			g.addEdge('A', 'ghost:Missing Note');
+
+			const components = findConnectedComponents(g);
+
+			expect(components.flat()).not.toContain('ghost:Missing Note');
 		});
 	});
 

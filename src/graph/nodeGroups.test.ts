@@ -11,6 +11,7 @@ function facts(overrides: Partial<NodeGroupFacts> = {}): NodeGroupFacts {
 		clusterStaleness: null,
 		mtime: 0,
 		degree: 0,
+		exists: true,
 		...overrides,
 	};
 }
@@ -127,6 +128,32 @@ describe('matchesGroup', () => {
 			expect(matchesGroup(facts({ degree: 3 }), g)).toBe(true);
 			expect(matchesGroup(facts({ degree: 5 }), g)).toBe(true);
 			expect(matchesGroup(facts({ degree: 2 }), g)).toBe(false);
+		});
+	});
+
+	describe('existence criterion', () => {
+		it('matches only real notes when exists is true', () => {
+			const g = group({ criteria: [{ type: 'existence', exists: true }] });
+			expect(matchesGroup(facts({ exists: true }), g)).toBe(true);
+			expect(matchesGroup(facts({ exists: false }), g)).toBe(false);
+		});
+
+		it('matches only ghost nodes when exists is false', () => {
+			const g = group({ criteria: [{ type: 'existence', exists: false }] });
+			expect(matchesGroup(facts({ exists: false }), g)).toBe(true);
+			expect(matchesGroup(facts({ exists: true }), g)).toBe(false);
+		});
+
+		it('never lets a ghost node match a non-existence criterion, even when its default facts would coincidentally satisfy it', () => {
+			// A ghost node's mtime defaults to 0 ("infinitely stale") and its
+			// degree is its real edge count - both could otherwise
+			// accidentally satisfy staleDays/minLinks criteria never meant to
+			// consider it at all.
+			const staleGroup = group({ criteria: [{ type: 'staleDays', days: 1 }] });
+			expect(matchesGroup(facts({ exists: false, mtime: 0 }), staleGroup)).toBe(false);
+
+			const linksGroup = group({ criteria: [{ type: 'minLinks', count: 1 }] });
+			expect(matchesGroup(facts({ exists: false, degree: 5 }), linksGroup)).toBe(false);
 		});
 	});
 
@@ -249,6 +276,11 @@ describe('describeCriterion', () => {
 	it('describes staleDays/minLinks criteria', () => {
 		expect(describeCriterion({ type: 'staleDays', days: 30 })).toBe('At least 30 days ago');
 		expect(describeCriterion({ type: 'minLinks', count: 3 })).toBe('At least 3 links');
+	});
+
+	it('describes an existence criterion by its exists value', () => {
+		expect(describeCriterion({ type: 'existence', exists: true })).toBe('Existing notes');
+		expect(describeCriterion({ type: 'existence', exists: false })).toBe('Nonexistent notes');
 	});
 
 	it('flips each type’s own wording when negated, instead of a generic "Not " prefix', () => {

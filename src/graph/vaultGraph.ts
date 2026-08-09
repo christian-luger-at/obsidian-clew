@@ -88,10 +88,66 @@ export function buildVaultGraph(app: App, files: TFile[], options: BuildVaultGra
 		}
 	}
 
+	addGhostNodes(app, graph, nodePaths);
+
 	stampPathCosts(graph);
 	sizeNodesByDegree(graph);
 
 	return graph;
+}
+
+/**
+ * Feature-list item "Ghost-Nodes für nicht-existente Notizen": a note
+ * linking to `[[Some Missing Note]]` shows up in
+ * `app.metadataCache.unresolvedLinks` (source path -> unresolved link text
+ * -> mention count), never in `resolvedLinks` above - so without this,
+ * broken links are invisible in the graph itself (they only ever surfaced
+ * in the Diagnostics panel's "Broken links" list, graphPane.ts's
+ * findBrokenLinks()). One ghost node per distinct missing target, not one
+ * per mentioning note - two notes both linking to the same missing note
+ * should read as "these two are both missing the same thing," not as two
+ * unrelated placeholders. `kind: 'ghost'` is the one marker every other
+ * module needs to check for - graphPane.ts's rendering (theme.ts's
+ * ghostNodeColor, a legible muted gray, and no click-to-open, see
+ * setupNodeClick(); sized by the exact same degree-based formula as a real
+ * note - see sizeNodesByDegree() below) and diagnostics.ts's findOrphans()/
+ * findConnectedComponents() (excluded from orphan/cluster note counts - a
+ * ghost isn't a note). Deliberately NOT excluded from
+ * `buildCriteriaFacts()` the way it would need explicit code to be *let
+ * through* - it already only iterates `this.files` (real TFiles), so a
+ * ghost node simply never has facts and can never match a filter/group,
+ * i.e. "ignored by default" falls out for free rather than needing its own
+ * exclusion logic.
+ *
+ * The `ghost:` id prefix guarantees no collision with a real note's vault
+ * path (which always has a file extension and never starts with a bare
+ * `ghost:` scheme prefix) - deliberately not just the raw link text, which
+ * two different, unrelated missing links could otherwise coincide on by
+ * accident (unlikely, but the prefix costs nothing to rule out entirely).
+ */
+function addGhostNodes(app: App, graph: Graph, nodePaths: Set<string>): void {
+	const unresolvedLinks = app.metadataCache.unresolvedLinks;
+	const ghostIdByTarget = new Map<string, string>();
+
+	for (const sourcePath of nodePaths) {
+		const targets = unresolvedLinks[sourcePath];
+		if (!targets) continue;
+		for (const targetText of Object.keys(targets)) {
+			let ghostId = ghostIdByTarget.get(targetText);
+			if (!ghostId) {
+				ghostId = `ghost:${targetText}`;
+				ghostIdByTarget.set(targetText, ghostId);
+				const position = deterministicPosition(ghostId);
+				graph.addNode(ghostId, { label: targetText, x: position.x, y: position.y, kind: 'ghost' });
+			}
+			// No hasEdge() guard needed (unlike the resolvedLinks loop above,
+			// which iterates each note pair from *both* sides and has to
+			// dedupe): `Object.keys(targets)` already visits each
+			// (sourcePath, targetText) combination exactly once, so this
+			// edge can never already exist when we get here.
+			graph.addEdge(sourcePath, ghostId);
+		}
+	}
 }
 
 /**
@@ -182,6 +238,13 @@ export const DEFAULT_SIZE_OPTIONS: SizeByDegreeOptions = {
  * ("nodes read as too large"), after three rounds of manually re-tuning
  * the same constants in one session made clear this needed to be a live
  * setting, not another hardcoded guess.
+ *
+ * Ghost nodes (addGhostNodes() above) go through this exact same formula as
+ * a plain note - user feedback: an earlier version fixed them at a small
+ * flat size instead, deliberately smaller than even a fresh real note, but
+ * that read as *wrong*, not just "different" (they should be the same size
+ * as a normal note, distinguished by color/label alone - see
+ * paintVisualEncoding() in graphPane.ts for the color side of that).
  */
 export function sizeNodesByDegree(graph: Graph, options: SizeByDegreeOptions = DEFAULT_SIZE_OPTIONS): void {
 	const { baseSize, imageBaseSize, degreeGrowth } = options;

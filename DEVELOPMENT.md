@@ -299,15 +299,15 @@ manual copy step. Then open `test-vault` in Obsidian and check:
   panel open showing criteria that no longer matched what was drawn.
   Conversely, with a path result showing, opening Filter/Color & size/
   Appearance should close the path result panel and clear its highlight.
-- **Diagnostics** (list-checks icon): three read-only, always-fresh lists -
+- **Diagnostics** (stethoscope icon): three read-only, always-fresh lists -
   `diagnostics.ts` computes them purely from the current graph, no saved
   state of its own. Open the panel and check:
   - **Orphans** should list `Isolated` (degree 0) and nothing else from the
     main cluster - `Island X`/`Island Y` do NOT belong here, they have a
     link to each other (see "Isolated clusters" below).
-  - **Broken links** should list `Hub → Nonexistent Note` - the one
-    deliberately unresolved link `gen-test-vault.mjs` seeds for exactly this
-    check.
+  - **Broken links** should list `Hub → Nonexistent Note` and `Topic C →
+    Draft Idea` - the two deliberately unresolved links `gen-test-vault.mjs`
+    seeds for exactly this check.
   - **Isolated clusters** should list one row, "2 notes" - the vault's main
     body (`Hub` and everything reachable from it) is deliberately excluded
     (it's what everything else is "isolated" *from*, see
@@ -347,6 +347,47 @@ manual copy step. Then open `test-vault` in Obsidian and check:
     reload needed), `findBrokenLinks()` shouldn't even be called while it's
     off. Turn all three off - the panel should show a single explanatory
     line instead of an empty shell.
+- **Ghost nodes** (feature-list item "Ghost-Nodes für nicht-existente
+  Notizen", `vaultGraph.ts`'s `addGhostNodes()`): `Hub`'s and `Topic C`'s
+  broken links (see "Broken links" above) should each render as their own
+  node directly in the graph, not just in the Diagnostics list - **same
+  size** as a real note with the same link count (`sizeNodesByDegree()`
+  applies the exact same degree-based formula to both; an earlier version
+  fixed ghost nodes at a smaller flat size instead, user feedback: "stimmt
+  nicht, soll gleich gross wie normale Knoten sein"), distinguished only by
+  color and label - a legible muted gray (theme.ts's `ghostNodeColor`,
+  contrast-checked against the canvas background the same way `graphColor`
+  is), but still clearly visible - **not** `dimNodeColor`, which a first
+  version of this used by mistake: that color is blended most of the way
+  toward the background on purpose, fine for briefly de-emphasizing
+  something during a hover/highlight, but it made a ghost node nearly
+  disappear into the canvas as a permanent default (user report: "Die
+  Kante ist da. Der Knoten wird aber nicht angezeigt"). Check:
+  - Clicking a ghost node does nothing (no note to open).
+  - Hovering `Hub` or `Topic C` highlights its ghost neighbor the same way
+    it highlights a real linked note.
+  - Enabling a Filter, or a Color & size group, with **no** `Existence`
+    criterion should make both ghost nodes disappear (Filter) or leave them
+    their default gray (Color & size) along with everything else that
+    doesn't match - `matchesCriterionValue()`'s own guard (nodeGroups.ts)
+    makes every criterion *except* `Existence` a hard non-match for a ghost
+    node, even one whose default facts (mtime 0, its real degree, ...)
+    would otherwise coincidentally satisfy it (a `staleDays`/`minLinks`
+    criterion, for example).
+  - Neither ghost node should appear in the Diagnostics panel's Orphans
+    count, and the "Isolated clusters" count should reflect real notes
+    only (a cluster containing a ghost node should not be inflated by it).
+  - **Existence criterion** ("+ add" menu → "Existence (real vs. missing
+    note)", available in both Filter and Color & size - same shared
+    criterion system, see `nodeGroups.ts`'s `CriteriaOwner`): set to "Notes
+    linked but not created yet" in a Filter - only `Nonexistent Note` and
+    `Draft Idea` should remain visible, everything else (including `Hub`/
+    `Topic C` themselves) hidden. Set to "Existing notes" instead - the
+    inverse. In Color & size, a group with this criterion set to "Notes
+    linked but not created yet" plus a chosen color/size multiplier should
+    repaint both ghost nodes with that color/size instead of the default
+    gray/small - same mechanism as any other group, just targeting ghost
+    nodes specifically.
 - **Cluster freshness** (an "Activity" criterion on a node group - see
   "Color & size" below and `nodeGroups.ts`): create a group with a single
   Activity criterion, reading "Notes in [an inactive area of the vault]" -

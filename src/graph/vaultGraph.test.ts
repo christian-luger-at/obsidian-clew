@@ -21,14 +21,24 @@ describe('buildVaultGraph', () => {
 		expect(graph.hasEdge('A.md', 'B.md')).toBe(true);
 	});
 
-	it('filters out links to notes outside the given file set', () => {
-		// A links to "Outside.md", which is never passed to buildVaultGraph -
-		// simulates a Base-filtered subset or a link to a non-existent note.
-		const { app, files } = createFakeApp([{ path: 'A.md', links: ['Outside.md', 'B.md'] }, { path: 'B.md' }]);
+	it('filters out links to a note that exists but is outside the given file set', () => {
+		// Outside.md is a real note in this fake vault (so the link resolves,
+		// same as real Obsidian's own metadataCache.resolvedLinks would see
+		// it, regardless of any Base/Filter subset) - it's just not part of
+		// the `files` subset passed to buildVaultGraph. No ghost node either:
+		// unlike a genuinely nonexistent target (see the "ghost nodes"
+		// describe block below), this link isn't unresolved at all.
+		const { app, files } = createFakeApp([
+			{ path: 'A.md', links: ['Outside.md', 'B.md'] },
+			{ path: 'B.md' },
+			{ path: 'Outside.md' },
+		]);
+		const subset = files.filter((file) => file.path !== 'Outside.md');
 
-		const graph = buildVaultGraph(app, files);
+		const graph = buildVaultGraph(app, subset);
 
 		expect(graph.hasNode('Outside.md')).toBe(false);
+		expect(graph.hasNode('ghost:Outside.md')).toBe(false);
 		expect(graph.hasEdge('A.md', 'B.md')).toBe(true);
 		expect(graph.degree('A.md')).toBe(1);
 	});
@@ -268,6 +278,61 @@ describe('buildVaultGraph', () => {
 			expect(graph.getNodeAttribute('B.md', 'x')).toBe(originalBx);
 			expect(graph.getNodeAttribute('B.md', 'y')).toBe(originalBy);
 			expect(graph.getNodeAttribute('B.md', 'fixed')).toBeUndefined();
+		});
+	});
+
+	describe('ghost nodes (unresolved links)', () => {
+		it('adds a ghost node for a link that resolves to no note in the vault', () => {
+			const { app, files } = createFakeApp([{ path: 'A.md', links: ['Missing Note'] }]);
+
+			const graph = buildVaultGraph(app, files);
+
+			expect(graph.hasNode('ghost:Missing Note')).toBe(true);
+			expect(graph.getNodeAttribute('ghost:Missing Note', 'kind')).toBe('ghost');
+			expect(graph.getNodeAttribute('ghost:Missing Note', 'label')).toBe('Missing Note');
+			expect(graph.hasEdge('A.md', 'ghost:Missing Note')).toBe(true);
+		});
+
+		it('collapses two notes linking to the same missing target into one ghost node', () => {
+			const { app, files } = createFakeApp([
+				{ path: 'A.md', links: ['Missing Note'] },
+				{ path: 'B.md', links: ['Missing Note'] },
+			]);
+
+			const graph = buildVaultGraph(app, files);
+
+			expect(graph.order).toBe(3); // A.md, B.md, one ghost node
+			expect(graph.degree('ghost:Missing Note')).toBe(2);
+			expect(graph.hasEdge('A.md', 'ghost:Missing Note')).toBe(true);
+			expect(graph.hasEdge('B.md', 'ghost:Missing Note')).toBe(true);
+		});
+
+		it('sizes a ghost node by the same degree-based formula as a real note, not a fixed size', () => {
+			// A degree-0 real note and a ghost node with exactly one link
+			// (to it) should size identically - same formula, same input.
+			const { app, files } = createFakeApp([{ path: 'A.md', links: ['Missing Note'] }, { path: 'Leaf.md' }]);
+
+			const graph = buildVaultGraph(app, files);
+
+			const ghostSize = Number(graph.getNodeAttribute('ghost:Missing Note', 'size'));
+			const oneLinkRealNoteSize = Number(graph.getNodeAttribute('A.md', 'size'));
+			expect(ghostSize).toBe(oneLinkRealNoteSize);
+		});
+
+		it('does not add a ghost node for a link that resolves to a real note', () => {
+			const { app, files } = createFakeApp([{ path: 'A.md', links: ['B.md'] }, { path: 'B.md' }]);
+
+			const graph = buildVaultGraph(app, files);
+
+			expect(graph.order).toBe(2);
+		});
+
+		it('does not add a ghost node for a self-link', () => {
+			const { app, files } = createFakeApp([{ path: 'A.md', links: ['A.md'] }]);
+
+			const graph = buildVaultGraph(app, files);
+
+			expect(graph.order).toBe(1);
 		});
 	});
 });

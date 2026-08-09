@@ -11,11 +11,26 @@ import { basename } from './pathfinding';
  * real vault.
  */
 
-/** A note with no links in or out - `graph.degree(node) === 0`. Sorted by display name so the panel's list order is stable and readable, not insertion order. */
+/**
+ * A note with no links to (or from) another *real* note - not quite plain
+ * `graph.degree(node) === 0`, since a note whose only link is to a
+ * nonexistent note (vaultGraph.ts's ghost nodes, `kind: 'ghost'`) still has
+ * degree 1, but has nothing real to show for it either; counting that as
+ * "not an orphan" would be misleading. Ghost nodes themselves are also
+ * skipped outright - they're not notes, and always have at least one edge
+ * by construction (see vaultGraph.ts's addGhostNodes()) so `degree === 0`
+ * could never apply to one anyway. Sorted by display name so the panel's
+ * list order is stable and readable, not insertion order.
+ */
 export function findOrphans(graph: Graph): string[] {
 	const orphans: string[] = [];
-	graph.forEachNode((node) => {
-		if (graph.degree(node) === 0) orphans.push(node);
+	graph.forEachNode((node, attr) => {
+		if (attr.kind === 'ghost') return;
+		let hasRealNeighbor = false;
+		graph.forEachNeighbor(node, (_neighbor, neighborAttr) => {
+			if (neighborAttr.kind !== 'ghost') hasRealNeighbor = true;
+		});
+		if (!hasRealNeighbor) orphans.push(node);
 	});
 	return orphans.sort((a, b) => basename(a).localeCompare(basename(b)));
 }
@@ -57,21 +72,27 @@ export function findBrokenLinks(unresolvedLinks: Record<string, Record<string, n
  * callers that want *only* the disconnected-but-internally-linked clusters
  * (the Diagnostics panel's use case) should drop the first (largest, i.e.
  * "the vault's main body of notes") entry and any remaining size-1 ones.
+ *
+ * Ghost nodes (vaultGraph.ts's `kind: 'ghost'`) are excluded from the
+ * traversal entirely, not just from the result - two notes that each
+ * happen to link to the same nonexistent note would otherwise read as
+ * "connected" through it, an illusory bridge through a note that doesn't
+ * exist rather than a real structural link between them.
  */
 export function findConnectedComponents(graph: Graph): string[][] {
 	const seen = new Set<string>();
 	const components: string[][] = [];
 
-	graph.forEachNode((start) => {
-		if (seen.has(start)) return;
+	graph.forEachNode((start, startAttr) => {
+		if (startAttr.kind === 'ghost' || seen.has(start)) return;
 		const component: string[] = [];
 		const queue = [start];
 		seen.add(start);
 		while (queue.length > 0) {
 			const node = queue.shift()!;
 			component.push(node);
-			graph.forEachNeighbor(node, (neighbor) => {
-				if (seen.has(neighbor)) return;
+			graph.forEachNeighbor(node, (neighbor, neighborAttr) => {
+				if (neighborAttr.kind === 'ghost' || seen.has(neighbor)) return;
 				seen.add(neighbor);
 				queue.push(neighbor);
 			});

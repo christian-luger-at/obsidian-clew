@@ -25,7 +25,7 @@
 
 export const MAX_NODE_GROUPS = 10;
 
-export type GroupCriterionType = 'clusterFreshness' | 'text' | 'folder' | 'filename' | 'tag' | 'property' | 'staleDays' | 'minLinks';
+export type GroupCriterionType = 'clusterFreshness' | 'text' | 'folder' | 'filename' | 'tag' | 'property' | 'staleDays' | 'minLinks' | 'existence';
 
 /** How a `property` criterion compares the frontmatter value to `value` - user feedback: raw substring-only matching couldn't express "status is exactly done" vs. "status is not done" vs. "has no status set at all". */
 export type StringOperator = 'contains' | 'equals' | 'notEquals' | 'isEmpty' | 'isNotEmpty';
@@ -98,6 +98,26 @@ export interface MinLinksCriterion {
 }
 
 /**
+ * Whether the node is a real note (`true`) or a ghost node - a link to a
+ * note that doesn't exist yet, vaultGraph.ts's `kind: 'ghost'`, one per
+ * distinct missing target (`false`). A plain two-way choice, like
+ * `clusterFreshness`'s bucket, not a boolean toggle + negate - see
+ * GroupCriterion's own `negate` docstring for why `property`/
+ * `clusterFreshness` (and now this) skip `negate` in favor of an explicit
+ * either/or choice that already reads as a complete sentence on its own.
+ * Ghost nodes are otherwise invisible to every other criterion (they carry
+ * no folder/tags/frontmatter/content - see GraphPane's buildCriteriaFacts()
+ * for how their facts are built) - this is the one criterion that can
+ * single them out on purpose, e.g. to color/size them differently in a
+ * Color & size group, or to build a filter that shows only the missing
+ * notes (or hides them entirely).
+ */
+export interface ExistenceCriterion {
+	type: 'existence';
+	exists: boolean;
+}
+
+/**
  * `& { negate?: boolean }` rather than adding the field to each of the 8
  * interfaces above - an intersection with a union still distributes over
  * it (so `criterion.type` narrowing in the switches below is unaffected),
@@ -126,6 +146,7 @@ export type GroupCriterion = (
 	| PropertyCriterion
 	| StaleDaysCriterion
 	| MinLinksCriterion
+	| ExistenceCriterion
 ) & { negate?: boolean };
 
 /**
@@ -179,6 +200,8 @@ export interface NodeGroupFacts {
 	mtime: number;
 	/** Link count (graph.degree()) - backs the `minLinks` criterion, same source as filter.ts's NoteFilterFacts.degree. */
 	degree: number;
+	/** `false` for a ghost node (vaultGraph.ts's `kind: 'ghost'`), `true` for a real note - backs the `existence` criterion. */
+	exists: boolean;
 }
 
 // Same 10 colors visualEncoding.ts used to auto-assign by category -
@@ -220,6 +243,14 @@ const STAGNANT_THRESHOLD = 0.5;
 
 /** The raw (pre-negation) match for one criterion - see matchesCriterion() below for the negate wrapper. */
 function matchesCriterionValue(facts: NodeGroupFacts, criterion: GroupCriterion): boolean {
+	// A ghost node's facts are mostly empty/default (mtime: 0, folder: '',
+	// its real graph degree, ...) - without this guard, that would let it
+	// accidentally satisfy criteria never meant to consider it at all (a
+	// `staleDays` criterion reading mtime: 0 as "extremely old", a
+	// `minLinks` criterion matching its real edge count, ...). Only
+	// `existence` is allowed to see a non-existent node for what it is -
+	// every other criterion type treats one as a hard non-match, full stop.
+	if (criterion.type !== 'existence' && !facts.exists) return false;
 	switch (criterion.type) {
 		case 'clusterFreshness':
 			if (facts.clusterStaleness === null) return false;
@@ -255,6 +286,8 @@ function matchesCriterionValue(facts: NodeGroupFacts, criterion: GroupCriterion)
 		}
 		case 'minLinks':
 			return facts.degree >= criterion.count;
+		case 'existence':
+			return facts.exists === criterion.exists;
 	}
 }
 
@@ -283,6 +316,7 @@ function isCriterionUnconfigured(criterion: GroupCriterion): boolean {
 		case 'clusterFreshness':
 		case 'staleDays':
 		case 'minLinks':
+		case 'existence':
 			return false;
 	}
 }
@@ -390,5 +424,7 @@ export function describeCriterion(criterion: GroupCriterion): string {
 			return `${negate ? 'Less than' : 'At least'} ${criterion.days} days ago`;
 		case 'minLinks':
 			return `${negate ? 'Fewer than' : 'At least'} ${criterion.count} links`;
+		case 'existence':
+			return criterion.exists ? 'Existing notes' : 'Nonexistent notes';
 	}
 }

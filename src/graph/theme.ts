@@ -7,6 +7,20 @@ export interface ThemeColors {
 	dimNodeColor: string;
 	dimEdgeColor: string;
 	matchColor: string;
+	/**
+	 * A ghost node's default color (vaultGraph.ts's `kind: 'ghost'`) - a
+	 * genuinely visible muted gray, contrast-checked the same way
+	 * graphColor/imageNodeColor are. Deliberately NOT dimNodeColor: that one
+	 * is blended most of the way toward the background on purpose (see
+	 * DIM_FACTOR below) for its actual job - briefly de-emphasizing
+	 * something during a hover/Find-path/filter highlight, where "almost
+	 * invisible" is exactly the point. A ghost node needs the opposite: a
+	 * *permanent*, legible "this is different, but still there" gray - user
+	 * report, reusing dimNodeColor here made ghost nodes disappear into the
+	 * canvas background entirely (only the edge to one, and its label on
+	 * hover, gave away that anything was there).
+	 */
+	ghostNodeColor: string;
 	/** `--background-primary` - the graph canvas's own background. Exposed (not just used internally for ensureContrast) so GraphPane can pass it to renderer.ts's hover-label background fix - see readThemeColors()'s docstring. */
 	backgroundColor: string;
 }
@@ -339,6 +353,12 @@ export function readThemeColors(referenceEl: HTMLElement, edgeIntensity: number 
 		// concept as Clew's hover-highlight (#9), search match, and
 		// stagnation-cluster focus, all of which reuse this one color.
 		matchColor: ensureContrast(cssVar('--graph-node-focused', '#22c55e'), backgroundColor),
+		// Same base color as dimNodeColor (--text-faint) but through
+		// ensureContrast() instead of blendToward() - see ghostNodeColor's
+		// own docstring for why a ghost node needs a properly visible gray,
+		// not the "nearly the background" treatment dimNodeColor's
+		// temporary de-emphasis job calls for.
+		ghostNodeColor: ensureContrast(cssVar('--text-faint', '#6b7280'), backgroundColor),
 		backgroundColor,
 	};
 

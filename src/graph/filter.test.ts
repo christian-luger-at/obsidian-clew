@@ -12,6 +12,7 @@ function facts(overrides: Partial<NoteFilterFacts> = {}): NoteFilterFacts {
 		clusterStaleness: null,
 		mtime: Date.now(),
 		degree: 0,
+		exists: true,
 		...overrides,
 	};
 }
