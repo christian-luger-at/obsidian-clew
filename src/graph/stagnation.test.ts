@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import Graph from 'graphology';
-import { detectCommunities, computeCommunityStats, staleness } from './stagnation';
+import { detectCommunities, computeCommunityStats, staleness, communityHomogeneity } from './stagnation';
 
 describe('stagnation', () => {
 	describe('detectCommunities', () => {
@@ -142,6 +142,53 @@ describe('stagnation', () => {
 
 			const result = staleness(midMtime, minNewest, maxNewest);
 			expect(result).toBeCloseTo(0.5, 2);
+		});
+	});
+
+	describe('communityHomogeneity', () => {
+		it('returns 1 when every note shares the same folder', () => {
+			const folders: Record<string, string> = { A: 'Projects', B: 'Projects', C: 'Projects' };
+			const result = communityHomogeneity(['A', 'B', 'C'], (id) => folders[id]!);
+			expect(result).toBe(1);
+		});
+
+		it('returns the share of the single most common folder when scattered', () => {
+			// 8 notes, 5 different folders, most common ("Projects") holds 3.
+			const folders: Record<string, string> = {
+				A: 'Projects',
+				B: 'Projects',
+				C: 'Projects',
+				D: 'Archive',
+				E: 'Inbox',
+				F: 'Areas/Work',
+				G: 'Areas/Personal',
+				H: 'Areas/Personal',
+			};
+			const community = Object.keys(folders);
+			const result = communityHomogeneity(community, (id) => folders[id]!);
+			expect(result).toBeCloseTo(3 / 8, 5);
+		});
+
+		it('returns 1/N when every note is in its own distinct folder', () => {
+			const folders: Record<string, string> = { A: 'X', B: 'Y', C: 'Z' };
+			const result = communityHomogeneity(['A', 'B', 'C'], (id) => folders[id]!);
+			expect(result).toBeCloseTo(1 / 3, 5);
+		});
+
+		it('returns 1 for a single-note community', () => {
+			const result = communityHomogeneity(['A'], () => 'Anywhere');
+			expect(result).toBe(1);
+		});
+
+		it('returns 1 for an empty community', () => {
+			const result = communityHomogeneity([], () => 'Anywhere');
+			expect(result).toBe(1);
+		});
+
+		it('treats the vault root ("") as its own folder like any other', () => {
+			const folders: Record<string, string> = { A: '', B: '', C: 'Notes' };
+			const result = communityHomogeneity(['A', 'B', 'C'], (id) => folders[id]!);
+			expect(result).toBeCloseTo(2 / 3, 5);
 		});
 	});
 

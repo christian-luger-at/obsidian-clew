@@ -16,7 +16,7 @@ import { NoteSuggest } from './noteSuggest';
 import { RadialLayoutModal } from './radialLayoutModal';
 import { LayoutMode, LAYOUT_MODE_LABELS, LAYOUT_OPTIONS } from './layoutModal';
 import { ConfirmModal } from './confirmModal';
-import { computeCommunityStats, detectCommunities, staleness } from './stagnation';
+import { communityHomogeneity, computeCommunityStats, detectCommunities, staleness } from './stagnation';
 import { readThemeColors, ThemeColors, blendToward } from './theme';
 import { DEFAULT_FILTER_PRESETS, evaluateFilters, FilterCombineMode, FilterPreset, isAnyFilterEnabled, MAX_FILTER_PRESETS } from './filter';
 import {
@@ -30,10 +30,12 @@ import {
 	MAX_NODE_GROUPS,
 	needsClusterFreshness,
 	needsContentSearch,
+	needsStructuralDeviation,
 	NodeGroup,
 	NodeGroupFacts,
 	StalenessBucket,
 	StringOperator,
+	StructuralCohesionBucket,
 } from './nodeGroups';
 import { ClewAppearanceSettings, DEFAULT_APPEARANCE_SETTINGS } from '../settings';
 import {
@@ -136,6 +138,11 @@ const CRITERION_TYPE_LABELS: Record<GroupCriterionType, string> = {
 	// full history) - "Activity" names the axis (active vs. inactive)
 	// rather than presupposing "stagnant" as the default framing.
 	clusterFreshness: 'Activity',
+	// GitHub issue #5 - "Structure" names the axis (scattered vs. gathered
+	// across folders) the same way "Activity" above names its own (active
+	// vs. inactive), not "Cohesion"/"Homogeneity" (the underlying jargon -
+	// see StructuralCohesionBucket's own docstring in nodeGroups.ts).
+	structuralDeviation: 'Structure',
 	// Not "Not edited at least"/"Minimum number of links" any more - those
 	// phrases now live in the controls themselves as the clickable
 	// include/exclude word (renderCriterionEditRow()'s staleDays/minLinks
@@ -546,23 +553,27 @@ export class GraphPane {
 	private readonly appearanceButton: HTMLButtonElement;
 	private readonly diagnosticsButton: HTMLButtonElement;
 	private readonly diagnosticsPanelEl: HTMLElement;
-	/** Index into the current isolatedClusters list of the one currently highlighted on the graph (toggleClusterHighlight()), or null if none is. Only one at a time - see toggleClusterHighlight()'s docstring. */
+	/** Index into the current isolatedClusters list of the one currently highlighted on the graph (toggleClusterHighlight()), or null if none is. Mutually exclusive with highlightedDeviationIndex below - see clearClusterHighlight()'s docstring. */
 	private highlightedClusterIndex: number | null = null;
+	/** Same role as highlightedClusterIndex, for the Structural deviation section's own list (toggleDeviationHighlight()) - a separate field, not a shared index, since the two lists are indexed independently (row 0 of one is unrelated to row 0 of the other). */
+	private highlightedDeviationIndex: number | null = null;
 	/**
 	 * Per-section "how many shown so far" state for the Diagnostics panel's
-	 * Orphans/Broken links/Isolated clusters lists - instance fields, not
-	 * local to renderDiagnosticsPanel(), so they survive a full panel
-	 * re-render triggered by something unrelated (e.g. toggleClusterHighlight()
-	 * calling renderDiagnosticsPanel() again) instead of silently collapsing
-	 * whatever the user had already expanded. Reset together by
-	 * resetDiagnosticsListState(), called only when the panel is freshly
-	 * opened (toggleDiagnosticsPanel()) - reopening it should start clean,
-	 * same as Find-path's panel starting empty after an explicit close (see
-	 * lastPathSource's own docstring for that precedent).
+	 * Orphans/Broken links/Isolated clusters/Structural deviation lists -
+	 * instance fields, not local to renderDiagnosticsPanel(), so they
+	 * survive a full panel re-render triggered by something unrelated (e.g.
+	 * toggleClusterHighlight() calling renderDiagnosticsPanel() again)
+	 * instead of silently collapsing whatever the user had already
+	 * expanded. Reset together by resetDiagnosticsListState(), called only
+	 * when the panel is freshly opened (toggleDiagnosticsPanel()) -
+	 * reopening it should start clean, same as Find-path's panel starting
+	 * empty after an explicit close (see lastPathSource's own docstring for
+	 * that precedent).
 	 */
 	private diagnosticsOrphanVisibleCount = DIAGNOSTICS_PAGE_SIZE;
 	private diagnosticsBrokenLinkVisibleCount = DIAGNOSTICS_PAGE_SIZE;
 	private diagnosticsClusterVisibleCount = DIAGNOSTICS_PAGE_SIZE;
+	private diagnosticsDeviationVisibleCount = DIAGNOSTICS_PAGE_SIZE;
 	private renderer: Sigma | null = null;
 	private layout: LayoutRun | null = null;
 	private graph: Graph | null = null;
@@ -1037,19 +1048,23 @@ export class GraphPane {
 		this.diagnosticsOrphanVisibleCount = DIAGNOSTICS_PAGE_SIZE;
 		this.diagnosticsBrokenLinkVisibleCount = DIAGNOSTICS_PAGE_SIZE;
 		this.diagnosticsClusterVisibleCount = DIAGNOSTICS_PAGE_SIZE;
+		this.diagnosticsDeviationVisibleCount = DIAGNOSTICS_PAGE_SIZE;
 	}
 
 	/**
-	 * Feature-list item "Strukturelle Diagnose-Panels": three read-only
-	 * lists (orphans, broken links, isolated clusters) built fresh from
+	 * Feature-list item "Strukturelle Diagnose-Panels": four read-only
+	 * lists (orphans, broken links, isolated clusters, structural
+	 * deviation - the last one GitHub issue #5) built fresh from
 	 * `this.graph` every time the panel opens - same "rebuilt from scratch,
 	 * not left standing" reasoning as Filter/Color & size, and cheap enough
 	 * (diagnostics.ts's checks are all linear/near-linear over the current
-	 * file set) to not need caching. No bulk actions here on purpose (see
-	 * diagnostics.ts's own docstring) - every entry just opens the note it's
-	 * about, same as Find-path's result list.
+	 * file set; Structural deviation's own Louvain pass is the one real
+	 * exception - see computeStructuralDeviations()) to not need caching.
+	 * No bulk actions here on purpose (see diagnostics.ts's own docstring) -
+	 * every entry just opens the note it's about, same as Find-path's
+	 * result list.
 	 *
-	 * Which of the three sections actually render is controlled by
+	 * Which of the four sections actually render is controlled by
 	 * settings.diagnostics (Obsidian's own Settings tab, see
 	 * settingsTab.ts) - not computed here just to be filtered out, so a
 	 * disabled section costs nothing (findBrokenLinks() etc. simply isn't
@@ -1069,7 +1084,7 @@ export class GraphPane {
 		const filePaths = new Set(this.files.map((file) => file.path));
 		const settings = this.plugin.settings.diagnostics;
 
-		if (!settings.showOrphans && !settings.showBrokenLinks && !settings.showIsolatedClusters) {
+		if (!settings.showOrphans && !settings.showBrokenLinks && !settings.showIsolatedClusters && !settings.showStructuralDeviation) {
 			this.diagnosticsPanelEl.createEl('p', {
 				text: 'Every diagnostics section is turned off - re-enable them under Settings → Community plugins → Clew.',
 				cls: 'clew-filter-empty-note',
@@ -1103,6 +1118,10 @@ export class GraphPane {
 
 		if (settings.showIsolatedClusters) {
 			this.renderIsolatedClustersSection(findIsolatedClusters(graph));
+		}
+
+		if (settings.showStructuralDeviation) {
+			this.renderStructuralDeviationSection(this.computeStructuralDeviations());
 		}
 	}
 
@@ -1143,6 +1162,27 @@ export class GraphPane {
 	}
 
 	/**
+	 * Icon-only (highlighter / eraser), not the earlier "Show in graph"/
+	 * "Clear highlight" text buttons - user feedback: an icon reads lighter
+	 * per row, which matters more now that there can be several rows
+	 * (Isolated clusters *and* Structural deviation both use this).
+	 * highlighter/eraser (not eye/eye-off, a first attempt user feedback'd
+	 * as "passen nicht 100%") - matches the actual action's own wording
+	 * ("highlight"/"clear highlight") directly, rather than a
+	 * show/hide-visibility metaphor that doesn't quite describe what this
+	 * does (the row's notes aren't hidden when inactive, they're just not
+	 * specially marked). Shared by both sections rather than duplicated -
+	 * identical icon/tooltip logic, only the click handler (and therefore
+	 * which highlight it toggles) differs.
+	 */
+	private renderHighlightToggleButton(rowEl: HTMLElement, isActive: boolean, onClick: () => void): void {
+		const toggleButton = rowEl.createEl('button', { cls: 'clickable-icon' });
+		setIcon(toggleButton, isActive ? 'eraser' : 'highlighter');
+		setTooltip(toggleButton, isActive ? 'Clear highlight' : 'Show in graph');
+		toggleButton.addEventListener('click', onClick);
+	}
+
+	/**
 	 * No search box here, unlike renderSearchableDiagnosticsList() above -
 	 * a cluster has no single name to search by (it's a count + a
 	 * highlight toggle, see toggleClusterHighlight()'s docstring for why
@@ -1169,8 +1209,7 @@ export class GraphPane {
 				const rowEl = containerEl.createDiv({ cls: 'clew-diagnostics-cluster-row' });
 				rowEl.createSpan({ text: `${cluster.length} notes` });
 				const isActive = this.highlightedClusterIndex === index;
-				const toggleButton = rowEl.createEl('button', { text: isActive ? 'Clear highlight' : 'Show in graph' });
-				toggleButton.addEventListener('click', () => this.toggleClusterHighlight(index, cluster));
+				this.renderHighlightToggleButton(rowEl, isActive, () => this.toggleClusterHighlight(index, cluster));
 			});
 			if (isolatedClusters.length > visibleCount) {
 				const moreRowEl = containerEl.createDiv({ cls: 'clew-diagnostics-more' });
@@ -1189,20 +1228,23 @@ export class GraphPane {
 	 * one at a time (setting a new index implicitly replaces whatever was
 	 * highlighted before, same "mutually exclusive, overrides whatever else
 	 * was drawn" precedent as Find-path's own route highlight - see
-	 * applyHighlight()'s docstring). Re-renders the panel afterward so every
-	 * row's button label reflects the new state, not just the clicked one.
+	 * applyHighlight()'s docstring; also clears a Structural deviation
+	 * highlight, if one was showing - see clearClusterHighlight()'s own
+	 * docstring). Re-renders the panel afterward so every row's button
+	 * label reflects the new state, not just the clicked one.
 	 */
 	private toggleClusterHighlight(index: number, cluster: string[]): void {
 		if (this.highlightedClusterIndex === index) {
 			this.clearClusterHighlight();
 		} else {
+			this.highlightedDeviationIndex = null;
 			this.highlightedClusterIndex = index;
 			this.highlightNodeSet(new Set(cluster));
 		}
 		this.renderDiagnosticsPanel();
 	}
 
-	/** Same dim treatment as applyHighlight() (Find-path), generalized from "nodes along one path" to "any given node set" - an isolated cluster has no meaningful path/edge direction to draw, just membership. */
+	/** Same dim treatment as applyHighlight() (Find-path), generalized from "nodes along one path" to "any given node set" - an isolated cluster (or, since GitHub issue #5, a scattered Structural-deviation community) has no meaningful path/edge direction to draw, just membership. */
 	private highlightNodeSet(nodes: Set<string>): void {
 		if (!this.renderer || !this.graph) return;
 		const graph = this.graph;
@@ -1219,12 +1261,130 @@ export class GraphPane {
 		});
 	}
 
-	/** Clears a cluster highlight set by toggleClusterHighlight() - same "just null both reducers" mechanism as Find-path's clearPathReducers(), with the same caveat: an enabled Filter/Color & size group underneath doesn't reappear on its own, since closing/superseding a highlight has never restored one (see clearHighlight()'s own docstring). */
+	/** Clears whichever of an Isolated-clusters/Structural-deviation highlight is set (toggleClusterHighlight()/toggleDeviationHighlight()) - same "just null both reducers" mechanism as Find-path's clearPathReducers(), with the same caveat: an enabled Filter/Color & size group underneath doesn't reappear on its own, since closing/superseding a highlight has never restored one (see clearHighlight()'s own docstring). Both indices are cleared together, not just whichever one was actually set - only one is ever non-null at a time (each toggle*Highlight() method clears the other's index before setting its own), so this stays a single "reset to nothing highlighted" call regardless of which kind was active. */
 	private clearClusterHighlight(): void {
-		if (this.highlightedClusterIndex === null) return;
+		if (this.highlightedClusterIndex === null && this.highlightedDeviationIndex === null) return;
 		this.highlightedClusterIndex = null;
+		this.highlightedDeviationIndex = null;
 		this.renderer?.setSetting('nodeReducer', null);
 		this.renderer?.setSetting('edgeReducer', null);
+	}
+
+	/**
+	 * One community whose notes are scattered across several folders
+	 * despite linking each other heavily enough to read as "the same
+	 * topic" - GitHub issue #5, "diese 8 Notizen gehören laut Links
+	 * zusammen, liegen aber in 5 verschiedenen Ordnern". `dominantFolder`/
+	 * `dominantCount` describe the community's single most common folder
+	 * (see stagnation.ts's communityHomogeneity(), which this mirrors but
+	 * also needs the folder breakdown for, not just the bare ratio) - '' is
+	 * the vault root, same convention as NodeGroupFacts.folder.
+	 */
+	private computeStructuralDeviations(): { nodeIds: string[]; folderCount: number; dominantFolder: string; dominantCount: number }[] {
+		if (!this.graph) return [];
+		const communities = detectCommunities(this.graph);
+		const folderByPath = this.folderByPath();
+
+		const byCommunity = new Map<number, string[]>();
+		for (const [nodeId, communityId] of communities) {
+			if (!folderByPath.has(nodeId)) continue; // ghost node - see computeStructuralDeviation()'s own docstring
+			if (!byCommunity.has(communityId)) byCommunity.set(communityId, []);
+			byCommunity.get(communityId)!.push(nodeId);
+		}
+
+		const groups: { nodeIds: string[]; folderCount: number; dominantFolder: string; dominantCount: number }[] = [];
+		for (const nodeIds of byCommunity.values()) {
+			// Same "a single-note community isn't a real cluster" exclusion
+			// as findIsolatedClusters() - nothing to compare a lone note's
+			// folder against.
+			if (nodeIds.length < 2) continue;
+
+			const countByFolder = new Map<string, number>();
+			for (const nodeId of nodeIds) {
+				const folder = folderByPath.get(nodeId) ?? '';
+				countByFolder.set(folder, (countByFolder.get(folder) ?? 0) + 1);
+			}
+			let dominantFolder = '';
+			let dominantCount = 0;
+			for (const [folder, count] of countByFolder) {
+				if (count > dominantCount) {
+					dominantFolder = folder;
+					dominantCount = count;
+				}
+			}
+			// Same 0.5 boundary as nodeGroups.ts's own 'scattered' bucket
+			// (STRUCTURAL_COHESION_THRESHOLD there) - only list communities
+			// the `structuralDeviation` criterion would also flag, so the
+			// panel and the criterion never disagree about what counts as
+			// "deviated" (not imported directly - that constant is private
+			// to nodeGroups.ts, same as DIAGNOSTICS_PAGE_SIZE above being
+			// this file's own, independent constant).
+			if (dominantCount / nodeIds.length >= 0.5) continue;
+			groups.push({ nodeIds, folderCount: countByFolder.size, dominantFolder, dominantCount });
+		}
+
+		// Most folders spread over first - the most visually/structurally
+		// surprising case ("these belong together but are in 5 places") -
+		// then largest community first as a tiebreaker.
+		groups.sort((a, b) => b.folderCount - a.folderCount || b.nodeIds.length - a.nodeIds.length);
+		return groups;
+	}
+
+	/**
+	 * Same "count + Show in graph, no member list" shape as
+	 * renderIsolatedClustersSection() (user feedback there: a cluster's own
+	 * note list can get long and unwieldy - a scattered community's notes
+	 * are exactly as likely to be numerous). Own paginated state
+	 * (diagnosticsDeviationVisibleCount) and highlight index
+	 * (highlightedDeviationIndex) - kept separate from Isolated clusters'
+	 * own, since the two lists are indexed independently (see
+	 * highlightedDeviationIndex's own docstring).
+	 */
+	private renderStructuralDeviationSection(groups: { nodeIds: string[]; folderCount: number; dominantFolder: string; dominantCount: number }[]): void {
+		this.diagnosticsPanelEl.createEl('h5', { text: `Structural deviation (${groups.length})`, cls: 'clew-diagnostics-heading' });
+		if (groups.length === 0) {
+			this.diagnosticsPanelEl.createEl('p', {
+				text: 'No structural deviation - every tightly-linked group of notes is mostly consolidated into one folder.',
+				cls: 'clew-filter-empty-note',
+			});
+			return;
+		}
+
+		const containerEl = this.diagnosticsPanelEl.createDiv();
+		const renderRows = () => {
+			containerEl.empty();
+			const visibleCount = this.diagnosticsDeviationVisibleCount;
+			groups.slice(0, visibleCount).forEach((group, index) => {
+				const rowEl = containerEl.createDiv({ cls: 'clew-diagnostics-cluster-row' });
+				const folderLabel = group.dominantFolder === '' ? '(vault root)' : group.dominantFolder;
+				rowEl.createSpan({
+					text: `${group.nodeIds.length} notes across ${group.folderCount} folders (most in ${folderLabel}: ${group.dominantCount}/${group.nodeIds.length})`,
+				});
+				const isActive = this.highlightedDeviationIndex === index;
+				this.renderHighlightToggleButton(rowEl, isActive, () => this.toggleDeviationHighlight(index, group.nodeIds));
+			});
+			if (groups.length > visibleCount) {
+				const moreRowEl = containerEl.createDiv({ cls: 'clew-diagnostics-more' });
+				const moreButton = moreRowEl.createEl('button', { text: `+ ${groups.length - visibleCount} more` });
+				moreButton.addEventListener('click', () => {
+					this.diagnosticsDeviationVisibleCount += DIAGNOSTICS_PAGE_SIZE;
+					renderRows();
+				});
+			}
+		};
+		renderRows();
+	}
+
+	/** Same shape as toggleClusterHighlight(), for the Structural deviation section's own list - see highlightedDeviationIndex's own docstring for why this is a separate index rather than reusing toggleClusterHighlight() directly. */
+	private toggleDeviationHighlight(index: number, nodeIds: string[]): void {
+		if (this.highlightedDeviationIndex === index) {
+			this.clearClusterHighlight();
+		} else {
+			this.highlightedClusterIndex = null;
+			this.highlightedDeviationIndex = index;
+			this.highlightNodeSet(new Set(nodeIds));
+		}
+		this.renderDiagnosticsPanel();
 	}
 
 	/** One clickable `<li>` that opens `vaultPath` - shared by every Diagnostics list entry (orphans, broken-link sources). */
@@ -2382,13 +2542,14 @@ export class GraphPane {
 	 * nodeGroups.ts's pure evaluateGroups()/matchesGroup() to match against
 	 * - shared by paintVisualEncoding() (Color & size) and applyFilter()
 	 * (Filter), since both now match the exact same GroupCriterion shapes
-	 * against the exact same facts (see filter.ts's docstring). `content`
-	 * and `clusterStaleness` are the two facts real I/O/computation backs -
-	 * both stay at their empty/null default unless a group or filter
-	 * actually needs them (see nodeGroups.ts's needsContentSearch()/
-	 * needsClusterFreshness() and this file's allCriteriaOwners()), so a
-	 * vault with no `text`/`clusterFreshness` criteria in use never pays
-	 * for either.
+	 * against the exact same facts (see filter.ts's docstring). `content`,
+	 * `clusterStaleness`, and `structuralDeviation` are the facts real
+	 * I/O/computation backs - all three stay at their empty/null default
+	 * unless a group or filter actually needs them (see nodeGroups.ts's
+	 * needsContentSearch()/needsClusterFreshness()/needsStructuralDeviation()
+	 * and this file's allCriteriaOwners()), so a vault with none of
+	 * `text`/`clusterFreshness`/`structuralDeviation` criteria in use never
+	 * pays for any of them.
 	 *
 	 * Also emits one fact entry per ghost node (vaultGraph.ts's `kind:
 	 * 'ghost'`, see addGhostNodes()) - `exists: false` and otherwise mostly
@@ -2402,7 +2563,9 @@ export class GraphPane {
 	 * how any existing criterion behaves.
 	 */
 	private buildCriteriaFacts(): Map<string, NodeGroupFacts> {
-		const clusterStalenessByNode = needsClusterFreshness(this.allCriteriaOwners()) ? this.computeClusterStaleness() : null;
+		const owners = this.allCriteriaOwners();
+		const clusterStalenessByNode = needsClusterFreshness(owners) ? this.computeClusterStaleness() : null;
+		const structuralDeviationByNode = needsStructuralDeviation(owners) ? this.computeStructuralDeviation() : null;
 		const result = new Map<string, NodeGroupFacts>();
 		for (const file of this.files) {
 			const cache = this.app.metadataCache.getFileCache(file);
@@ -2414,6 +2577,7 @@ export class GraphPane {
 				tags: (cache ? getAllTags(cache) : null) ?? [],
 				frontmatter: cache?.frontmatter ?? {},
 				clusterStaleness: clusterStalenessByNode?.get(file.path) ?? null,
+				structuralDeviation: structuralDeviationByNode?.get(file.path) ?? null,
 				mtime: this.mtimeByPath.get(file.path) ?? file.stat.mtime,
 				degree: this.graph?.degree(file.path) ?? 0,
 				exists: true,
@@ -2428,6 +2592,7 @@ export class GraphPane {
 				tags: [],
 				frontmatter: {},
 				clusterStaleness: null,
+				structuralDeviation: null,
 				mtime: 0,
 				degree: this.graph?.degree(node) ?? 0,
 				exists: false,
@@ -2449,6 +2614,62 @@ export class GraphPane {
 		for (const [node, communityId] of communities) {
 			const value = stalenessByCommunity.get(communityId);
 			if (value !== undefined) result.set(node, value);
+		}
+		return result;
+	}
+
+	/**
+	 * Louvain communities (stagnation.ts) turned into a 0-1 "how scattered
+	 * across folders" value per node (1 - communityHomogeneity()) - backs
+	 * the `structuralDeviation` group criterion, and shared by
+	 * renderStructuralDeviationSection() (Diagnostics panel) for the same
+	 * underlying question asked a different way ("which communities" vs.
+	 * "does this note belong to a scattered one"). GitHub issue #5. Only
+	 * called when at least one enabled group/filter actually uses the
+	 * criterion (needsStructuralDeviation()) - Louvain detection is a real
+	 * per-open computational cost, not worth paying unconditionally (the
+	 * Diagnostics section runs its own separate detectCommunities() call
+	 * when its own setting is on, same "only pay when something's actually
+	 * showing it" reasoning as findIsolatedClusters() etc.).
+	 *
+	 * Ghost nodes (vaultGraph.ts's `kind: 'ghost'`) are excluded from every
+	 * community's folder tally - they have no real folder of their own (see
+	 * buildCriteriaFacts()), and counting one as its own distinct "folder"
+	 * would skew a community toward reading as more scattered just for
+	 * containing an unresolved link, not because of anything about where
+	 * its *real* notes actually live.
+	 */
+	private computeStructuralDeviation(): Map<string, number> {
+		if (!this.graph) return new Map();
+		const communities = detectCommunities(this.graph);
+		const folderByPath = this.folderByPath();
+
+		const byCommunity = new Map<number, string[]>();
+		for (const [nodeId, communityId] of communities) {
+			if (!folderByPath.has(nodeId)) continue; // ghost node - no real folder to tally
+			if (!byCommunity.has(communityId)) byCommunity.set(communityId, []);
+			byCommunity.get(communityId)!.push(nodeId);
+		}
+
+		const deviationByCommunity = new Map<number, number>();
+		for (const [communityId, nodeIds] of byCommunity) {
+			deviationByCommunity.set(communityId, 1 - communityHomogeneity(nodeIds, (id) => folderByPath.get(id) ?? ''));
+		}
+
+		const result = new Map<string, number>();
+		for (const [node, communityId] of communities) {
+			const value = deviationByCommunity.get(communityId);
+			if (value !== undefined) result.set(node, value);
+		}
+		return result;
+	}
+
+	/** Every current file's path mapped to its own parent-folder path ('' for vault root) - shared by computeStructuralDeviation() and renderStructuralDeviationSection(), both of which need this same lookup keyed by node id rather than the TFile itself. */
+	private folderByPath(): Map<string, string> {
+		const result = new Map<string, string>();
+		for (const file of this.files) {
+			const folder = file.parent?.path ?? '';
+			result.set(file.path, folder === '/' ? '' : folder);
 		}
 		return result;
 	}
@@ -3846,6 +4067,11 @@ export class GraphPane {
 		switch (type) {
 			case 'clusterFreshness':
 				return { type, bucket: 'stagnant' };
+			// 'scattered' - the useful starting point is almost always "show
+			// me the misfiled ones", same reasoning as `existence` below
+			// defaulting to missing notes.
+			case 'structuralDeviation':
+				return { type, bucket: 'scattered' };
 			case 'text':
 				return { type, query: '' };
 			case 'folder':
@@ -3931,6 +4157,7 @@ export class GraphPane {
 		addOption('filename', 'Filename');
 		addOption('staleDays', 'Not edited at least (days)');
 		addOption('clusterFreshness', 'Activity');
+		addOption('structuralDeviation', 'Structure (folders vs. links)');
 		addOption('minLinks', 'Minimum number of links');
 		addOption('existence', 'Existence (real vs. missing note)');
 		menu.showAtMouseEvent(evt);
@@ -4119,6 +4346,12 @@ export class GraphPane {
 				'Notes are grouped into tightly-linked neighborhoods, then compared by how recently each neighborhood was edited overall.',
 			);
 		}
+		if (criterion.type === 'structuralDeviation') {
+			setTooltip(
+				typeBadgeEl,
+				"Notes are grouped into tightly-linked neighborhoods, then compared against the vault's own folders - a neighborhood counts as scattered once less than half its notes share one folder.",
+			);
+		}
 
 		switch (criterion.type) {
 			case 'tag':
@@ -4202,6 +4435,20 @@ export class GraphPane {
 					.setValue(criterion.bucket)
 					.onChange((value) => {
 						criterion.bucket = value as StalenessBucket;
+						applyLive();
+					});
+				break;
+			case 'structuralDeviation':
+				// Same "no negate word, the dropdown already offers an
+				// equivalent choice" reasoning as clusterFreshness above -
+				// GitHub issue #5.
+				controlsEl.createSpan({ cls: 'clew-criterion-label', text: 'Notes whose linked neighborhood is' });
+				new DropdownComponent(controlsEl)
+					.addOption('scattered', 'Scattered across folders')
+					.addOption('cohesive', 'Gathered in one folder')
+					.setValue(criterion.bucket)
+					.onChange((value) => {
+						criterion.bucket = value as StructuralCohesionBucket;
 						applyLive();
 					});
 				break;

@@ -347,9 +347,11 @@ manual copy step. Then open `test-vault` in Obsidian and check:
   and the delete-confirmation `ConfirmModal` are the two remaining native
   Modals - deliberately left as Modals (simple, one-shot "pick one thing
   and confirm" dialogs, not asked about either round).
-- **Diagnostics** (stethoscope icon): three read-only, always-fresh lists -
-  `diagnostics.ts` computes them purely from the current graph, no saved
-  state of its own. Open the panel and check:
+- **Diagnostics** (stethoscope icon): four read-only, always-fresh lists -
+  `diagnostics.ts` computes three of them purely from the current graph, no
+  saved state of its own; Structural deviation (below) is the one exception,
+  computed in `graphPane.ts` itself since it also needs Louvain community
+  detection (`stagnation.ts`), not just the graph. Open the panel and check:
   - **Orphans** should list `Isolated` (degree 0) and nothing else from the
     main cluster - `Island X`/`Island Y` do NOT belong here, they have a
     link to each other (see "Isolated clusters" below).
@@ -362,14 +364,39 @@ manual copy step. Then open `test-vault` in Obsidian and check:
     `findIsolatedClusters()`'s docstring), and `Isolated` itself doesn't
     reappear here either (a size-1 component - already covered by Orphans
     above). No member list is shown here (user feedback: a cluster's note
-    list can get long and unwieldy) - click "Show in graph" instead: `Island
-    X`/`Island Y` should highlight on the canvas (same visual treatment as a
-    Find-path route), everything else dims, and the button becomes "Clear
-    highlight". Click it again (or close the Diagnostics panel, or open
-    Filter/Color & size/Appearance/Find-path) to clear the highlight.
+    list can get long and unwieldy) - click the highlighter icon instead
+    (user feedback: replaced the earlier "Show in graph"/"Clear highlight"
+    text buttons with an icon pair - `renderHighlightToggleButton()`,
+    shared by this section and Structural deviation below; a first icon
+    attempt, eye/eye-off, was itself user feedback'd as "passen nicht 100%"
+    - a visibility metaphor that didn't quite fit, since a row's notes
+    aren't hidden when inactive, just not specially marked):
+    `Island X`/`Island Y` should highlight on the canvas (same visual
+    treatment as a Find-path route), everything else dims, and the icon
+    switches to an eraser (hover tooltip: "Clear highlight"). Click it
+    again (or close the Diagnostics panel, or open Filter/Color &
+    size/Appearance/Find-path) to clear the highlight.
+  - **Structural deviation** (GitHub issue #5, "Stagnation-Cluster gegen
+    Ordner-/Tag-Struktur vergleichen") should list exactly one row: "8 notes
+    across 5 folders (most in Notes: 3/8)" - the `Scattered *` notes
+    `gen-test-vault.mjs` seeds for exactly this check, densely linked to
+    each other (so Louvain groups them as one community, confirmed
+    separately against a `detectCommunities()`/`communityHomogeneity()` run
+    over the same link/folder data while building this feature) but spread
+    across `Notes`/`Areas/Work`/`Areas/Personal`/`Archive`/`Inbox`. No other
+    row should appear - every other community here (`Old Cluster A/B/C`,
+    `Medium Age A/B`, `Topic A`/its details, etc.) lives entirely in one
+    folder already, so its homogeneity is 1.0. Same "count + highlighter/
+    eraser toggle, no member list" shape as Isolated clusters, and the same
+    highlight mechanism/mutual exclusion - but its own separate index
+    (`highlightedDeviationIndex`), so having an Isolated-clusters row
+    highlighted and then highlighting a Structural-deviation row (or vice
+    versa) should swap which one is shown, not show both or get confused
+    about which row's icon reads eraser (still active).
   - Clicking an Orphans/Broken links entry should open that note - same as
-    Find-path's result list. A highlighted cluster's notes are clickable
-    directly on the graph instead (same as everywhere else).
+    Find-path's result list. A highlighted cluster's/deviated community's
+    notes are clickable directly on the graph instead (same as everywhere
+    else).
   - Opening Diagnostics while Filter/Color & size/Appearance/Find-path is
     open should close the other one (`closeOtherPanels()`), same mutual
     exclusion as every other panel.
@@ -378,23 +405,25 @@ manual copy step. Then open `test-vault` in Obsidian and check:
     of `<li>`s unprompted; a later round explicitly dropped a search box
     that an earlier version had - "wenn jemand alles [...] fixen will,
     muss er alle Einträge sehen", so a search that narrows the list isn't
-    what someone working through the whole thing wants): the 19-note QA
-    vault is too small to trigger this on its own (`DIAGNOSTICS_PAGE_SIZE`
-    is 20) - temporarily lower it in `graphPane.ts` to check by hand, or
-    add a batch of throwaway orphan notes to `gen-test-vault.mjs`'s
-    `notes` array. What to verify once triggered: a "+ N more" row appears
-    once a list exceeds `DIAGNOSTICS_PAGE_SIZE`, and clicking it reveals
-    the next page without losing what's already shown.
+    what someone working through the whole thing wants): the QA vault
+    (`gen-test-vault.mjs`) is too small to trigger this on its own
+    (`DIAGNOSTICS_PAGE_SIZE` is 20) - temporarily lower it in `graphPane.ts`
+    to check by hand, or add a batch of throwaway orphan notes to
+    `gen-test-vault.mjs`'s `notes` array. What to verify once triggered: a
+    "+ N more" row appears once a list exceeds `DIAGNOSTICS_PAGE_SIZE`, and
+    clicking it reveals the next page without losing what's already shown.
   - **Per-section on/off** (Obsidian's own Settings → Community plugins →
-    Clew, not a graph-view panel - see `settingsTab.ts`): all three toggles
+    Clew, not a graph-view panel - see `settingsTab.ts`): all four toggles
     default on. Turn "Broken links" off (user feedback: not everyone
     considers unresolved links a problem - some deliberately link to notes
     they haven't written yet) - the Broken links heading/list should
     disappear from the Diagnostics panel the next time it's opened
     (`renderDiagnosticsPanel()` reads the setting fresh each render, no
     reload needed), `findBrokenLinks()` shouldn't even be called while it's
-    off. Turn all three off - the panel should show a single explanatory
-    line instead of an empty shell.
+    off. Turn "Structural deviation" off too - its own Louvain pass
+    (`computeStructuralDeviations()`) shouldn't run either. Turn all four
+    off - the panel should show a single explanatory line instead of an
+    empty shell.
 - **Ghost nodes** (feature-list item "Ghost-Nodes für nicht-existente
   Notizen", `vaultGraph.ts`'s `addGhostNodes()`): `Hub`'s and `Topic C`'s
   broken links (see "Broken links" above) should each render as their own
@@ -487,6 +516,22 @@ manual copy step. Then open `test-vault` in Obsidian and check:
   tightly-linked notes, compared by overall recency) in one sentence,
   rather than a permanent line of text under the heading (every other
   criterion type manages without one).
+- **Structural deviation** (a "Structure" criterion on a node group/filter -
+  GitHub issue #5, see `nodeGroups.ts`): create a group with a single
+  Structure criterion, "Notes whose linked neighborhood is [Scattered across
+  folders]" - only the 8 `Scattered *` notes should join the group (same
+  community Diagnostics' own "Structural deviation" section lists - see
+  above); everything else (including the mono-folder `Old Cluster A/B/C`/
+  `Medium Age A/B` communities) should not. Switch the dropdown to "Gathered
+  in one folder" - the opposite should happen: `Scattered *` drops out,
+  every other note whose community *is* mono-folder joins instead (`Isolated`
+  included - Louvain still gives it its own single-note "community", which
+  trivially has homogeneity 1.0, same precedent as `clusterFreshness` below
+  being able to match it too). Hover the "Structure" heading (while a
+  criterion of this type is expanded) - a tooltip should explain the
+  underlying mechanism (neighborhoods of tightly-linked notes, compared
+  against the vault's own folders) in one sentence, same treatment as
+  "Activity"'s own tooltip below.
 - **`With Cover`** should render its frontmatter `cover` image as the node,
   not a plain dot.
 - **`Isolated`** (no links at all) should still render with degree 0 and be
@@ -905,9 +950,11 @@ manual copy step. Then open `test-vault` in Obsidian and check:
   ("is not"), turn red (`--text-error`, vs. the default accent color), and
   the graph should re-apply live. The chip's own collapsed description
   should read the same flipped sentence (e.g. "Folder is not Archive"),
-  not a generic "Not " prefix. `Property` and `Activity` (clusterFreshness)
-  do *not* get this word - each already has its own equivalent choice
-  (the operator dropdown / the active-inactive bucket dropdown). Reload
+  not a generic "Not " prefix. `Property`, `Activity` (clusterFreshness),
+  and `Structure` (structuralDeviation) do *not* get this word - each
+  already has its own equivalent choice (the operator dropdown / the
+  active-inactive bucket dropdown / the scattered-cohesive bucket
+  dropdown). Reload
   the plugin (or restart Obsidian) - the negated state should persist per
   criterion. A criterion saved before this feature existed (no `negate`
   field at all) should still behave as included (not excluded), not error

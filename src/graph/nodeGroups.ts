@@ -25,7 +25,17 @@
 
 export const MAX_NODE_GROUPS = 10;
 
-export type GroupCriterionType = 'clusterFreshness' | 'text' | 'folder' | 'filename' | 'tag' | 'property' | 'staleDays' | 'minLinks' | 'existence';
+export type GroupCriterionType =
+	| 'clusterFreshness'
+	| 'structuralDeviation'
+	| 'text'
+	| 'folder'
+	| 'filename'
+	| 'tag'
+	| 'property'
+	| 'staleDays'
+	| 'minLinks'
+	| 'existence';
 
 /** How a `property` criterion compares the frontmatter value to `value` - user feedback: raw substring-only matching couldn't express "status is exactly done" vs. "status is not done" vs. "has no status set at all". */
 export type StringOperator = 'contains' | 'equals' | 'notEquals' | 'isEmpty' | 'isNotEmpty';
@@ -118,7 +128,25 @@ export interface ExistenceCriterion {
 }
 
 /**
- * `& { negate?: boolean }` rather than adding the field to each of the 8
+ * A note's Louvain community (see stagnation.ts's detectCommunities()) is
+ * either mostly spread across several different folders ('scattered') or
+ * mostly consolidated into one ('cohesive') - GitHub issue #5, "these 8
+ * notes belong together by link topology, but live in 5 different
+ * folders". A plain two-way choice, same reasoning as `clusterFreshness`'s
+ * `bucket` (see StalenessBucket's own docstring) rather than a raw 0-1
+ * homogeneity value or percentage - the underlying continuous value is
+ * stagnation.ts's communityHomogeneity(), 0.5 is the split point (see
+ * matchesCriterionValue()'s STRUCTURAL_COHESION_THRESHOLD).
+ */
+export type StructuralCohesionBucket = 'scattered' | 'cohesive';
+
+export interface StructuralDeviationCriterion {
+	type: 'structuralDeviation';
+	bucket: StructuralCohesionBucket;
+}
+
+/**
+ * `& { negate?: boolean }` rather than adding the field to each of the 9
  * interfaces above - an intersection with a union still distributes over
  * it (so `criterion.type` narrowing in the switches below is unaffected),
  * and every criterion type shares the same underlying include/exclude flag
@@ -130,15 +158,17 @@ export interface ExistenceCriterion {
  * optimal [...] Ganz anderer Ansatz gewünscht"), so graphPane.ts's
  * renderCriterionEditRow() instead makes the negated/non-negated *wording
  * itself* (see describeCriterion()) the clickable control - no separate
- * toggle/checkbox/dropdown element at all for most types. `property` and
- * `clusterFreshness` don't use `negate` (no UI ever sets it for them) -
- * each already offers an equivalent choice via its own operator/bucket.
+ * toggle/checkbox/dropdown element at all for most types. `property`,
+ * `clusterFreshness`, and `structuralDeviation` don't use `negate` (no UI
+ * ever sets it for them) - each already offers an equivalent choice via
+ * its own operator/bucket.
  * Optional (not required on every literal) so criteria saved before this
  * feature existed still type-check and behave as included (not negated) -
  * see matchesCriterion()'s own handling.
  */
 export type GroupCriterion = (
 	| ClusterFreshnessCriterion
+	| StructuralDeviationCriterion
 	| TextCriterion
 	| FolderCriterion
 	| FilenameCriterion
@@ -196,6 +226,8 @@ export interface NodeGroupFacts {
 	frontmatter: Record<string, unknown>;
 	/** 0-1, see stagnation.ts's staleness() - null if cluster stats haven't been computed (no enabled group needs them, see needsClusterFreshness()). */
 	clusterStaleness: number | null;
+	/** 0 (community fully consolidated in one folder) to 1 (fully scattered) - `1 - communityHomogeneity()` (stagnation.ts), null if community/folder stats haven't been computed (no enabled group needs them, see needsStructuralDeviation()). Backs the `structuralDeviation` criterion. */
+	structuralDeviation: number | null;
 	/** File modification time (ms since epoch) - backs the `staleDays` criterion, same source as filter.ts's NoteFilterFacts.mtime. */
 	mtime: number;
 	/** Link count (graph.degree()) - backs the `minLinks` criterion, same source as filter.ts's NoteFilterFacts.degree. */
@@ -264,6 +296,9 @@ function stringifyPropertyValue(value: unknown): string {
 /** 0.5 is the boundary between the "fresh" and "stagnant" halves - see StalenessBucket's docstring. */
 const STAGNANT_THRESHOLD = 0.5;
 
+/** 0.5 is the boundary between "cohesive" and "scattered" - a community whose most common folder holds under half its notes reads as scattered, one where it holds at least half reads as cohesive. See StructuralCohesionBucket's own docstring. */
+const STRUCTURAL_COHESION_THRESHOLD = 0.5;
+
 /** The raw (pre-negation) match for one criterion - see matchesCriterion() below for the negate wrapper. */
 function matchesCriterionValue(facts: NodeGroupFacts, criterion: GroupCriterion): boolean {
 	// A ghost node's facts are mostly empty/default (mtime: 0, folder: '',
@@ -278,6 +313,11 @@ function matchesCriterionValue(facts: NodeGroupFacts, criterion: GroupCriterion)
 		case 'clusterFreshness':
 			if (facts.clusterStaleness === null) return false;
 			return criterion.bucket === 'stagnant' ? facts.clusterStaleness >= STAGNANT_THRESHOLD : facts.clusterStaleness < STAGNANT_THRESHOLD;
+		case 'structuralDeviation':
+			if (facts.structuralDeviation === null) return false;
+			return criterion.bucket === 'scattered'
+				? facts.structuralDeviation >= STRUCTURAL_COHESION_THRESHOLD
+				: facts.structuralDeviation < STRUCTURAL_COHESION_THRESHOLD;
 		case 'text': {
 			const query = criterion.query.trim().toLowerCase();
 			return query !== '' && facts.content.includes(query);
@@ -320,8 +360,9 @@ function matchesCriterionValue(facts: NodeGroupFacts, criterion: GroupCriterion)
  * treats this as "doesn't match" on its own, but negate's `!value` flip
  * below would otherwise turn that into "matches everything" for a
  * half-built criterion the user hasn't finished typing into yet. staleDays/
- * minLinks/clusterFreshness are never "unconfigured" (blankCriterion()
- * always gives them a real default), so they're excluded here.
+ * minLinks/clusterFreshness/structuralDeviation are never "unconfigured"
+ * (blankCriterion() always gives them a real default), so they're excluded
+ * here.
  */
 function isCriterionUnconfigured(criterion: GroupCriterion): boolean {
 	switch (criterion.type) {
@@ -337,6 +378,7 @@ function isCriterionUnconfigured(criterion: GroupCriterion): boolean {
 			if (criterion.operator === 'isEmpty' || criterion.operator === 'isNotEmpty') return false;
 			return criterion.value.trim() === '';
 		case 'clusterFreshness':
+		case 'structuralDeviation':
 		case 'staleDays':
 		case 'minLinks':
 		case 'existence':
@@ -398,6 +440,11 @@ export function needsClusterFreshness(owners: CriteriaOwner[]): boolean {
 	return owners.some((o) => o.enabled && o.criteria.some((c) => c.type === 'clusterFreshness'));
 }
 
+/** Whether any enabled group/preset has at least one `structuralDeviation` criterion - GraphPane only pays for Louvain community detection + per-note folder lookups when this is true. Same "own gate, not folded into needsClusterFreshness()" reasoning as needsContentSearch() being separate from this - clusterFreshness and structuralDeviation both need Louvain communities, but a vault using only one of the two shouldn't also pay for the other's folder-homogeneity pass. */
+export function needsStructuralDeviation(owners: CriteriaOwner[]): boolean {
+	return owners.some((o) => o.enabled && o.criteria.some((c) => c.type === 'structuralDeviation'));
+}
+
 const STRING_OPERATOR_LABELS: Record<StringOperator, string> = {
 	contains: 'contains',
 	equals: 'equals',
@@ -413,8 +460,9 @@ const STRING_OPERATOR_LABELS: Record<StringOperator, string> = {
  * type-specific controls, so a group with several criteria reads as a
  * short list of chips rather than a wall of dropdowns/text fields (user
  * feedback: the criteria list was "unübersichtlich" - unclear/cluttered).
- * Every type except `property`/`clusterFreshness` (which already offer an
- * equivalent choice via their own operator/bucket) reads `criterion.negate`
+ * Every type except `property`/`clusterFreshness`/`structuralDeviation`
+ * (which already offer an equivalent choice via their own operator/bucket)
+ * reads `criterion.negate`
  * and flips its own wording accordingly ("is"/"is not", "contains"/"does
  * not contain", "any of"/"none of", "at least"/"less than" or "fewer
  * than") - graphPane.ts's renderCriterionEditRow() renders that same word
@@ -443,6 +491,10 @@ export function describeCriterion(criterion: GroupCriterion): string {
 			return `Text ${negate ? 'does not contain' : 'contains'} ${criterion.query ? `"${criterion.query}"` : '(none)'}`;
 		case 'clusterFreshness':
 			return criterion.bucket === 'stagnant' ? 'Activity: inactive area of the vault' : 'Activity: active area of the vault';
+		case 'structuralDeviation':
+			return criterion.bucket === 'scattered'
+				? 'Structure: linked notes scattered across folders'
+				: 'Structure: linked notes gathered in one folder';
 		case 'staleDays':
 			return `${negate ? 'Less than' : 'At least'} ${criterion.days} days ago`;
 		case 'minLinks':

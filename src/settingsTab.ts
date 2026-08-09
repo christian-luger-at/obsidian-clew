@@ -62,6 +62,16 @@ export class ClewSettingTab extends PluginSettingTab {
 				}),
 			);
 
+		new Setting(containerEl)
+			.setName('Structural deviation')
+			.setDesc('Groups of heavily-linked notes scattered across several different folders.')
+			.addToggle((toggle) =>
+				toggle.setValue(this.plugin.settings.diagnostics.showStructuralDeviation).onChange(async (value) => {
+					this.plugin.settings.diagnostics.showStructuralDeviation = value;
+					await this.plugin.saveSettings();
+				}),
+			);
+
 		new Setting(containerEl).setName('Default filters & colors').setHeading();
 		containerEl.createEl('p', {
 			text: 'Ready-made filters/color groups, built on notes linked but not created yet. Available in the graph view\'s Filter/Color & size panels - each still needs its own checkbox turned on there to actually apply.',

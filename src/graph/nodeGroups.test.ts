@@ -1,5 +1,14 @@
 import { describe, it, expect } from 'vitest';
-import { describeCriterion, evaluateGroups, matchesGroup, needsClusterFreshness, needsContentSearch, NodeGroup, NodeGroupFacts } from './nodeGroups';
+import {
+	describeCriterion,
+	evaluateGroups,
+	matchesGroup,
+	needsClusterFreshness,
+	needsContentSearch,
+	needsStructuralDeviation,
+	NodeGroup,
+	NodeGroupFacts,
+} from './nodeGroups';
 
 function facts(overrides: Partial<NodeGroupFacts> = {}): NodeGroupFacts {
 	return {
@@ -9,6 +18,7 @@ function facts(overrides: Partial<NodeGroupFacts> = {}): NodeGroupFacts {
 		tags: [],
 		frontmatter: {},
 		clusterStaleness: null,
+		structuralDeviation: null,
 		mtime: 0,
 		degree: 0,
 		exists: true,
@@ -110,6 +120,23 @@ describe('matchesGroup', () => {
 			expect(matchesGroup(facts({ clusterStaleness: 0.2 }), g)).toBe(true);
 			expect(matchesGroup(facts({ clusterStaleness: 0.5 }), g)).toBe(false);
 			expect(matchesGroup(facts({ clusterStaleness: null }), g)).toBe(false);
+		});
+	});
+
+	describe('structuralDeviation criterion', () => {
+		it('scattered bucket matches communities under half-homogeneous (deviation >= 0.5)', () => {
+			const g = group({ criteria: [{ type: 'structuralDeviation', bucket: 'scattered' }] });
+			expect(matchesGroup(facts({ structuralDeviation: 0.8 }), g)).toBe(true);
+			expect(matchesGroup(facts({ structuralDeviation: 0.5 }), g)).toBe(true);
+			expect(matchesGroup(facts({ structuralDeviation: 0.4 }), g)).toBe(false);
+			expect(matchesGroup(facts({ structuralDeviation: null }), g)).toBe(false);
+		});
+
+		it('cohesive bucket matches communities at least half-homogeneous (deviation < 0.5)', () => {
+			const g = group({ criteria: [{ type: 'structuralDeviation', bucket: 'cohesive' }] });
+			expect(matchesGroup(facts({ structuralDeviation: 0.2 }), g)).toBe(true);
+			expect(matchesGroup(facts({ structuralDeviation: 0.5 }), g)).toBe(false);
+			expect(matchesGroup(facts({ structuralDeviation: null }), g)).toBe(false);
 		});
 	});
 
@@ -239,6 +266,16 @@ describe('needsClusterFreshness', () => {
 	});
 });
 
+describe('needsStructuralDeviation', () => {
+	it('is true only when an enabled group has a structuralDeviation criterion', () => {
+		expect(needsStructuralDeviation([group({ criteria: [{ type: 'structuralDeviation', bucket: 'scattered' }] })])).toBe(true);
+		expect(
+			needsStructuralDeviation([group({ enabled: false, criteria: [{ type: 'structuralDeviation', bucket: 'scattered' }] })]),
+		).toBe(false);
+		expect(needsStructuralDeviation([group({ criteria: [{ type: 'clusterFreshness', bucket: 'stagnant' }] })])).toBe(false);
+	});
+});
+
 describe('describeCriterion', () => {
 	it('describes a tag criterion as its tags, comma-joined', () => {
 		expect(describeCriterion({ type: 'tag', tags: ['#project', '#urgent'] })).toBe('Has any of #project, #urgent');
@@ -271,6 +308,11 @@ describe('describeCriterion', () => {
 	it('describes a clusterFreshness criterion by its bucket', () => {
 		expect(describeCriterion({ type: 'clusterFreshness', bucket: 'stagnant' })).toBe('Activity: inactive area of the vault');
 		expect(describeCriterion({ type: 'clusterFreshness', bucket: 'fresh' })).toBe('Activity: active area of the vault');
+	});
+
+	it('describes a structuralDeviation criterion by its bucket', () => {
+		expect(describeCriterion({ type: 'structuralDeviation', bucket: 'scattered' })).toBe('Structure: linked notes scattered across folders');
+		expect(describeCriterion({ type: 'structuralDeviation', bucket: 'cohesive' })).toBe('Structure: linked notes gathered in one folder');
 	});
 
 	it('describes staleDays/minLinks criteria', () => {

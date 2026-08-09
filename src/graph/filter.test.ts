@@ -10,6 +10,7 @@ function facts(overrides: Partial<NoteFilterFacts> = {}): NoteFilterFacts {
 		tags: [],
 		frontmatter: {},
 		clusterStaleness: null,
+		structuralDeviation: null,
 		mtime: Date.now(),
 		degree: 0,
 		exists: true,

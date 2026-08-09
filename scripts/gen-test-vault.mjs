@@ -21,8 +21,13 @@ const now = Date.now();
 // used to get wiped along with everything else, forcing a manual re-symlink
 // + re-enable after every regeneration - the exact friction the plugin
 // symlinks (see DEVELOPMENT.md) are meant to eliminate.
-rmSync(join(ROOT, NOTES_FOLDER), { recursive: true, force: true });
-rmSync(join(ROOT, 'attachments'), { recursive: true, force: true });
+// 'Areas'/'Archive'/'Inbox' are the deliberately-scattered "Scattered *"
+// cluster's own folders (see the notes array below) - cleaned up here too,
+// same reasoning as NOTES_FOLDER/attachments, so a re-run doesn't leave a
+// stale copy behind if a note's target folder ever changes.
+for (const folder of [NOTES_FOLDER, 'attachments', 'Areas', 'Archive', 'Inbox']) {
+	rmSync(join(ROOT, folder), { recursive: true, force: true });
+}
 mkdirSync(join(ROOT, NOTES_FOLDER), { recursive: true });
 mkdirSync(join(ROOT, 'attachments'), { recursive: true });
 
@@ -32,7 +37,7 @@ function coverSvg() {
 writeFileSync(join(ROOT, 'attachments', 'cover.svg'), coverSvg());
 
 /**
- * @typedef {{ name: string, links?: string[], frontmatter?: Record<string, string | number>, ageDays?: number }} Note
+ * @typedef {{ name: string, links?: string[], frontmatter?: Record<string, string | number>, ageDays?: number, folder?: string }} Note
  * @type {Note[]}
  */
 const notes = [
@@ -99,6 +104,28 @@ const notes = [
 	// WebGL texture (the same real risk the original spike tested, just at
 	// vault scale of 1 instead of ~100).
 	{ name: 'With Cover', links: ['Hub'], frontmatter: { cover: 'attachments/cover.svg' } },
+
+	// GitHub issue #5, "Stagnation-Cluster gegen Ordner-/Tag-Struktur
+	// vergleichen": these 8 notes link each other densely enough to read as
+	// one topic (Louvain should detect them as a single community, same as
+	// any other tightly-linked group here) but are deliberately spread
+	// across 5 different folders - the exact "belongs together by link
+	// topology, lives in 5 different places" case the Diagnostics panel's
+	// "Structural deviation" section and the `structuralDeviation` group
+	// criterion exist to surface (most-common folder "Notes" holds 3/8 =
+	// homogeneity 0.375, i.e. "scattered"). One link back to Hub keeps this
+	// part of the main connected component (so it does NOT also show up as
+	// a new Isolated clusters row) without diluting its own community
+	// identity - the internal linking is dense enough that Louvain still
+	// resolves it as its own neighborhood, not merged into Hub's.
+	{ name: 'Scattered Alpha', folder: 'Notes', links: ['Scattered Beta', 'Scattered Gamma', 'Scattered Delta', 'Hub'] },
+	{ name: 'Scattered Beta', folder: 'Notes', links: ['Scattered Alpha', 'Scattered Gamma', 'Scattered Epsilon'] },
+	{ name: 'Scattered Gamma', folder: 'Notes', links: ['Scattered Alpha', 'Scattered Beta', 'Scattered Zeta'] },
+	{ name: 'Scattered Delta', folder: 'Areas/Work', links: ['Scattered Alpha', 'Scattered Eta'] },
+	{ name: 'Scattered Epsilon', folder: 'Areas/Personal', links: ['Scattered Beta', 'Scattered Theta'] },
+	{ name: 'Scattered Zeta', folder: 'Archive', links: ['Scattered Gamma', 'Scattered Delta'] },
+	{ name: 'Scattered Eta', folder: 'Inbox', links: ['Scattered Delta', 'Scattered Epsilon'] },
+	{ name: 'Scattered Theta', folder: 'Areas/Personal', links: ['Scattered Epsilon', 'Scattered Zeta'] },
 ];
 
 for (const note of notes) {
@@ -108,7 +135,12 @@ for (const note of notes) {
 		note.links?.length ? `## Links\n\n${note.links.map((l) => `[[${l}]]`).join(' ')}\n` : '',
 	].join('');
 
-	const filePath = join(ROOT, NOTES_FOLDER, `${note.name}.md`);
+	// Defaults to NOTES_FOLDER (every other note here) - only the
+	// deliberately-scattered "Scattered *" cluster above sets its own
+	// `folder`, spread across several different ones on purpose.
+	const folder = note.folder ?? NOTES_FOLDER;
+	mkdirSync(join(ROOT, folder), { recursive: true });
+	const filePath = join(ROOT, folder, `${note.name}.md`);
 	writeFileSync(filePath, body);
 
 	if (note.ageDays) {
@@ -127,4 +159,6 @@ console.log('  - Stagnation heatmap: "Old Cluster A/B/C" should be the stalest (
 console.log('  - "With Cover" should render its cover image as the node');
 console.log('  - "Visual encoding...": color by "status" groups Topic A/its details vs. Topic B/its details vs. Topic C; size by "priority" makes Topic A - Detail 2 the largest, notes without a priority (Isolated, Island X/Y, etc.) keep the default size');
 console.log('  - Diagnostics: "Isolated" under Orphans, "Hub -> Nonexistent Note" and "Topic C -> Draft Idea" under Broken links, one "2 notes" row under Isolated clusters ("Show in graph" should highlight Island X/Island Y)');
+console.log('  - Diagnostics: "Structural deviation" should show one "8 notes across 5 folders (most in Notes: 3/8)" row for the "Scattered *" notes - "Show in graph" highlights all 8, spread across Notes/Areas/Work/Areas/Personal/Archive/Inbox; no other row (Old/Medium Age/Topic A/B/C clusters are each all in one folder already)');
+console.log('  - Color & size / Filter: a "Structure" (structuralDeviation) criterion set to "Scattered across folders" should match all 8 "Scattered *" notes and nothing else');
 console.log('  - Ghost nodes: "Nonexistent Note" and "Draft Idea" should render in the graph itself as grayed-out nodes (same size as a real note), not just in the Diagnostics list - click does nothing, hovering Hub/Topic C highlights them as neighbors like any other link');
