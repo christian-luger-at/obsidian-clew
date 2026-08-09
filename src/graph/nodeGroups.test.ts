@@ -1,10 +1,16 @@
 import { describe, it, expect } from 'vitest';
 import {
+	communityColor,
+	DEFAULT_GROUP_COLORS,
 	describeCriterion,
 	evaluateGroups,
 	matchesGroup,
+	needsBetweenness,
 	needsClusterFreshness,
+	needsCommunity,
 	needsContentSearch,
+	needsIsolatedComponent,
+	needsPageRank,
 	needsStructuralDeviation,
 	NodeGroup,
 	NodeGroupFacts,
@@ -19,6 +25,10 @@ function facts(overrides: Partial<NodeGroupFacts> = {}): NodeGroupFacts {
 		frontmatter: {},
 		clusterStaleness: null,
 		structuralDeviation: null,
+		betweenness: null,
+		pageRank: null,
+		isolatedComponent: null,
+		communityId: null,
 		mtime: 0,
 		degree: 0,
 		exists: true,
@@ -137,6 +147,82 @@ describe('matchesGroup', () => {
 			expect(matchesGroup(facts({ structuralDeviation: 0.2 }), g)).toBe(true);
 			expect(matchesGroup(facts({ structuralDeviation: 0.5 }), g)).toBe(false);
 			expect(matchesGroup(facts({ structuralDeviation: null }), g)).toBe(false);
+		});
+	});
+
+	describe('betweenness criterion', () => {
+		it('high bucket matches the top half present (betweenness >= 0.5)', () => {
+			const g = group({ criteria: [{ type: 'betweenness', bucket: 'high' }] });
+			expect(matchesGroup(facts({ betweenness: 0.9 }), g)).toBe(true);
+			expect(matchesGroup(facts({ betweenness: 0.5 }), g)).toBe(true);
+			expect(matchesGroup(facts({ betweenness: 0.4 }), g)).toBe(false);
+			expect(matchesGroup(facts({ betweenness: null }), g)).toBe(false);
+		});
+
+		it('low bucket matches the bottom half present (betweenness < 0.5)', () => {
+			const g = group({ criteria: [{ type: 'betweenness', bucket: 'low' }] });
+			expect(matchesGroup(facts({ betweenness: 0.1 }), g)).toBe(true);
+			expect(matchesGroup(facts({ betweenness: 0.5 }), g)).toBe(false);
+			expect(matchesGroup(facts({ betweenness: null }), g)).toBe(false);
+		});
+	});
+
+	describe('pageRank criterion', () => {
+		it('high bucket matches the top half present (pageRank >= 0.5)', () => {
+			const g = group({ criteria: [{ type: 'pageRank', bucket: 'high' }] });
+			expect(matchesGroup(facts({ pageRank: 0.9 }), g)).toBe(true);
+			expect(matchesGroup(facts({ pageRank: 0.5 }), g)).toBe(true);
+			expect(matchesGroup(facts({ pageRank: 0.4 }), g)).toBe(false);
+			expect(matchesGroup(facts({ pageRank: null }), g)).toBe(false);
+		});
+
+		it('low bucket matches the bottom half present (pageRank < 0.5)', () => {
+			const g = group({ criteria: [{ type: 'pageRank', bucket: 'low' }] });
+			expect(matchesGroup(facts({ pageRank: 0.1 }), g)).toBe(true);
+			expect(matchesGroup(facts({ pageRank: 0.5 }), g)).toBe(false);
+			expect(matchesGroup(facts({ pageRank: null }), g)).toBe(false);
+		});
+	});
+
+	describe('isolatedComponent criterion', () => {
+		it('isolated: true matches notes outside the main component', () => {
+			const g = group({ criteria: [{ type: 'isolatedComponent', isolated: true }] });
+			expect(matchesGroup(facts({ isolatedComponent: true }), g)).toBe(true);
+			expect(matchesGroup(facts({ isolatedComponent: false }), g)).toBe(false);
+			expect(matchesGroup(facts({ isolatedComponent: null }), g)).toBe(false);
+		});
+
+		it('isolated: false matches notes in the main component', () => {
+			const g = group({ criteria: [{ type: 'isolatedComponent', isolated: false }] });
+			expect(matchesGroup(facts({ isolatedComponent: false }), g)).toBe(true);
+			expect(matchesGroup(facts({ isolatedComponent: true }), g)).toBe(false);
+			expect(matchesGroup(facts({ isolatedComponent: null }), g)).toBe(false);
+		});
+	});
+
+	describe('community criterion', () => {
+		it('matches only notes in the exact community id', () => {
+			const g = group({ criteria: [{ type: 'community', communityId: 2 }] });
+			expect(matchesGroup(facts({ communityId: 2 }), g)).toBe(true);
+			expect(matchesGroup(facts({ communityId: 1 }), g)).toBe(false);
+			expect(matchesGroup(facts({ communityId: null }), g)).toBe(false);
+		});
+
+		it('negate matches every other community', () => {
+			const g = group({ criteria: [{ type: 'community', communityId: 2, negate: true }] });
+			expect(matchesGroup(facts({ communityId: 2 }), g)).toBe(false);
+			expect(matchesGroup(facts({ communityId: 1 }), g)).toBe(true);
+			// communityId: null ("not computed") is not affirmatively
+			// community 2 either, so the negated ("is not 2") criterion
+			// still matches it - same "the false-because-unknown case
+			// flips to true under negate" shape the ghost-node guard above
+			// matchesCriterionValue's switch already has for every other
+			// negatable type (e.g. a ghost's empty folder satisfies "Folder
+			// is not Archive"). Unreachable in the live app regardless -
+			// buildCriteriaFacts() only ever leaves a real note's
+			// communityId null when no enabled criterion needs it, which
+			// means this criterion couldn't be enabled either.
+			expect(matchesGroup(facts({ communityId: null }), g)).toBe(true);
 		});
 	});
 
@@ -276,6 +362,56 @@ describe('needsStructuralDeviation', () => {
 	});
 });
 
+describe('needsBetweenness', () => {
+	it('is true only when an enabled group has a betweenness criterion', () => {
+		expect(needsBetweenness([group({ criteria: [{ type: 'betweenness', bucket: 'high' }] })])).toBe(true);
+		expect(needsBetweenness([group({ enabled: false, criteria: [{ type: 'betweenness', bucket: 'high' }] })])).toBe(false);
+		expect(needsBetweenness([group({ criteria: [{ type: 'pageRank', bucket: 'high' }] })])).toBe(false);
+	});
+});
+
+describe('needsPageRank', () => {
+	it('is true only when an enabled group has a pageRank criterion', () => {
+		expect(needsPageRank([group({ criteria: [{ type: 'pageRank', bucket: 'high' }] })])).toBe(true);
+		expect(needsPageRank([group({ enabled: false, criteria: [{ type: 'pageRank', bucket: 'high' }] })])).toBe(false);
+		expect(needsPageRank([group({ criteria: [{ type: 'betweenness', bucket: 'high' }] })])).toBe(false);
+	});
+});
+
+describe('needsIsolatedComponent', () => {
+	it('is true only when an enabled group has an isolatedComponent criterion', () => {
+		expect(needsIsolatedComponent([group({ criteria: [{ type: 'isolatedComponent', isolated: true }] })])).toBe(true);
+		expect(needsIsolatedComponent([group({ enabled: false, criteria: [{ type: 'isolatedComponent', isolated: true }] })])).toBe(
+			false,
+		);
+		expect(needsIsolatedComponent([group({ criteria: [{ type: 'existence', exists: true }] })])).toBe(false);
+	});
+});
+
+describe('needsCommunity', () => {
+	it('is true only when an enabled group has a community criterion', () => {
+		expect(needsCommunity([group({ criteria: [{ type: 'community', communityId: 0 }] })])).toBe(true);
+		expect(needsCommunity([group({ enabled: false, criteria: [{ type: 'community', communityId: 0 }] })])).toBe(false);
+		expect(needsCommunity([group({ criteria: [{ type: 'clusterFreshness', bucket: 'stagnant' }] })])).toBe(false);
+	});
+});
+
+describe('communityColor', () => {
+	it('gives every community id a color from DEFAULT_GROUP_COLORS', () => {
+		expect(communityColor(0)).toBe(DEFAULT_GROUP_COLORS[0]);
+		expect(communityColor(1)).toBe(DEFAULT_GROUP_COLORS[1]);
+	});
+
+	it('cycles back to the start once there are more communities than colors', () => {
+		expect(communityColor(DEFAULT_GROUP_COLORS.length)).toBe(DEFAULT_GROUP_COLORS[0]);
+		expect(communityColor(DEFAULT_GROUP_COLORS.length + 1)).toBe(DEFAULT_GROUP_COLORS[1]);
+	});
+
+	it('is deterministic - the same id always gives the same color', () => {
+		expect(communityColor(3)).toBe(communityColor(3));
+	});
+});
+
 describe('describeCriterion', () => {
 	it('describes a tag criterion as its tags, comma-joined', () => {
 		expect(describeCriterion({ type: 'tag', tags: ['#project', '#urgent'] })).toBe('Has any of #project, #urgent');
@@ -313,6 +449,26 @@ describe('describeCriterion', () => {
 	it('describes a structuralDeviation criterion by its bucket', () => {
 		expect(describeCriterion({ type: 'structuralDeviation', bucket: 'scattered' })).toBe('Structure: linked notes scattered across folders');
 		expect(describeCriterion({ type: 'structuralDeviation', bucket: 'cohesive' })).toBe('Structure: linked notes gathered in one folder');
+	});
+
+	it('describes a betweenness criterion by its bucket', () => {
+		expect(describeCriterion({ type: 'betweenness', bucket: 'high' })).toBe('Bridging: connects otherwise-separate notes');
+		expect(describeCriterion({ type: 'betweenness', bucket: 'low' })).toBe('Bridging: not a bridge note');
+	});
+
+	it('describes a pageRank criterion by its bucket', () => {
+		expect(describeCriterion({ type: 'pageRank', bucket: 'high' })).toBe('Prominence: a prominent note');
+		expect(describeCriterion({ type: 'pageRank', bucket: 'low' })).toBe('Prominence: not a prominent note');
+	});
+
+	it('describes an isolatedComponent criterion by its isolated value', () => {
+		expect(describeCriterion({ type: 'isolatedComponent', isolated: true })).toBe("Connectivity: cut off from the vault's main body");
+		expect(describeCriterion({ type: 'isolatedComponent', isolated: false })).toBe("Connectivity: in the vault's main body");
+	});
+
+	it('describes a community criterion by its 1-based communityId, respecting negate', () => {
+		expect(describeCriterion({ type: 'community', communityId: 0 })).toBe('Community is 1');
+		expect(describeCriterion({ type: 'community', communityId: 2, negate: true })).toBe('Community is not 3');
 	});
 
 	it('describes staleDays/minLinks criteria', () => {

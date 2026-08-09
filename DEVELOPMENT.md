@@ -117,6 +117,7 @@ src/
     layoutModal.ts           # Layout's option data (its panel now lives in graphPane.ts)
     diagnostics.ts           # orphans / broken links / isolated clusters, backing the Diagnostics panel
     egoGraph.ts              # BFS ego-network, backing the Focus panel
+    graphAnalytics.ts        # graphology-metrics wrappers (betweenness, PageRank) + normalizeToUnitRange()
 ```
 
 As the plugin grows, keep `main.ts` limited to lifecycle (load/unload, registering
@@ -151,7 +152,7 @@ npm run test:coverage
 ```
 
 [Vitest](https://vitest.dev). Covers the pure graph-algorithm modules directly
-(`pathfinding.ts`, `stagnation.ts`, `diagnostics.ts`, `egoGraph.ts`), plus `vaultGraph.ts` - the actual
+(`pathfinding.ts`, `stagnation.ts`, `diagnostics.ts`, `egoGraph.ts`, `graphAnalytics.ts`), plus `vaultGraph.ts` - the actual
 node/edge-construction pipeline, exercised
 against realistic fixtures (hub notes, isolated notes, cross-cluster links
 outside the given file set, cover images, directed vs. undirected).
@@ -532,6 +533,47 @@ manual copy step. Then open `test-vault` in Obsidian and check:
   underlying mechanism (neighborhoods of tightly-linked notes, compared
   against the vault's own folders) in one sentence, same treatment as
   "Activity"'s own tooltip below.
+- **Graph-Analytics erweitern** (GitHub backlog item 5 - Bridging/
+  Prominence/Connectivity/Community, four new node-group/filter criteria;
+  `graphAnalytics.ts` wraps the new `graphology-metrics` dependency):
+  - **Bridging** (betweenness centrality): create a group with "Bridging is
+    [High (a bridge note)]" - `Bridge Note` and `Hub` (both sit on real
+    shortest paths between otherwise-separate parts of the vault) should
+    join; leaf notes with only one link (`Topic A - Detail 1`, etc.)
+    should not. Hover the "Bridging" heading for its tooltip.
+  - **Prominence** (PageRank): "Prominence is [High (prominent)]" - `Hub`
+    (linked from the most, and most-varied, other notes) should join;
+    `Isolated`/`Island X`/`Island Y` (no or few links) should not.
+  - **Connectivity** (`isolatedComponent`, backed by the same
+    `findConnectedComponents()` the Diagnostics panel's own "Isolated
+    clusters" section uses): "In an isolated part of the vault" should
+    match `Isolated`, `Island X`, `Island Y`, and every `Scattered *`/`Old
+    Cluster`/`Medium Age` note *if* Louvain still lands them outside the
+    main body (check against what's actually connected to `Hub` in the
+    current vault) - "In the vault's main body" should match the inverse
+    set exactly.
+  - **Community**: create a group with "Community is [1]" (1-based in the
+    UI, 0 = the largest community internally - see
+    `rankCommunitiesBySize()`) - picking a note's own community number
+    should color that whole neighborhood, and *only* that one. Add the
+    criterion via "+ Add" → "Community" and confirm the group's color
+    picker immediately jumps to `communityColor(0)`'s fixed palette entry
+    (`nodeGroups.ts`'s `DEFAULT_GROUP_COLORS[0]`, red) without touching the
+    color picker yourself; change the number field - the color should
+    update to match the new community's own palette entry live, every
+    time, not just once. This is "Community-Färbung mit fester Palette" -
+    entirely through the existing chip system (`CriteriaEditorContext.
+    onCommunityColorSync`), no separate coloring UI.
+  - **Only pay for what's active**: with no enabled group/filter using any
+    of the four, none of `computeBetweenness()`/`computePageRank()`/
+    `findConnectedComponents()`/`detectCommunities()` should run at all
+    (check via a temporary `console.log`/breakpoint in `graphAnalytics.ts`/
+    `buildCriteriaFacts()` if in doubt) - each has its own `needsX()` gate,
+    same pattern as `needsClusterFreshness()`. With *both* `clusterFreshness`
+    and `community` enabled at once, Louvain should still only run once per
+    `buildCriteriaFacts()` call, not twice - the two share one
+    `detectCommunities()` result (see `buildCriteriaFacts()`'s own
+    docstring).
 - **`With Cover`** should render its frontmatter `cover` image as the node,
   not a plain dot.
 - **`Isolated`** (no links at all) should still render with degree 0 and be

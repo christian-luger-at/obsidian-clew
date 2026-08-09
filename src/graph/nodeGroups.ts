@@ -28,6 +28,10 @@ export const MAX_NODE_GROUPS = 10;
 export type GroupCriterionType =
 	| 'clusterFreshness'
 	| 'structuralDeviation'
+	| 'betweenness'
+	| 'pageRank'
+	| 'isolatedComponent'
+	| 'community'
 	| 'text'
 	| 'folder'
 	| 'filename'
@@ -146,7 +150,76 @@ export interface StructuralDeviationCriterion {
 }
 
 /**
- * `& { negate?: boolean }` rather than adding the field to each of the 9
+ * A note's betweenness/PageRank centrality is either in the top half of
+ * what's present ('high') or the bottom half ('low') - GitHub backlog item
+ * 5, "Graph-Analytics erweitern". Same plain two-way-relative-to-what's-
+ * present shape as `StalenessBucket`/`StructuralCohesionBucket` above, not
+ * a raw score - the underlying continuous values (graphAnalytics.ts's
+ * computeBetweenness()/computePageRank(), normalized via
+ * normalizeToUnitRange() the same way stagnation.ts's staleness()
+ * normalizes mtimes) are graph-size-dependent numbers nobody could pick a
+ * meaningful absolute cutoff for. Shared by both criteria below - same
+ * shape, different underlying metric.
+ */
+export type CentralityBucket = 'high' | 'low';
+
+/**
+ * Betweenness centrality - how often a note lies on the shortest path
+ * between two *other* notes, i.e. how much of a structural "bridge" it is
+ * (distinct from `minLinks`: a note can have very few links and still be
+ * the only connection between two otherwise-separate parts of the vault).
+ */
+export interface BetweennessCriterion {
+	type: 'betweenness';
+	bucket: CentralityBucket;
+}
+
+/**
+ * PageRank - how "prominent" a note is, weighted by how prominent its own
+ * linking neighbors are (distinct from `minLinks`/degree: ten links from
+ * ten obscure notes count for less than one link from an already-prominent
+ * hub).
+ */
+export interface PageRankCriterion {
+	type: 'pageRank';
+	bucket: CentralityBucket;
+}
+
+/**
+ * Whether the note's connected component (diagnostics.ts's
+ * findConnectedComponents()) is the vault's single largest one, or one of
+ * the smaller ones cut off from it - the same distinction the Diagnostics
+ * panel's "Isolated clusters" section already surfaces as a list, now
+ * usable to color/size/filter by directly. A plain two-way choice, like
+ * `existence` - a note is either in the main body or it isn't, there's no
+ * partial/graded version of this the way betweenness/PageRank have one.
+ */
+export interface IsolatedComponentCriterion {
+	type: 'isolatedComponent';
+	isolated: boolean;
+}
+
+/**
+ * Matches notes in one specific Louvain community (stagnation.ts's
+ * detectCommunities()), numbered by size - 0 is the largest community
+ * present, 1 the next largest, and so on (raw Louvain community ids are
+ * arbitrary and mean nothing on their own; ranking by size is what makes
+ * "Community 1" a stable, meaningful label across re-runs of the same
+ * graph). `communityColor()` below gives each community id a color from a
+ * fixed palette - GraphPane syncs a Color & size group's own `color` to it
+ * automatically whenever this criterion's `communityId` is picked/changed
+ * (see graphPane.ts's CriteriaEditorContext.onCommunityColorSync), so
+ * "color by community" needs no separate coloring mechanism of its own -
+ * it's just this criterion plus that one sync hook, still entirely inside
+ * the existing group/criteria system (no new UI metaphor).
+ */
+export interface CommunityCriterion {
+	type: 'community';
+	communityId: number;
+}
+
+/**
+ * `& { negate?: boolean }` rather than adding the field to each of the 13
  * interfaces above - an intersection with a union still distributes over
  * it (so `criterion.type` narrowing in the switches below is unaffected),
  * and every criterion type shares the same underlying include/exclude flag
@@ -159,9 +232,13 @@ export interface StructuralDeviationCriterion {
  * renderCriterionEditRow() instead makes the negated/non-negated *wording
  * itself* (see describeCriterion()) the clickable control - no separate
  * toggle/checkbox/dropdown element at all for most types. `property`,
- * `clusterFreshness`, and `structuralDeviation` don't use `negate` (no UI
- * ever sets it for them) - each already offers an equivalent choice via
- * its own operator/bucket.
+ * `clusterFreshness`, `structuralDeviation`, `betweenness`, `pageRank`, and
+ * `isolatedComponent` don't use `negate` (no UI ever sets it for them) -
+ * each already offers an equivalent choice via its own operator/bucket
+ * (`isolatedComponent`'s `isolated` boolean is exactly that kind of
+ * choice, same as `existence`'s `exists`). `community` *does* use it
+ * ("Community 2 is/is not") - unlike the bucket types, there's no
+ * opposite-community dropdown option that would say the same thing.
  * Optional (not required on every literal) so criteria saved before this
  * feature existed still type-check and behave as included (not negated) -
  * see matchesCriterion()'s own handling.
@@ -169,6 +246,10 @@ export interface StructuralDeviationCriterion {
 export type GroupCriterion = (
 	| ClusterFreshnessCriterion
 	| StructuralDeviationCriterion
+	| BetweennessCriterion
+	| PageRankCriterion
+	| IsolatedComponentCriterion
+	| CommunityCriterion
 	| TextCriterion
 	| FolderCriterion
 	| FilenameCriterion
@@ -228,6 +309,14 @@ export interface NodeGroupFacts {
 	clusterStaleness: number | null;
 	/** 0 (community fully consolidated in one folder) to 1 (fully scattered) - `1 - communityHomogeneity()` (stagnation.ts), null if community/folder stats haven't been computed (no enabled group needs them, see needsStructuralDeviation()). Backs the `structuralDeviation` criterion. */
 	structuralDeviation: number | null;
+	/** 0-1, relative to every other note present (graphAnalytics.ts's computeBetweenness() + normalizeToUnitRange()) - null if not computed (no enabled group needs it, see needsBetweenness()). Backs the `betweenness` criterion. */
+	betweenness: number | null;
+	/** 0-1, relative to every other note present (graphAnalytics.ts's computePageRank() + normalizeToUnitRange()) - null if not computed (no enabled group needs it, see needsPageRank()). Backs the `pageRank` criterion. */
+	pageRank: number | null;
+	/** Whether the note's connected component is *not* the vault's largest one (diagnostics.ts's findConnectedComponents()) - null if not computed (no enabled group needs it, see needsIsolatedComponent()). Backs the `isolatedComponent` criterion. */
+	isolatedComponent: boolean | null;
+	/** The note's Louvain community, ranked by size (0 = largest present) - null if not computed (no enabled group needs it, see needsCommunity()). Backs the `community` criterion. */
+	communityId: number | null;
 	/** File modification time (ms since epoch) - backs the `staleDays` criterion, same source as filter.ts's NoteFilterFacts.mtime. */
 	mtime: number;
 	/** Link count (graph.degree()) - backs the `minLinks` criterion, same source as filter.ts's NoteFilterFacts.degree. */
@@ -252,6 +341,20 @@ export const DEFAULT_GROUP_COLORS = [
 	'#64748b',
 	'#84cc16',
 ];
+
+/**
+ * "Community-Färbung mit fester Palette" (GitHub backlog item 5) - every
+ * community id maps to the same color every time (cycling through
+ * DEFAULT_GROUP_COLORS once there are more communities than colors, same
+ * as any other 10+ category value would), so "Community 1 is red" stays
+ * true across sessions instead of depending on creation order the way a
+ * manually-picked group color would. See CommunityCriterion's own
+ * docstring for where this gets applied (GraphPane's
+ * onCommunityColorSync).
+ */
+export function communityColor(communityId: number): string {
+	return DEFAULT_GROUP_COLORS[communityId % DEFAULT_GROUP_COLORS.length]!;
+}
 
 /**
  * One ready-made group, orange, built on the `existence` criterion - user
@@ -299,6 +402,9 @@ const STAGNANT_THRESHOLD = 0.5;
 /** 0.5 is the boundary between "cohesive" and "scattered" - a community whose most common folder holds under half its notes reads as scattered, one where it holds at least half reads as cohesive. See StructuralCohesionBucket's own docstring. */
 const STRUCTURAL_COHESION_THRESHOLD = 0.5;
 
+/** 0.5 is the boundary between the "high" and "low" halves - shared by `betweenness` and `pageRank`, both already normalized relative to what's present (graphAnalytics.ts's normalizeToUnitRange()) the same way clusterStaleness/structuralDeviation are. See CentralityBucket's own docstring. */
+const CENTRALITY_THRESHOLD = 0.5;
+
 /** The raw (pre-negation) match for one criterion - see matchesCriterion() below for the negate wrapper. */
 function matchesCriterionValue(facts: NodeGroupFacts, criterion: GroupCriterion): boolean {
 	// A ghost node's facts are mostly empty/default (mtime: 0, folder: '',
@@ -318,6 +424,17 @@ function matchesCriterionValue(facts: NodeGroupFacts, criterion: GroupCriterion)
 			return criterion.bucket === 'scattered'
 				? facts.structuralDeviation >= STRUCTURAL_COHESION_THRESHOLD
 				: facts.structuralDeviation < STRUCTURAL_COHESION_THRESHOLD;
+		case 'betweenness':
+			if (facts.betweenness === null) return false;
+			return criterion.bucket === 'high' ? facts.betweenness >= CENTRALITY_THRESHOLD : facts.betweenness < CENTRALITY_THRESHOLD;
+		case 'pageRank':
+			if (facts.pageRank === null) return false;
+			return criterion.bucket === 'high' ? facts.pageRank >= CENTRALITY_THRESHOLD : facts.pageRank < CENTRALITY_THRESHOLD;
+		case 'isolatedComponent':
+			if (facts.isolatedComponent === null) return false;
+			return facts.isolatedComponent === criterion.isolated;
+		case 'community':
+			return facts.communityId !== null && facts.communityId === criterion.communityId;
 		case 'text': {
 			const query = criterion.query.trim().toLowerCase();
 			return query !== '' && facts.content.includes(query);
@@ -360,9 +477,9 @@ function matchesCriterionValue(facts: NodeGroupFacts, criterion: GroupCriterion)
  * treats this as "doesn't match" on its own, but negate's `!value` flip
  * below would otherwise turn that into "matches everything" for a
  * half-built criterion the user hasn't finished typing into yet. staleDays/
- * minLinks/clusterFreshness/structuralDeviation are never "unconfigured"
- * (blankCriterion() always gives them a real default), so they're excluded
- * here.
+ * minLinks/clusterFreshness/structuralDeviation/betweenness/pageRank/
+ * isolatedComponent/community are never "unconfigured" (blankCriterion()
+ * always gives them a real default), so they're excluded here.
  */
 function isCriterionUnconfigured(criterion: GroupCriterion): boolean {
 	switch (criterion.type) {
@@ -379,6 +496,10 @@ function isCriterionUnconfigured(criterion: GroupCriterion): boolean {
 			return criterion.value.trim() === '';
 		case 'clusterFreshness':
 		case 'structuralDeviation':
+		case 'betweenness':
+		case 'pageRank':
+		case 'isolatedComponent':
+		case 'community':
 		case 'staleDays':
 		case 'minLinks':
 		case 'existence':
@@ -445,6 +566,26 @@ export function needsStructuralDeviation(owners: CriteriaOwner[]): boolean {
 	return owners.some((o) => o.enabled && o.criteria.some((c) => c.type === 'structuralDeviation'));
 }
 
+/** Whether any enabled group/preset has at least one `betweenness` criterion - GraphPane only pays for betweenness centrality (graphAnalytics.ts, the most expensive of the four backlog-item-5 metrics) when this is true. */
+export function needsBetweenness(owners: CriteriaOwner[]): boolean {
+	return owners.some((o) => o.enabled && o.criteria.some((c) => c.type === 'betweenness'));
+}
+
+/** Whether any enabled group/preset has at least one `pageRank` criterion - GraphPane only pays for PageRank (graphAnalytics.ts) when this is true. */
+export function needsPageRank(owners: CriteriaOwner[]): boolean {
+	return owners.some((o) => o.enabled && o.criteria.some((c) => c.type === 'pageRank'));
+}
+
+/** Whether any enabled group/preset has at least one `isolatedComponent` criterion - GraphPane only pays for the connected-components pass (diagnostics.ts's findConnectedComponents()) when this is true. */
+export function needsIsolatedComponent(owners: CriteriaOwner[]): boolean {
+	return owners.some((o) => o.enabled && o.criteria.some((c) => c.type === 'isolatedComponent'));
+}
+
+/** Whether any enabled group/preset has at least one `community` criterion - GraphPane only pays for Louvain community detection when this is true (same "own gate" reasoning as needsStructuralDeviation() - a vault using only `community`, not `clusterFreshness`/`structuralDeviation`, shouldn't also pay for either of those). Communities are still detected once and shared across all three when more than one is active - see GraphPane's buildCriteriaFacts(). */
+export function needsCommunity(owners: CriteriaOwner[]): boolean {
+	return owners.some((o) => o.enabled && o.criteria.some((c) => c.type === 'community'));
+}
+
 const STRING_OPERATOR_LABELS: Record<StringOperator, string> = {
 	contains: 'contains',
 	equals: 'equals',
@@ -495,6 +636,14 @@ export function describeCriterion(criterion: GroupCriterion): string {
 			return criterion.bucket === 'scattered'
 				? 'Structure: linked notes scattered across folders'
 				: 'Structure: linked notes gathered in one folder';
+		case 'betweenness':
+			return criterion.bucket === 'high' ? 'Bridging: connects otherwise-separate notes' : 'Bridging: not a bridge note';
+		case 'pageRank':
+			return criterion.bucket === 'high' ? 'Prominence: a prominent note' : 'Prominence: not a prominent note';
+		case 'isolatedComponent':
+			return criterion.isolated ? "Connectivity: cut off from the vault's main body" : "Connectivity: in the vault's main body";
+		case 'community':
+			return `Community ${negate ? 'is not' : 'is'} ${criterion.communityId + 1}`;
 		case 'staleDays':
 			return `${negate ? 'Less than' : 'At least'} ${criterion.days} days ago`;
 		case 'minLinks':

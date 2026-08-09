@@ -9,8 +9,9 @@ import { runHierarchicalLayout, HIERARCHICAL_LAYOUT_NODE_LIMIT } from './hierarc
 import { computeRadialLayout } from './radialLayout';
 import { computeCircularLayout } from './circularLayout';
 import { basename, findPaths, PathResult } from './pathfinding';
-import { findOrphans, findBrokenLinks, findIsolatedClusters } from './diagnostics';
+import { findOrphans, findBrokenLinks, findIsolatedClusters, findConnectedComponents } from './diagnostics';
 import { computeEgoSubgraph } from './egoGraph';
+import { computeBetweenness, computePageRank, normalizeToUnitRange } from './graphAnalytics';
 import { NoteSuggest } from './noteSuggest';
 
 import { RadialLayoutModal } from './radialLayoutModal';
@@ -20,6 +21,8 @@ import { communityHomogeneity, computeCommunityStats, detectCommunities, stalene
 import { readThemeColors, ThemeColors, blendToward } from './theme';
 import { DEFAULT_FILTER_PRESETS, evaluateFilters, FilterCombineMode, FilterPreset, isAnyFilterEnabled, MAX_FILTER_PRESETS } from './filter';
 import {
+	CentralityBucket,
+	communityColor,
 	CriteriaOwner,
 	DEFAULT_GROUP_COLORS,
 	DEFAULT_NODE_GROUPS,
@@ -28,8 +31,12 @@ import {
 	GroupCriterion,
 	GroupCriterionType,
 	MAX_NODE_GROUPS,
+	needsBetweenness,
 	needsClusterFreshness,
+	needsCommunity,
 	needsContentSearch,
+	needsIsolatedComponent,
+	needsPageRank,
 	needsStructuralDeviation,
 	NodeGroup,
 	NodeGroupFacts,
@@ -143,6 +150,22 @@ const CRITERION_TYPE_LABELS: Record<GroupCriterionType, string> = {
 	// vs. inactive), not "Cohesion"/"Homogeneity" (the underlying jargon -
 	// see StructuralCohesionBucket's own docstring in nodeGroups.ts).
 	structuralDeviation: 'Structure',
+	// GitHub backlog item 5, "Graph-Analytics erweitern": "Bridging" names
+	// what betweenness centrality actually measures (does this note
+	// connect two otherwise-separate parts of the vault) rather than the
+	// metric's own name, same "name the axis, not the algorithm"
+	// reasoning as Activity/Structure above.
+	betweenness: 'Bridging',
+	// "Prominence" for the same reason - PageRank itself means nothing to
+	// someone editing notes, "how prominent/well-connected is this note,
+	// weighted by how prominent its own neighbors are" does.
+	pageRank: 'Prominence',
+	// "Connectivity" - whether the note's component is the vault's main
+	// one or a smaller, cut-off one (the same question Diagnostics'
+	// "Isolated clusters" section answers as a list, here usable to
+	// color/size/filter by directly).
+	isolatedComponent: 'Connectivity',
+	community: 'Community',
 	// Not "Not edited at least"/"Minimum number of links" any more - those
 	// phrases now live in the controls themselves as the clickable
 	// include/exclude word (renderCriterionEditRow()'s staleDays/minLinks
@@ -208,6 +231,18 @@ interface CriteriaEditorContext {
 	rerenderPanel(): void;
 	/** id of the `folder` criterion's `<datalist>` of suggestions - each panel renders its own (see renderColorAndSizePanel()/renderFilterPanel()) so two floating panels open at once never share a DOM id. */
 	folderDatalistId: string;
+	/**
+	 * "Community-Färbung mit fester Palette" (GitHub backlog item 5) -
+	 * called whenever a `community` criterion is added or its
+	 * `communityId` changes, so the owning object can sync its own display
+	 * color to nodeGroups.ts's communityColor(communityId). Only
+	 * groupCriteriaContext() (a NodeGroup has a `color` to sync) provides
+	 * this - filterCriteriaContext() leaves it absent, since a FilterPreset
+	 * has no color of its own. Still just a suggested/starting color, not a
+	 * lock - the group's own color picker stays live afterward, same as
+	 * any other group.
+	 */
+	onCommunityColorSync?(communityId: number): void;
 }
 
 /** Debounces the expensive part of an appearance slider's onChange (disk write + live re-render/re-layout) - a slider fires on every 'input' tick while dragging, and persisting + restarting ForceAtlas2 on every single tick would both spam disk writes and make the graph flicker instead of tuning smoothly. */
@@ -2543,13 +2578,18 @@ export class GraphPane {
 	 * - shared by paintVisualEncoding() (Color & size) and applyFilter()
 	 * (Filter), since both now match the exact same GroupCriterion shapes
 	 * against the exact same facts (see filter.ts's docstring). `content`,
-	 * `clusterStaleness`, and `structuralDeviation` are the facts real
-	 * I/O/computation backs - all three stay at their empty/null default
-	 * unless a group or filter actually needs them (see nodeGroups.ts's
-	 * needsContentSearch()/needsClusterFreshness()/needsStructuralDeviation()
-	 * and this file's allCriteriaOwners()), so a vault with none of
-	 * `text`/`clusterFreshness`/`structuralDeviation` criteria in use never
-	 * pays for any of them.
+	 * `clusterStaleness`, `structuralDeviation`, `betweenness`, `pageRank`,
+	 * `isolatedComponent`, and `communityId` are the facts real
+	 * I/O/computation backs - each stays at its empty/null default unless a
+	 * group or filter actually needs it (see nodeGroups.ts's needsX()
+	 * family and this file's allCriteriaOwners()), so a vault using none of
+	 * them never pays for any.
+	 *
+	 * `clusterFreshness`/`structuralDeviation`/`community` all need the
+	 * same underlying Louvain communities (stagnation.ts's
+	 * detectCommunities()) - computed at most once here, shared across
+	 * whichever of the three are actually active, rather than running
+	 * Louvain up to three times over the same graph in one call.
 	 *
 	 * Also emits one fact entry per ghost node (vaultGraph.ts's `kind:
 	 * 'ghost'`, see addGhostNodes()) - `exists: false` and otherwise mostly
@@ -2564,8 +2604,16 @@ export class GraphPane {
 	 */
 	private buildCriteriaFacts(): Map<string, NodeGroupFacts> {
 		const owners = this.allCriteriaOwners();
-		const clusterStalenessByNode = needsClusterFreshness(owners) ? this.computeClusterStaleness() : null;
-		const structuralDeviationByNode = needsStructuralDeviation(owners) ? this.computeStructuralDeviation() : null;
+		const needsLouvain = needsClusterFreshness(owners) || needsStructuralDeviation(owners) || needsCommunity(owners);
+		const communities = needsLouvain && this.graph ? detectCommunities(this.graph) : null;
+		const clusterStalenessByNode = communities && needsClusterFreshness(owners) ? this.computeClusterStaleness(communities) : null;
+		const structuralDeviationByNode =
+			communities && needsStructuralDeviation(owners) ? this.computeStructuralDeviation(communities) : null;
+		const communityRankByNode = communities && needsCommunity(owners) ? this.rankCommunitiesBySize(communities) : null;
+		const betweennessByNode = needsBetweenness(owners) ? this.computeNormalizedBetweenness() : null;
+		const pageRankByNode = needsPageRank(owners) ? this.computeNormalizedPageRank() : null;
+		const isolatedComponentByNode = needsIsolatedComponent(owners) ? this.computeIsolatedComponent() : null;
+
 		const result = new Map<string, NodeGroupFacts>();
 		for (const file of this.files) {
 			const cache = this.app.metadataCache.getFileCache(file);
@@ -2578,6 +2626,10 @@ export class GraphPane {
 				frontmatter: cache?.frontmatter ?? {},
 				clusterStaleness: clusterStalenessByNode?.get(file.path) ?? null,
 				structuralDeviation: structuralDeviationByNode?.get(file.path) ?? null,
+				betweenness: betweennessByNode?.get(file.path) ?? null,
+				pageRank: pageRankByNode?.get(file.path) ?? null,
+				isolatedComponent: isolatedComponentByNode?.get(file.path) ?? null,
+				communityId: communityRankByNode?.get(file.path) ?? null,
 				mtime: this.mtimeByPath.get(file.path) ?? file.stat.mtime,
 				degree: this.graph?.degree(file.path) ?? 0,
 				exists: true,
@@ -2593,6 +2645,10 @@ export class GraphPane {
 				frontmatter: {},
 				clusterStaleness: null,
 				structuralDeviation: null,
+				betweenness: null,
+				pageRank: null,
+				isolatedComponent: null,
+				communityId: null,
 				mtime: 0,
 				degree: this.graph?.degree(node) ?? 0,
 				exists: false,
@@ -2601,10 +2657,8 @@ export class GraphPane {
 		return result;
 	}
 
-	/** Louvain communities (stagnation.ts) turned into a 0-1 staleness value per node, relative to every other community present - backs the `clusterFreshness` group criterion. Only called when at least one enabled group actually uses it (needsClusterFreshness()) - Louvain detection is a real per-open computational cost, not worth paying unconditionally. */
-	private computeClusterStaleness(): Map<string, number> {
-		if (!this.graph) return new Map();
-		const communities = detectCommunities(this.graph);
+	/** Louvain communities turned into a 0-1 staleness value per node, relative to every other community present - backs the `clusterFreshness` group criterion. `communities` is precomputed by buildCriteriaFacts() (shared with structuralDeviation/community when more than one is active) - see its own docstring. */
+	private computeClusterStaleness(communities: Map<string, number>): Map<string, number> {
 		const stats = computeCommunityStats(communities, (nodeId) => this.mtimeByPath.get(nodeId) ?? 0);
 		const newestValues = stats.map((s) => s.newestMtime);
 		const minNewest = Math.min(...newestValues);
@@ -2619,18 +2673,18 @@ export class GraphPane {
 	}
 
 	/**
-	 * Louvain communities (stagnation.ts) turned into a 0-1 "how scattered
-	 * across folders" value per node (1 - communityHomogeneity()) - backs
-	 * the `structuralDeviation` group criterion, and shared by
+	 * Louvain communities turned into a 0-1 "how scattered across folders"
+	 * value per node (1 - communityHomogeneity()) - backs the
+	 * `structuralDeviation` group criterion, and shared by
 	 * renderStructuralDeviationSection() (Diagnostics panel) for the same
 	 * underlying question asked a different way ("which communities" vs.
-	 * "does this note belong to a scattered one"). GitHub issue #5. Only
-	 * called when at least one enabled group/filter actually uses the
-	 * criterion (needsStructuralDeviation()) - Louvain detection is a real
-	 * per-open computational cost, not worth paying unconditionally (the
-	 * Diagnostics section runs its own separate detectCommunities() call
-	 * when its own setting is on, same "only pay when something's actually
-	 * showing it" reasoning as findIsolatedClusters() etc.).
+	 * "does this note belong to a scattered one"). GitHub issue #5.
+	 * `communities` is precomputed by buildCriteriaFacts() (shared with
+	 * clusterFreshness/community when more than one is active) - the
+	 * Diagnostics section still runs its own separate detectCommunities()
+	 * call, since it's computed independently of any group/filter being
+	 * active at all (same "only pay when something's actually showing it"
+	 * reasoning as findIsolatedClusters() etc.).
 	 *
 	 * Ghost nodes (vaultGraph.ts's `kind: 'ghost'`) are excluded from every
 	 * community's folder tally - they have no real folder of their own (see
@@ -2639,9 +2693,7 @@ export class GraphPane {
 	 * containing an unresolved link, not because of anything about where
 	 * its *real* notes actually live.
 	 */
-	private computeStructuralDeviation(): Map<string, number> {
-		if (!this.graph) return new Map();
-		const communities = detectCommunities(this.graph);
+	private computeStructuralDeviation(communities: Map<string, number>): Map<string, number> {
 		const folderByPath = this.folderByPath();
 
 		const byCommunity = new Map<number, string[]>();
@@ -2661,6 +2713,54 @@ export class GraphPane {
 			const value = deviationByCommunity.get(communityId);
 			if (value !== undefined) result.set(node, value);
 		}
+		return result;
+	}
+
+	/**
+	 * Raw Louvain community ids (stagnation.ts's detectCommunities()) are
+	 * arbitrary and mean nothing on their own - this re-numbers them by
+	 * size instead, 0 = the largest community present, so "Community 1" (the
+	 * `community` criterion's own 1-based UI label) is a stable, meaningful
+	 * choice rather than an implementation detail of Louvain's own internal
+	 * bookkeeping. Ghost nodes keep whatever rank their community lands at
+	 * (they're excluded from `structuralDeviation`'s own tally, but there's
+	 * no equivalent reason to exclude them here - a `community` criterion
+	 * targeting "Community 3" should still match a ghost node genuinely in
+	 * that community, same as any other criterion type would once a real
+	 * node qualifies it).
+	 */
+	private rankCommunitiesBySize(communities: Map<string, number>): Map<string, number> {
+		const sizeByCommunity = new Map<number, number>();
+		for (const communityId of communities.values()) {
+			sizeByCommunity.set(communityId, (sizeByCommunity.get(communityId) ?? 0) + 1);
+		}
+		const rankedIds = [...sizeByCommunity.keys()].sort((a, b) => sizeByCommunity.get(b)! - sizeByCommunity.get(a)!);
+		const rankByCommunityId = new Map(rankedIds.map((id, rank) => [id, rank]));
+		const result = new Map<string, number>();
+		for (const [node, communityId] of communities) result.set(node, rankByCommunityId.get(communityId)!);
+		return result;
+	}
+
+	/** graphAnalytics.ts's computeBetweenness(), normalized relative to every other node present - backs the `betweenness` group criterion. */
+	private computeNormalizedBetweenness(): Map<string, number> {
+		if (!this.graph) return new Map();
+		return normalizeToUnitRange(computeBetweenness(this.graph));
+	}
+
+	/** graphAnalytics.ts's computePageRank(), normalized relative to every other node present - backs the `pageRank` group criterion. */
+	private computeNormalizedPageRank(): Map<string, number> {
+		if (!this.graph) return new Map();
+		return normalizeToUnitRange(computePageRank(this.graph));
+	}
+
+	/** diagnostics.ts's findConnectedComponents(), turned into "is this node in the vault's single largest component, or a smaller one" per node - backs the `isolatedComponent` group criterion. The largest component (index 0, same convention as findIsolatedClusters()) is the only one that counts as "not isolated" - everything else, orphans included, is `true`. */
+	private computeIsolatedComponent(): Map<string, boolean> {
+		if (!this.graph) return new Map();
+		const components = findConnectedComponents(this.graph);
+		const result = new Map<string, boolean>();
+		components.forEach((component, index) => {
+			for (const node of component) result.set(node, index !== 0);
+		});
 		return result;
 	}
 
@@ -4072,6 +4172,23 @@ export class GraphPane {
 			// defaulting to missing notes.
 			case 'structuralDeviation':
 				return { type, bucket: 'scattered' };
+			// 'high' - the useful starting point for both is almost always
+			// "find the bridge/prominent notes", not their absence.
+			case 'betweenness':
+			case 'pageRank':
+				return { type, bucket: 'high' };
+			// Same reasoning as `existence`/`structuralDeviation` above -
+			// the unusual case (cut off from the main body) is the more
+			// useful starting point than "in the main body", which is
+			// already every note's default state with no criterion at all.
+			case 'isolatedComponent':
+				return { type, isolated: true };
+			// 0 - the largest community present, ranked by size (see
+			// GraphPane's rankCommunitiesBySize()) so this is always a
+			// meaningful starting point regardless of Louvain's own
+			// (arbitrary) internal numbering.
+			case 'community':
+				return { type, communityId: 0 };
 			case 'text':
 				return { type, query: '' };
 			case 'folder':
@@ -4114,6 +4231,9 @@ export class GraphPane {
 			},
 			rerenderPanel: () => this.renderColorAndSizePanel(),
 			folderDatalistId: 'clew-color-size-folders',
+			onCommunityColorSync: (communityId) => {
+				group.color = communityColor(communityId);
+			},
 		};
 	}
 
@@ -4132,7 +4252,16 @@ export class GraphPane {
 		const addOption = (type: GroupCriterionType, label: string): void => {
 			menu.addItem((item) =>
 				item.setTitle(label).onClick(() => {
-					ctx.criteria.push(this.blankCriterion(type));
+					const criterion = this.blankCriterion(type);
+					ctx.criteria.push(criterion);
+					// Community-Färbung mit fester Palette (GitHub backlog
+					// item 5) - syncs a NodeGroup's own color to the newly-
+					// added criterion's community right away, same as it
+					// does whenever the community number is changed later
+					// (see renderCriterionEditRow()'s 'community' case). A
+					// no-op for Filter (filterCriteriaContext() leaves this
+					// hook unset - a FilterPreset has no color of its own).
+					if (criterion.type === 'community') ctx.onCommunityColorSync?.(criterion.communityId);
 					// Opens straight into its expanded controls rather than
 					// showing as an unconfigured chip first - it needs setting
 					// up right away, and there's nothing useful a collapsed
@@ -4158,6 +4287,10 @@ export class GraphPane {
 		addOption('staleDays', 'Not edited at least (days)');
 		addOption('clusterFreshness', 'Activity');
 		addOption('structuralDeviation', 'Structure (folders vs. links)');
+		addOption('betweenness', 'Bridging (betweenness centrality)');
+		addOption('pageRank', 'Prominence (PageRank)');
+		addOption('isolatedComponent', "Connectivity (cut off from the vault's main body)");
+		addOption('community', 'Community');
 		addOption('minLinks', 'Minimum number of links');
 		addOption('existence', 'Existence (real vs. missing note)');
 		menu.showAtMouseEvent(evt);
@@ -4352,6 +4485,24 @@ export class GraphPane {
 				"Notes are grouped into tightly-linked neighborhoods, then compared against the vault's own folders - a neighborhood counts as scattered once less than half its notes share one folder.",
 			);
 		}
+		if (criterion.type === 'betweenness') {
+			setTooltip(
+				typeBadgeEl,
+				'How often this note lies on the shortest link-path between two other notes - a high value means removing it would cut two parts of the vault apart.',
+			);
+		}
+		if (criterion.type === 'pageRank') {
+			setTooltip(
+				typeBadgeEl,
+				"How prominent this note is, weighted by how prominent its own linking neighbors are - not just raw link count (that's Links, below).",
+			);
+		}
+		if (criterion.type === 'community') {
+			setTooltip(
+				typeBadgeEl,
+				'Notes are grouped into tightly-linked neighborhoods, numbered by size (1 = the largest) - same grouping Activity/Structure use, picked out one neighborhood at a time here instead of compared by recency/folders.',
+			);
+		}
 
 		switch (criterion.type) {
 			case 'tag':
@@ -4452,6 +4603,65 @@ export class GraphPane {
 						applyLive();
 					});
 				break;
+			case 'betweenness':
+				// No negate word - same reasoning as clusterFreshness/
+				// structuralDeviation above, the bucket dropdown already
+				// offers the opposite choice directly.
+				controlsEl.createSpan({ cls: 'clew-criterion-label', text: 'Bridging is' });
+				new DropdownComponent(controlsEl)
+					.addOption('high', 'High (a bridge note)')
+					.addOption('low', 'Low (not a bridge note)')
+					.setValue(criterion.bucket)
+					.onChange((value) => {
+						criterion.bucket = value as CentralityBucket;
+						applyLive();
+					});
+				break;
+			case 'pageRank':
+				controlsEl.createSpan({ cls: 'clew-criterion-label', text: 'Prominence is' });
+				new DropdownComponent(controlsEl)
+					.addOption('high', 'High (prominent)')
+					.addOption('low', 'Low (not prominent)')
+					.setValue(criterion.bucket)
+					.onChange((value) => {
+						criterion.bucket = value as CentralityBucket;
+						applyLive();
+					});
+				break;
+			case 'isolatedComponent':
+				// No negate word (like existence above) - the dropdown
+				// already offers an equivalent either/or choice.
+				new DropdownComponent(controlsEl)
+					.addOption('main', "In the vault's main body")
+					.addOption('isolated', 'In an isolated part of the vault')
+					.setValue(criterion.isolated ? 'isolated' : 'main')
+					.onChange((value) => {
+						criterion.isolated = value === 'isolated';
+						applyLive();
+					});
+				break;
+			case 'community': {
+				controlsEl.createSpan({ cls: 'clew-criterion-label', text: 'Community' });
+				this.renderNegateWord(controlsEl, criterion, { include: 'is', exclude: 'is not' }, applyLive);
+				// 1-based in the UI ("Community 1" = the largest present) -
+				// communityId itself stays 0-based internally, same
+				// convention as GraphPane's rankCommunitiesBySize().
+				const input = new TextComponent(controlsEl).setValue(String(criterion.communityId + 1));
+				input.inputEl.type = 'number';
+				input.inputEl.min = '1';
+				input.onChange((value) => {
+					const oneBased = parsePositiveInt(value) ?? 1;
+					criterion.communityId = Math.max(0, oneBased - 1);
+					// Community-Färbung mit fester Palette - keeps the
+					// group's own color in sync with whichever community
+					// number is currently picked, see
+					// CriteriaEditorContext.onCommunityColorSync's own
+					// docstring.
+					ctx.onCommunityColorSync?.(criterion.communityId);
+					applyLive();
+				});
+				break;
+			}
 			case 'staleDays': {
 				this.renderNegateWord(controlsEl, criterion, { include: 'At least', exclude: 'Less than' }, applyLive);
 				const input = new TextComponent(controlsEl).setValue(String(criterion.days));

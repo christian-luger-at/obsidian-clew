@@ -34,6 +34,7 @@ export default defineConfig({
 				'src/graph/circularLayout.ts',
 				'src/graph/diagnostics.ts',
 				'src/graph/egoGraph.ts',
+				'src/graph/graphAnalytics.ts',
 			],
 			reporter: ['text', 'json-summary'],
 			// Mirrors obsidian-focus-first's thresholds: per-file so no single
