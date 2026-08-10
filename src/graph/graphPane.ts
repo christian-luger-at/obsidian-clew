@@ -178,25 +178,37 @@ const CRITERION_TYPE_LABELS: Record<GroupCriterionType, string> = {
 };
 
 /**
- * Whether `id` belongs to filter.ts's DEFAULT_FILTER_PRESETS/nodeGroups.ts's
- * DEFAULT_NODE_GROUPS - user feedback: "diese Einträge dürfen vom Benutzer
- * nicht gelöscht werden [...] und auch nicht editierbar". renderFilterRow()/
- * renderGroupRow() use these to skip rendering the pencil (edit) *and*
- * trash icon entirely for a default row, rather than rendering either and
- * having toggleEditingFilter()/deleteFilter() (or their group equivalents)
- * silently refuse - an absent control reads as "this isn't something you
- * change," a present but non-functional one would just read as broken. The
- * row's own enabled toggle is untouched by this (still there, still live) -
- * "not editable" means its name/color/criteria are fixed, not that it can't
- * be switched on/off like any other filter/group. The only way to remove
- * one at all is Settings → Community plugins → Clew (settingsTab.ts's
- * showDefaultFilters/showDefaultColorGroups toggles, applied via
- * ClewPlugin.syncDefaultPresets()).
+ * Whether `id` belongs to filter.ts's DEFAULT_FILTER_PRESETS - user
+ * feedback: "diese Einträge dürfen vom Benutzer nicht gelöscht werden
+ * [...] und auch nicht editierbar". renderFilterRow() uses this to skip
+ * rendering the pencil (edit) *and* trash icon entirely for a default
+ * filter row, rather than rendering either and having
+ * toggleEditingFilter()/deleteFilter() silently refuse - an absent control
+ * reads as "this isn't something you change," a present but
+ * non-functional one would just read as broken. The row's own enabled
+ * toggle is untouched by this (still there, still live) - "not editable"
+ * means its name/criteria are fixed, not that it can't be switched on/off
+ * like any other filter. The only way to remove one at all is Settings →
+ * Community plugins → Clew (settingsTab.ts's showDefaultFilters toggle,
+ * applied via ClewPlugin.syncDefaultPresets()).
  */
 function isDefaultFilterId(id: string): boolean {
 	return DEFAULT_FILTER_PRESETS.some((preset) => preset.id === id);
 }
 
+/**
+ * Whether `id` belongs to nodeGroups.ts's DEFAULT_NODE_GROUPS - unlike
+ * isDefaultFilterId() above, a default *group* isn't fully locked any
+ * more: user feedback narrowed the original "nicht editierbar" rule
+ * specifically to color and size ("Bei Standard-Einträgen: Farbe und
+ * Grösse änderbar"), so renderGroupRow() still renders its pencil (opens
+ * renderGroupEditForm(), which itself hides the name field and the whole
+ * criteria section for a default group - see its own isDefault branch) but
+ * keeps the trash hidden, same "an absent control reads as fixed" reasoning
+ * as the filter case for deletion specifically. The only way to remove one
+ * at all is still Settings → Community plugins → Clew (settingsTab.ts's
+ * showDefaultColorGroups toggle, applied via ClewPlugin.syncDefaultPresets()).
+ */
 function isDefaultGroupId(id: string): boolean {
 	return DEFAULT_NODE_GROUPS.some((group) => group.id === id);
 }
@@ -4050,8 +4062,16 @@ export class GraphPane {
 		row.createSpan({ cls: 'clew-group-swatch' }).style.backgroundColor = group.color;
 		row.createSpan({ cls: 'clew-group-name', text: group.name });
 
+		// Default groups (nodeGroups.ts's DEFAULT_NODE_GROUPS) get the pencil
+		// too now - user feedback: their color and size should be changeable
+		// like any other group's, just not their name or criteria (that's
+		// what makes it "Non-existing notes" rather than an arbitrary group -
+		// see renderGroupEditForm()'s own isDefaultGroupId branch for what
+		// stays locked). Only the trash stays hidden - deleting one is still
+		// only possible via Settings' showDefaultColorGroups toggle, same as
+		// before.
+		new ExtraButtonComponent(row).setIcon('pencil').setTooltip('Edit').onClick(() => this.toggleEditingGroup(group.id));
 		if (!isDefaultGroupId(group.id)) {
-			new ExtraButtonComponent(row).setIcon('pencil').setTooltip('Edit').onClick(() => this.toggleEditingGroup(group.id));
 			new ExtraButtonComponent(row).setIcon('trash').setTooltip('Delete').onClick(() => this.deleteGroup(group.id));
 		}
 
@@ -4306,6 +4326,8 @@ export class GraphPane {
 	 * commit or discard by then.
 	 */
 	private renderGroupEditForm(group: NodeGroup): void {
+		const isDefault = isDefaultGroupId(group.id);
+
 		// 'clew-group-edit-flat' in addition to the shared 'clew-group-edit'
 		// (still used as-is by Filter's own renderFilterEditForm()) - this
 		// form dropped its "Group"/"Criteria" Setting headings (flattened,
@@ -4329,11 +4351,19 @@ export class GraphPane {
 			this.debouncedSaveNodeGroups();
 			this.applyNodeGroups();
 		});
-		new TextComponent(nameRowEl).setValue(group.name).onChange((value) => {
-			group.name = value;
-			this.debouncedSaveNodeGroups();
-			this.applyNodeGroups();
-		});
+		// A default group's (nodeGroups.ts's DEFAULT_NODE_GROUPS) name stays a
+		// static label, not a TextComponent - user feedback: color and size
+		// should be changeable for these, name and criteria (what actually
+		// makes it "Non-existing notes") should not, same as the criteria
+		// section skipped entirely below.
+		if (isDefault) nameRowEl.createSpan({ cls: 'clew-group-name', text: group.name });
+		else {
+			new TextComponent(nameRowEl).setValue(group.name).onChange((value) => {
+				group.name = value;
+				this.debouncedSaveNodeGroups();
+				this.applyNodeGroups();
+			});
+		}
 		const optionsButton = new ExtraButtonComponent(nameRowEl).setIcon('more-vertical').setTooltip('More options');
 		optionsButton.onClick(() => this.openGroupOptionsMenu(optionsButton.extraSettingsEl, group));
 		new ExtraButtonComponent(nameRowEl).setIcon('x').setTooltip('Close').onClick(() => this.toggleEditingGroup(group.id));
@@ -4355,6 +4385,12 @@ export class GraphPane {
 					}),
 			);
 		}
+
+		// A default group's criteria are fixed (they're what makes it that
+		// specific ready-made group, e.g. `existence: false` for "Non-existing
+		// notes") - no criteria list, no "+ add", nothing left to edit here
+		// once color/size are covered above.
+		if (isDefault) return;
 
 		// No "Criteria" heading/description any more (removed on feedback,
 		// same flattening as above) - AND-across-everything still isn't

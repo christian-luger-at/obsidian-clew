@@ -25,3 +25,7 @@ Pick the **Community** criterion and Clew syncs the group's own color to that co
 Groups have a priority order - drag a group's handle to reorder the list. The **first** enabled group (in that order) whose criteria a note matches wins; a note can only be one color, so this is what decides ties. Order-across-groups is effectively "OR" for free: create a second group with different criteria and a different color to color two different kinds of notes at once.
 
 A group with no criteria yet - or a note that matches no enabled group at all - falls back to the graph's default color and size.
+
+## The ready-made "Non-existing notes" group
+
+Turned on under **Settings → Community plugins → Clew → "Default color group"**, this ships with a fixed criterion (Existence: nonexistent notes) that can't be changed or removed - but its color and "Scale size" multiplier are editable just like any group you create yourself, and persist the same way. Its name is fixed too, so it stays identifiable as the built-in one.
