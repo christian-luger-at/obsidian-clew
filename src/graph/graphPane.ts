@@ -731,7 +731,7 @@ export class GraphPane {
 	 * tracks whether the *panel is open* (same convention as Appearance's
 	 * own button - toggleAppearancePanel()), not whether anything is
 	 * "enabled" - there's no persisted on/off state a saved view has on its
-	 * own, only "currently applied" (see viewMatchesCurrentState()).
+	 * own, only "currently applied" (see appliedViewId's own docstring).
 	 */
 	private readonly viewsButton: HTMLButtonElement;
 	private readonly viewsPanelEl: HTMLElement;
@@ -740,6 +740,27 @@ export class GraphPane {
 	private viewsListContainerEl!: HTMLElement;
 	/** id of the saved view currently expanded into its rename form - null when every view is shown collapsed. Same role as editingFilterId, minus any criteria (a saved view has nothing else to edit - updateSavedView() is how its captured state changes). */
 	private editingViewId: string | null = null;
+	/**
+	 * id of the saved view GraphPane is "currently in" - the one last
+	 * applied (applySavedView()) or just created from the live state
+	 * (finishSavingCurrentView()); null once nothing's been applied/saved
+	 * this session, or once its view was deleted. Deliberately a stateful
+	 * pointer, not "whichever saved view happens to still exactly match the
+	 * live state" - the whole point of "Update" (updateSavedView()) is
+	 * re-syncing after you've since tweaked the filter/layout/etc. by hand,
+	 * so it needs to keep pointing at the view you're working from even
+	 * after that tweak makes it no longer match. User feedback ("Update
+	 * geht nur auf der aktuellen View"): without this, the row-level Update
+	 * icon captured whatever was live regardless of which row you clicked
+	 * it on - since "live state" is a single global thing, clicking Update
+	 * on an unrelated view silently overwrote it with the view you'd
+	 * actually been working from. Restricting the icon to only this one
+	 * row removes that trap entirely, instead of merely refusing to explain
+	 * it. Purely in-memory (not settings.ts, not persisted) - a fresh
+	 * session simply starts with nothing "current" until you apply or save
+	 * one, same as e.g. layoutMode itself resetting to 'force' on reload.
+	 */
+	private appliedViewId: string | null = null;
 	/** Whether "+ save current view" is currently showing its name-entry form - see startSavingCurrentView()'s docstring for why saving a view needs an explicit name+Save step (unlike Filter/Color & size's auto-created-then-renamed rows). */
 	private isCreatingView = false;
 	/** The create form's in-progress name field - a plain instance field (not read straight from the input on Save) since TextComponent has no synchronous "current value" getter of its own. Reset alongside isCreatingView. */
@@ -5221,17 +5242,19 @@ export class GraphPane {
 	 * event.stopPropagation() dance - ExtraButtonComponent's onClick takes
 	 * no event argument at all.
 	 *
-	 * `is-current-view` marks whichever row's captured state exactly matches
-	 * what's live right now (viewMatchesCurrentState()) - user feedback: the
-	 * list gave no indication which saved view (if any) you were actually
-	 * looking at. Recomputed on every render rather than tracked as its own
-	 * "last applied id" field, so it stays correct even after the live state
-	 * is changed by something other than applySavedView() (toggling a
-	 * filter, switching layout by hand, ...), and after updateSavedView()
-	 * re-captures a view to match the current state.
+	 * `is-current-view` marks the one row matching appliedViewId - see that
+	 * field's own docstring for why this is a stateful pointer, not a live
+	 * "does this row's captured state still exactly match" check (user
+	 * feedback caught the exact failure mode a live check would have:
+	 * "Update geht nur auf der aktuellen View" - Update needs to keep
+	 * pointing at the view you're working from even after you've since
+	 * tweaked something and it no longer matches). The Update icon itself is
+	 * only ever shown on this same row, for the same reason - clicking it on
+	 * any other row would silently overwrite that *other* view with
+	 * whatever's currently live, which has nothing to do with it.
 	 */
 	private renderViewRow(view: SavedView): void {
-		const isCurrent = this.viewMatchesCurrentState(view);
+		const isCurrent = view.id === this.appliedViewId;
 		const row = this.viewsListContainerEl.createDiv({ cls: 'clew-group-row clew-view-row' });
 		row.toggleClass('is-current-view', isCurrent);
 		const checkEl = row.createSpan({ cls: 'clew-view-row-check' });
@@ -5245,10 +5268,12 @@ export class GraphPane {
 			this.toggleViewsPanel();
 			this.applySavedView(view);
 		});
-		new ExtraButtonComponent(row)
-			.setIcon('save')
-			.setTooltip('Update with current filter/coloring/layout/focus')
-			.onClick(() => this.updateSavedView(view));
+		if (isCurrent) {
+			new ExtraButtonComponent(row)
+				.setIcon('save')
+				.setTooltip('Update with current filter/coloring/layout/focus')
+				.onClick(() => this.updateSavedView(view));
+		}
 		new ExtraButtonComponent(row).setIcon('pencil').setTooltip('Rename').onClick(() => this.toggleEditingView(view.id));
 		new ExtraButtonComponent(row).setIcon('trash').setTooltip('Delete').onClick(() => this.deleteSavedView(view.id));
 	}
@@ -5300,6 +5325,7 @@ export class GraphPane {
 			this.plugin.settings.savedViews = this.plugin.settings.savedViews.filter((v) => v.id !== id);
 			void this.plugin.saveSettings();
 			if (this.editingViewId === id) this.editingViewId = null;
+			if (this.appliedViewId === id) this.appliedViewId = null;
 			this.renderViewsList();
 		}).open();
 	}
@@ -5307,9 +5333,9 @@ export class GraphPane {
 	/**
 	 * The current filter/group *enabled* sets, layout, and Focus note,
 	 * shaped exactly like SavedView minus id/name - shared by
-	 * finishSavingCurrentView() (wraps this in a new SavedView),
+	 * finishSavingCurrentView() (wraps this in a new SavedView) and
 	 * updateSavedView() (overwrites an existing one's captured fields with
-	 * this), and viewMatchesCurrentState() (compares this against one).
+	 * this).
 	 */
 	private captureCurrentViewState(): Omit<SavedView, 'id' | 'name'> {
 		return {
@@ -5320,20 +5346,6 @@ export class GraphPane {
 			focusPath: this.focusFile?.path ?? null,
 			focusHops: this.focusHops,
 		};
-	}
-
-	/** Whether `view`'s captured fields exactly match captureCurrentViewState() right now - id/set comparisons order-independent (enabledFilterIds/enabledGroupIds are stored/edited as arrays, but "which filters are on" has no meaningful order), see renderViewRow()'s own docstring for how this is used. */
-	private viewMatchesCurrentState(view: SavedView): boolean {
-		const current = this.captureCurrentViewState();
-		const sameIds = (a: string[], b: string[]): boolean => a.length === b.length && a.every((id) => b.includes(id));
-		return (
-			sameIds(view.enabledFilterIds, current.enabledFilterIds) &&
-			sameIds(view.enabledGroupIds, current.enabledGroupIds) &&
-			view.layoutMode === current.layoutMode &&
-			view.radialFocusPath === current.radialFocusPath &&
-			view.focusPath === current.focusPath &&
-			view.focusHops === current.focusHops
-		);
 	}
 
 	/** Opens the create-a-view form (renderViewCreateForm()) - see its own docstring for why this doesn't create/persist anything yet, unlike startCreatingFilter()/startCreatingGroup(). */
@@ -5351,7 +5363,14 @@ export class GraphPane {
 		this.renderViewsPanel();
 	}
 
-	/** The create form's Save action - only now does a SavedView actually get created and persisted, using whatever name was typed (falling back to the same default-numbered name the field was pre-filled with, if it was cleared to blank). */
+	/**
+	 * The create form's Save action - only now does a SavedView actually get
+	 * created and persisted, using whatever name was typed (falling back to
+	 * the same default-numbered name the field was pre-filled with, if it
+	 * was cleared to blank). Becomes appliedViewId - you just captured
+	 * exactly this state under this new name, so it's now "the view you're
+	 * in" the same as if you'd applied it (see that field's own docstring).
+	 */
 	private finishSavingCurrentView(): void {
 		if (this.plugin.settings.savedViews.length >= MAX_SAVED_VIEWS) return;
 		const name = this.newViewNameDraft.trim() || `View ${this.plugin.settings.savedViews.length + 1}`;
@@ -5362,12 +5381,13 @@ export class GraphPane {
 		};
 		this.plugin.settings.savedViews.push(view);
 		void this.plugin.saveSettings();
+		this.appliedViewId = view.id;
 		this.isCreatingView = false;
 		this.newViewNameDraft = '';
 		this.renderViewsPanel();
 	}
 
-	/** Re-captures the current filter/coloring/layout/focus state into an *existing* view, keeping its id/name - user feedback: there was no way to update a saved view short of deleting and re-saving it under the same name. */
+	/** Re-captures the current filter/coloring/layout/focus state into an *existing* view, keeping its id/name - user feedback: there was no way to update a saved view short of deleting and re-saving it under the same name. Only ever called for the row matching appliedViewId (renderViewRow() only shows the icon there) - see that field's own docstring for why that restriction exists at all. */
 	private updateSavedView(view: SavedView): void {
 		Object.assign(view, this.captureCurrentViewState());
 		void this.plugin.saveSettings();
@@ -5431,6 +5451,11 @@ export class GraphPane {
 			this.clearFocus();
 		}
 		this.updateFocusButtonState();
+
+		// See appliedViewId's own docstring - this is what makes the just-
+		// applied view the one the Views panel's checkmark/Update icon point
+		// at, whether or not anything is subsequently tweaked by hand.
+		this.appliedViewId = view.id;
 	}
 
 	private async openNote(vaultPath: string): Promise<void> {

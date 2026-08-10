@@ -1147,21 +1147,33 @@ manual copy step. Then open `test-vault` in Obsidian and check:
     used to have `applySavedView()`'s Focus-clearing step silently wipe the
     filter's own hiding via `clearFocus()`, making the filter look ignored
     right after loading a view.
-  - **Active-view marking**: with the row still showing its checkmark,
-    disable the filter by hand (Filter panel) - reopen "Views…" and the
-    checkmark should be gone (nothing live matches any saved view's
-    captured state any more). Re-enable it - the checkmark should return
-    without touching the saved view itself.
-  - **Update**: change something (e.g. switch to Circular layout) and click
-    the row's floppy-disk "Update" icon - the view should silently
-    re-capture the new state (still under the same name), and immediately
-    show its checkmark again (now matching the new live state instead of
-    the old one).
-  - **Apply**: change everything back to something else entirely (disable
-    the filter/group, Force layout, clear Focus), then click the row's
-    "Apply" (play) icon - the exact combination last saved into it (from
-    the Update step above) should come back: same filter/group enabled,
-    same layout, same Focus note/hops.
+  - **Active-view marking (`appliedViewId`)**: this is a stateful pointer
+    to "the view you're currently working from" - the one last Applied or
+    just Saved - not a live "does some row's captured state still exactly
+    match" check (an earlier version tried that and it broke Update, see
+    below). Change something by hand (e.g. switch to Circular layout, or
+    disable the filter) - the row should **keep** its checkmark even though
+    its captured state no longer matches what's live; only Apply-ing a
+    *different* view, or Save-ing a brand new one, should move the
+    checkmark elsewhere.
+  - **Update only ever touches the view you're in** (user-reported bug:
+    "Update geht nur auf der aktuellen View" - Update always ended up
+    reflecting whichever view was last applied, regardless of which row's
+    icon you clicked, since "the current live graph state" is a single
+    global thing with no inherent link to a specific row). The floppy-disk
+    "Update" icon should now only be visible at all on the checkmarked row
+    - confirm no other row shows it. With that row still current, change
+    something (e.g. switch to Circular layout) and click its Update icon -
+    it should silently re-capture the new state under the same name. Now
+    create a second view (`View 2`) from a different state - `View 2`
+    should get the checkmark and its own Update icon, and `View 1` should
+    lose its Update icon entirely (not just the checkmark) until it's
+    Applied again.
+  - **Apply**: with two views saved, change everything to something that
+    matches neither, then click `View 1`'s "Apply" (play) icon - the exact
+    combination last saved into it should come back: same filter/group
+    enabled, same layout, same Focus note/hops, and `View 1` should regain
+    both the checkmark and its Update icon (`View 2` should lose both).
   - Close and reopen the graph view (or reload the plugin) - the saved view
     should still be listed and still apply correctly, same persistence as
     filterPresets/nodeGroups.
