@@ -1,4 +1,24 @@
-import { pipeline, type FeatureExtractionPipeline, type ProgressInfo } from '@huggingface/transformers';
+import { env, pipeline, type FeatureExtractionPipeline, type ProgressInfo } from '@huggingface/transformers';
+
+/**
+ * User-reported: `TypeError: Cannot read properties of undefined (reading
+ * 'create')` deep inside ONNX Runtime Web's session creation, the moment a
+ * `semanticCluster` criterion first tried to load the model. transformers.js
+ * defaults to ONNX Runtime Web's *multi-threaded* WASM backend, which needs
+ * `SharedArrayBuffer`/cross-origin isolation (`crossOriginIsolated`) to
+ * spin up its worker thread pool - real browsers serving over HTTPS with
+ * the right COOP/COEP headers have that; Obsidian's Electron renderer
+ * (`app://` origin) does not set those headers, so the threaded backend's
+ * own init silently hands back a partially-formed object instead of a
+ * clean failure, and the next call into it (`.create(...)` on something
+ * that init never actually populated) throws exactly this. Forcing a
+ * single worker thread sidesteps the whole SharedArrayBuffer path -
+ * ONNX Runtime Web's own docs list `numThreads: 1` as exactly this
+ * fallback. Set once, at module load, before anything ever calls
+ * loadEmbeddingModel() - has to happen before the first pipeline() call
+ * creates a session, not after.
+ */
+if (env.backends.onnx.wasm) env.backends.onnx.wasm.numThreads = 1;
 
 /**
  * The local embedding model (GitHub backlog item 16's own spike, documented
@@ -42,6 +62,13 @@ let modelPromise: Promise<FeatureExtractionPipeline> | null = null;
 export function loadEmbeddingModel(onProgress?: (info: ProgressInfo) => void): Promise<FeatureExtractionPipeline> {
 	modelPromise ??= pipeline('feature-extraction', MODEL_ID, {
 		dtype: 'q8',
+		// Explicit, not 'auto' (transformers.js's own default) - 'auto' picks
+		// WebGPU whenever the environment merely *reports* the API as present,
+		// which Electron's renderer does even where the rest of the WebGPU
+		// stack isn't fully usable the way a real browser's is. Plain WASM is
+		// exactly what the spike measured (~2.5ms/note - see this file's own
+		// MODEL_ID docstring) and is the safer, better-tested path here.
+		device: 'wasm',
 		progress_callback: onProgress,
 	});
 	return modelPromise;
