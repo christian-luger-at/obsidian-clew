@@ -178,6 +178,40 @@ const CRITERION_TYPE_LABELS: Record<GroupCriterionType, string> = {
 };
 
 /**
+ * One explanation sentence per criterion type, shown via the (i) button next
+ * to a criterion's type badge (renderCriterionEditRow()) - user feedback:
+ * "Alle Filter: Besser beschreiben und erklären in der Applikation." Covers
+ * every type now, not just the five analytics ones an earlier version only
+ * explained on hover (clusterFreshness/structuralDeviation/betweenness/
+ * pageRank/community) - user feedback specifically asked for the "obvious"
+ * ones (Tag, Folder, ...) to get at least a line too, both for genuine
+ * first-time clarity and for consistency (every criterion getting the same
+ * (i) affordance reads as "ask if unsure", not "the hard ones need help and
+ * the rest don't"). Click-to-reveal (see the info button below), not the
+ * hover-only tooltip these five previously had - discoverable without
+ * hovering, and reachable on touch, where hover doesn't exist at all.
+ */
+const CRITERION_DESCRIPTIONS: Record<GroupCriterionType, string> = {
+	text: "Matches if the note's title or body contains this text, case-insensitive.",
+	tag: 'Matches if the note has any of the tags you pick - one criterion covers several tags at once.',
+	property: "Compares one frontmatter property's value against what you type, using the operator you pick.",
+	folder: "Matches if the note's path is inside this folder, including its subfolders.",
+	filename: "Matches if the note's title (not its body) contains this text.",
+	staleDays: "Matches based on how many days it's been since the note was last modified.",
+	minLinks: "Matches based on the note's total link count (in and out combined) - its degree in the graph.",
+	clusterFreshness: 'Notes are grouped into tightly-linked neighborhoods, then compared by how recently each neighborhood was edited overall.',
+	structuralDeviation:
+		"Notes are grouped into tightly-linked neighborhoods, then compared against the vault's own folders - a neighborhood counts as scattered once less than half its notes share one folder.",
+	betweenness:
+		'How often this note lies on the shortest link-path between two other notes - a high value means removing it would cut two parts of the vault apart.',
+	pageRank: "How prominent this note is, weighted by how prominent its own linking neighbors are - not just raw link count (that's Links, above).",
+	isolatedComponent: "Whether the note's connected component is the vault's single largest one, or a smaller pocket cut off from it.",
+	community:
+		'Notes are grouped into tightly-linked neighborhoods automatically, the same grouping Activity/Structure use. Pick any note that belongs to the neighborhood you want - every other note in it matches too.',
+	existence: "Whether this is a real note, or a 'ghost' node - a link to a note that doesn't exist yet.",
+};
+
+/**
  * Whether `id` belongs to filter.ts's DEFAULT_FILTER_PRESETS - user
  * feedback: "diese Einträge dürfen vom Benutzer nicht gelöscht werden
  * [...] und auch nicht editierbar". renderFilterRow() uses this to skip
@@ -2753,6 +2787,26 @@ export class GraphPane {
 		return result;
 	}
 
+	/**
+	 * rankCommunitiesBySize(), plus each rank's own size - powers the
+	 * `community` criterion's note picker (renderCriterionEditRow()'s
+	 * 'community' case, GitHub feedback: "Wer weiss schon, was die
+	 * einzugebende Nummer ist?"). `rankByNode` resolves a picked note to the
+	 * community rank it belongs to; `sizeByRank` backs the "(N notes)"
+	 * confirmation shown next to whichever rank is currently selected, so
+	 * the raw number is never the only thing on screen. Recomputed on
+	 * demand, not cached - same "cheap enough to redo, not worth a
+	 * staleness bug" reasoning as Diagnostics' computeStructuralDeviations().
+	 */
+	private communityRanking(): { rankByNode: Map<string, number>; sizeByRank: Map<number, number> } | null {
+		if (!this.graph) return null;
+		const communities = detectCommunities(this.graph);
+		const rankByNode = this.rankCommunitiesBySize(communities);
+		const sizeByRank = new Map<number, number>();
+		for (const rank of rankByNode.values()) sizeByRank.set(rank, (sizeByRank.get(rank) ?? 0) + 1);
+		return { rankByNode, sizeByRank };
+	}
+
 	/** graphAnalytics.ts's computeBetweenness(), normalized relative to every other node present - backs the `betweenness` group criterion. */
 	private computeNormalizedBetweenness(): Map<string, number> {
 		if (!this.graph) return new Map();
@@ -4499,46 +4553,26 @@ export class GraphPane {
 
 		const controlsEl = editEl.createDiv({ cls: 'clew-criterion-controls' });
 
-		// The type as the first segment of the row (not its own heading
-		// line above the fields any more - user feedback: a criterion being
-		// edited taking 4 stacked lines, most of them just for "Property" or
-		// "Text", read as heavier than the single-line summary it collapses
-		// back to). Only "Activity" gets a tooltip explaining its mechanism -
-		// every other type is self-evident from its own controls (a tag
-		// picker, a folder path, ...), but "an inactive/active area of the
-		// vault" (this criterion's dropdown, below) still begs the question
-		// of what decides that without at least one sentence of explanation.
-		const typeBadgeEl = controlsEl.createSpan({ cls: 'clew-criterion-type-badge', text: CRITERION_TYPE_LABELS[criterion.type] });
-		if (criterion.type === 'clusterFreshness') {
-			setTooltip(
-				typeBadgeEl,
-				'Notes are grouped into tightly-linked neighborhoods, then compared by how recently each neighborhood was edited overall.',
-			);
-		}
-		if (criterion.type === 'structuralDeviation') {
-			setTooltip(
-				typeBadgeEl,
-				"Notes are grouped into tightly-linked neighborhoods, then compared against the vault's own folders - a neighborhood counts as scattered once less than half its notes share one folder.",
-			);
-		}
-		if (criterion.type === 'betweenness') {
-			setTooltip(
-				typeBadgeEl,
-				'How often this note lies on the shortest link-path between two other notes - a high value means removing it would cut two parts of the vault apart.',
-			);
-		}
-		if (criterion.type === 'pageRank') {
-			setTooltip(
-				typeBadgeEl,
-				"How prominent this note is, weighted by how prominent its own linking neighbors are - not just raw link count (that's Links, below).",
-			);
-		}
-		if (criterion.type === 'community') {
-			setTooltip(
-				typeBadgeEl,
-				'Notes are grouped into tightly-linked neighborhoods, numbered by size (1 = the largest) - same grouping Activity/Structure use, picked out one neighborhood at a time here instead of compared by recency/folders.',
-			);
-		}
+		// The type as the first segment of the row (not its own heading line
+		// above the fields any more - user feedback: a criterion being edited
+		// taking 4 stacked lines, most of them just for "Property" or "Text",
+		// read as heavier than the single-line summary it collapses back to).
+		controlsEl.createSpan({ cls: 'clew-criterion-type-badge', text: CRITERION_TYPE_LABELS[criterion.type] });
+
+		// One (i) button per criterion, not just the "hard" analytics ones -
+		// user feedback: "Alle Filter: Besser beschreiben und erklären in der
+		// Applikation." Click-to-reveal an inline description line
+		// (descriptionEl below), not a hover-only tooltip (what every type
+		// but Activity/Structure/Bridging/Prominence/Community had before,
+		// which is to say nothing) - a click works the same on touch, where
+		// hover never fires at all, and is discoverable without hunting for
+		// which element happens to have a tooltip.
+		const descriptionEl = editEl.createEl('p', { cls: 'clew-criterion-description', text: CRITERION_DESCRIPTIONS[criterion.type] });
+		descriptionEl.hide();
+		new ExtraButtonComponent(controlsEl)
+			.setIcon('info')
+			.setTooltip('What is this?')
+			.onClick(() => descriptionEl.toggle(!descriptionEl.isShown()));
 
 		switch (criterion.type) {
 			case 'tag':
@@ -4576,7 +4610,11 @@ export class GraphPane {
 				break;
 			}
 			case 'folder': {
-				controlsEl.createSpan({ cls: 'clew-criterion-label', text: 'Folder' });
+				// No separate "Folder" label here any more - it repeated the
+				// type badge word-for-word ("Folder Folder is …"), user
+				// feedback: "Labels ... werden zum Teil doppelt dargestellt."
+				// The negate word alone already reads as a complete clause
+				// right after the badge ("Folder is …").
 				this.renderNegateWord(controlsEl, criterion, { include: 'is', exclude: 'is not' }, applyLive);
 				const input = new TextComponent(controlsEl).setPlaceholder('Includes subfolders').setValue(criterion.folder);
 				input.inputEl.setAttribute('list', ctx.folderDatalistId);
@@ -4587,7 +4625,8 @@ export class GraphPane {
 				break;
 			}
 			case 'filename':
-				controlsEl.createSpan({ cls: 'clew-criterion-label', text: 'Filename' });
+				// Same fix as folder above - "Filename" was repeating the
+				// type badge.
 				this.renderNegateWord(controlsEl, criterion, { include: 'contains', exclude: 'does not contain' }, applyLive);
 				new TextComponent(controlsEl).setValue(criterion.query).onChange((value) => {
 					criterion.query = value;
@@ -4642,8 +4681,11 @@ export class GraphPane {
 			case 'betweenness':
 				// No negate word - same reasoning as clusterFreshness/
 				// structuralDeviation above, the bucket dropdown already
-				// offers the opposite choice directly.
-				controlsEl.createSpan({ cls: 'clew-criterion-label', text: 'Bridging is' });
+				// offers the opposite choice directly. Label is just "is",
+				// not "Bridging is" - the type badge already says "Bridging"
+				// (user feedback: "Labels ... werden zum Teil doppelt
+				// dargestellt").
+				controlsEl.createSpan({ cls: 'clew-criterion-label', text: 'is' });
 				new DropdownComponent(controlsEl)
 					.addOption('high', 'High (a bridge note)')
 					.addOption('low', 'Low (not a bridge note)')
@@ -4654,7 +4696,8 @@ export class GraphPane {
 					});
 				break;
 			case 'pageRank':
-				controlsEl.createSpan({ cls: 'clew-criterion-label', text: 'Prominence is' });
+				// Same fix as betweenness above.
+				controlsEl.createSpan({ cls: 'clew-criterion-label', text: 'is' });
 				new DropdownComponent(controlsEl)
 					.addOption('high', 'High (prominent)')
 					.addOption('low', 'Low (not prominent)')
@@ -4677,24 +4720,56 @@ export class GraphPane {
 					});
 				break;
 			case 'community': {
-				controlsEl.createSpan({ cls: 'clew-criterion-label', text: 'Community' });
+				// No separate "Community" label here - it repeated the type
+				// badge word-for-word (user feedback: "Labels ... werden zum
+				// Teil doppelt dargestellt"). The negate word alone already
+				// reads as a complete clause right after the badge
+				// ("Community is …").
 				this.renderNegateWord(controlsEl, criterion, { include: 'is', exclude: 'is not' }, applyLive);
-				// 1-based in the UI ("Community 1" = the largest present) -
-				// communityId itself stays 0-based internally, same
-				// convention as GraphPane's rankCommunitiesBySize().
-				const input = new TextComponent(controlsEl).setValue(String(criterion.communityId + 1));
-				input.inputEl.type = 'number';
-				input.inputEl.min = '1';
-				input.onChange((value) => {
-					const oneBased = parsePositiveInt(value) ?? 1;
-					criterion.communityId = Math.max(0, oneBased - 1);
+
+				// A note picker instead of a raw community number - GitHub
+				// feedback: "Wer weiss schon, was die einzugebende Nummer
+				// ist?" ("who knows what number to type in?"). Same
+				// NoteSuggest widget Focus/Radial/Find-path already use -
+				// pick any note you recognize, Clew resolves which community
+				// it belongs to under the hood. communityId itself is
+				// unchanged (still 0-based internally, still what's
+				// persisted) - only how it's picked changed, so existing
+				// saved criteria keep working exactly as before.
+				const ranking = this.communityRanking();
+				const pickerInput = new TextComponent(controlsEl);
+				pickerInput.setPlaceholder('Pick a note in it…');
+				pickerInput.inputEl.addClass('clew-note-picker-input');
+				const suggest = new NoteSuggest(this.app, pickerInput.inputEl, this.files);
+				suggest.onSelect((file) => {
+					const rank = ranking?.rankByNode.get(file.path);
+					if (rank === undefined) return; // a ghost node, or Louvain didn't reach this file (e.g. no graph yet) - nothing to resolve to
+					criterion.communityId = rank;
+					suggest.setValue(file.basename);
+					suggest.close();
 					// Community-Färbung mit fester Palette - keeps the
-					// group's own color in sync with whichever community
-					// number is currently picked, see
-					// CriteriaEditorContext.onCommunityColorSync's own
-					// docstring.
+					// group's own color in sync with whichever community is
+					// currently picked, see CriteriaEditorContext.
+					// onCommunityColorSync's own docstring.
 					ctx.onCommunityColorSync?.(criterion.communityId);
-					applyLive();
+					rerender(); // the "(N notes)" badge below depends on communityId
+				});
+
+				// Confirms what's actually selected without ever showing the
+				// raw number as the primary control - "(N notes)" also gives
+				// the number real meaning (how big that neighborhood is),
+				// the same context Option A's dropdown proposal would have
+				// shown per-option. Reads from the currently-persisted
+				// communityId, not from whatever's typed in the picker above
+				// (which resets on every open, see NoteSuggest's own
+				// docstring on empty-until-typed suggestions) - so this
+				// badge is accurate immediately on reopening a
+				// previously-configured criterion, before anything is
+				// re-picked.
+				const size = ranking?.sizeByRank.get(criterion.communityId);
+				controlsEl.createSpan({
+					cls: 'clew-criterion-community-badge',
+					text: size !== undefined ? `→ Community ${criterion.communityId + 1} · ${size} ${size === 1 ? 'note' : 'notes'}` : `→ Community ${criterion.communityId + 1}`,
 				});
 				break;
 			}
@@ -4719,7 +4794,9 @@ export class GraphPane {
 					criterion.count = parsePositiveInt(value) ?? 0;
 					applyLive();
 				});
-				controlsEl.createSpan({ cls: 'clew-criterion-label', text: 'links' });
+				// No trailing "links" label - the type badge already reads
+				// "Links" right before it (user feedback: "Labels ... werden
+				// zum Teil doppelt dargestellt").
 				break;
 			}
 			case 'existence':

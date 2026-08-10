@@ -36,11 +36,15 @@ These run the same graph algorithms the [Diagnostics](./diagnostics) panel uses,
 - **Activity** - whether a note sits in an active or inactive neighborhood of the vault. Clew groups tightly-linked notes into communities (see "Community" below), then compares how recently each community was edited overall. Choose "active area of the vault" or "inactive area of the vault." This is about the *neighborhood*, not the individual note - see "Not edited at least" above for a note's own edit date, independent of who it's linked to.
 - **Structure** - whether a note's community (see below) is mostly gathered in one folder, or scattered across several. Flags a group of notes that clearly belongs together by links but has drifted across mismatched folders over time - the kind of thing that's easy to miss by browsing folders one at a time. Choose "linked notes scattered across folders" or "linked notes gathered in one folder."
 - **Connectivity** - whether a note's connected component is the vault's single largest one (its "main body"), or one of the smaller pockets cut off from it. Choose "cut off from the vault's main body" or "in the vault's main body."
-- **Community** - matches notes in one specific detected community, numbered by size (Community 1 is the largest present, Community 2 the next, and so on). Communities are groups of tightly-linked notes Clew detects automatically from your link graph - not folders or tags you set up yourself.
+- **Community** - matches every note in one specific detected community. Communities are groups of tightly-linked notes Clew detects automatically from your link graph - not folders or tags you set up yourself. Instead of typing a community number, pick any note you recognize that belongs to the community you want - Clew resolves which one it is for you, and confirms with "→ Community 2 · 17 notes" so the number always comes with real context (how big that neighborhood is), not as a bare digit you have to already know the meaning of.
 
 ## Include or exclude
 
 Most criteria show one small, clickable word right in their own controls - e.g. "Folder **is**" / "Folder **is not**", "Filename **contains**" / "**does not contain**", "**At least**" / "**less than**" this many days. Click the word to flip a criterion from including matches to excluding them, and back. The analytics criteria with a two-way choice (Bridging, Prominence, Activity, Structure, Connectivity) work the same way - the phrase itself is the toggle, since each one already reads as a complete either/or statement (there's no separate "high"/"low" number to set a cutoff on).
+
+## What does this criterion mean?
+
+Every criterion, once added to a filter, has an **(i)** button next to its name - click it to reveal a one-line explanation of exactly what it matches, right there in the row. Useful for the analytics criteria especially (Bridging, Prominence, Activity, Structure, Community), but every criterion type has one, including the "obvious" ones like Tag or Folder.
 
 ## Several filters at once
 

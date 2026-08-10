@@ -450,6 +450,33 @@
 	white-space: nowrap;
 }
 
+/* A criterion's own explanation, toggled by the (i) button next to its type
+   badge (renderCriterionEditRow()) - user feedback: "Alle Filter: Besser
+   beschreiben und erklären in der Applikation." Its own full-width line
+   below .clew-criterion-controls, not squeezed into that flex row - a
+   sentence of prose wrapping among short pills/inputs would read as
+   cramped, and toggling it shouldn't reflow the controls above it. Hidden
+   by default (see the .hide() call at creation) - a click-to-reveal, not a
+   permanently-shown line, so criteria the user already understands don't
+   add a full unwanted sentence of visual weight to every open row. */
+.clew-criterion-description {
+	flex-basis: 100%;
+	margin: var(--size-2-2) 0 0;
+	font-size: var(--font-ui-smaller);
+	color: var(--text-muted);
+}
+
+/* The Community criterion's "→ Community 2 · 17 notes" confirmation
+   (renderCriterionEditRow()'s 'community' case) - the same accent color as
+   .clew-criterion-negate-word so it reads as "this is the live, active
+   state" without borrowing that word's own dotted-underline (it isn't
+   clickable, just a readout). */
+.clew-criterion-community-badge {
+	font-size: var(--font-ui-smaller);
+	color: var(--interactive-accent);
+	white-space: nowrap;
+}
+
 /* Check/cancel for a criterion being edited - now the trailing segment of
    the same row as the type badge and fields (.clew-criterion-controls),
    pinned to the row's right edge via auto margin. Still its own child
