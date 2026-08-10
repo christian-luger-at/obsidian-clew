@@ -362,6 +362,28 @@
 	font-size: var(--font-ui-small);
 }
 
+/* Saved views (GraphPane's renderViewRow()) - a leading checkmark slot,
+   reserved (empty but still 16px wide) even when the row isn't the
+   currently applied view, so the name column stays aligned across rows
+   instead of jumping left/right as .is-current-view toggles on and off. */
+.clew-view-row-check {
+	display: flex;
+	flex: 0 0 auto;
+	align-items: center;
+	width: 16px;
+	height: 16px;
+	color: var(--interactive-accent);
+}
+
+/* Same accent-tint treatment as the Layout panel's own .is-active option
+   card (see .clew-layout-option.is-active further below) - a saved view whose
+   captured filter/coloring/layout/focus exactly matches what's live right
+   now (GraphPane's viewMatchesCurrentState()). */
+.clew-view-row.is-current-view {
+	background: var(--background-modifier-active-hover);
+	border-radius: var(--radius-s);
+}
+
 /* A group's full edit form (renderGroupEditForm()) - set apart from the
    collapsed rows around it with its own background/rounding, same
    reasoning .clew-filter-panel itself is set apart from the bare canvas

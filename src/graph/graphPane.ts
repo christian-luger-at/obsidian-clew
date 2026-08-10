@@ -727,17 +727,23 @@ export class GraphPane {
 	 * GitHub backlog item 9, "Gespeicherte Ansichten/Workspaces" - a toolbar
 	 * button + panel for settings.ts's SavedView list, same shape as
 	 * Filter/Color & size (a `.clew-filter-panel` list of rows, each openable
-	 * into a small edit form), but with no "is-active" toggle-state to track
-	 * on the button itself - see SavedView's own docstring for why (nothing
-	 * here is ever "on" independent of a specific view being applied).
+	 * into a small edit form). Unlike Filter/Color & size, `is-active` here
+	 * tracks whether the *panel is open* (same convention as Appearance's
+	 * own button - toggleAppearancePanel()), not whether anything is
+	 * "enabled" - there's no persisted on/off state a saved view has on its
+	 * own, only "currently applied" (see viewMatchesCurrentState()).
 	 */
 	private readonly viewsButton: HTMLButtonElement;
 	private readonly viewsPanelEl: HTMLElement;
 	// Reassigned on every renderViewsPanel() call, same reasoning as
 	// filterListContainerEl above.
 	private viewsListContainerEl!: HTMLElement;
-	/** id of the saved view currently expanded into its rename form - null when every view is shown collapsed. Same role as editingFilterId, minus any criteria (a saved view has nothing else to edit - re-saving under the same name is how you update its captured state, see startSavingCurrentView()'s docstring). */
+	/** id of the saved view currently expanded into its rename form - null when every view is shown collapsed. Same role as editingFilterId, minus any criteria (a saved view has nothing else to edit - updateSavedView() is how its captured state changes). */
 	private editingViewId: string | null = null;
+	/** Whether "+ save current view" is currently showing its name-entry form - see startSavingCurrentView()'s docstring for why saving a view needs an explicit name+Save step (unlike Filter/Color & size's auto-created-then-renamed rows). */
+	private isCreatingView = false;
+	/** The create form's in-progress name field - a plain instance field (not read straight from the input on Save) since TextComponent has no synchronous "current value" getter of its own. Reset alongside isCreatingView. */
+	private newViewNameDraft = '';
 
 	/**
 	 * ctime-based time-lapse (see timeline.ts's docstring for the
@@ -1591,7 +1597,9 @@ export class GraphPane {
 		}
 		if (keep !== 'views' && this.viewsPanelEl.isShown()) {
 			this.viewsPanelEl.hide();
+			this.viewsButton.removeClass('is-active');
 			this.editingViewId = null;
+			this.isCreatingView = false;
 		}
 		if (keep !== 'findPath' && this.panelEl.isShown()) {
 			this.panelEl.empty();
@@ -5146,18 +5154,22 @@ export class GraphPane {
 	}
 
 	/** Shows/hides the Views panel - see SavedView's own docstring in settings.ts. Nothing to discard on close (same reasoning as toggleColorAndSizePanel()): a rename-in-progress just collapses back to a plain row, nothing here has an unsaved draft. */
+	/** Same open/close toggle shape as toggleAppearancePanel() - including its `is-active` class on the button while the panel is open (user feedback: the icon should read as "active" while the list is showing, same as Appearance's). */
 	private toggleViewsPanel(): void {
 		if (this.viewsPanelEl.isShown()) {
 			this.viewsPanelEl.hide();
+			this.viewsButton.removeClass('is-active');
 			this.editingViewId = null;
+			this.isCreatingView = false;
 			return;
 		}
 		this.closeOtherPanels('views');
 		this.renderViewsPanel();
 		this.viewsPanelEl.show();
+		this.viewsButton.addClass('is-active');
 	}
 
-	/** Same header/list/add-button shape as Filter's renderFilterPanel(), minus the criteria machinery (a saved view has nothing to configure beyond its name - see startSavingCurrentView()). */
+	/** Same header/list/add-button shape as Filter's renderFilterPanel(), minus the criteria machinery (a saved view has nothing to configure beyond its name). The add button itself is hidden while isCreatingView is true - the create form (renderViewCreateForm()) takes its place at the bottom of the list instead, user feedback: showing both at once read as two ways to do the same thing. */
 	private renderViewsPanel(): void {
 		this.viewsPanelEl.empty();
 		const headerEl = this.viewsPanelEl.createDiv({ cls: 'clew-appearance-panel-header' });
@@ -5175,6 +5187,10 @@ export class GraphPane {
 		this.viewsListContainerEl = this.viewsPanelEl.createDiv({ cls: 'clew-group-list' });
 		this.renderViewsList();
 
+		if (this.isCreatingView) {
+			this.renderViewCreateForm();
+			return;
+		}
 		const saveButton = this.viewsPanelEl.createEl('button', { text: '+ save current view', cls: 'clew-filter-add-button' });
 		saveButton.disabled = this.plugin.settings.savedViews.length >= MAX_SAVED_VIEWS;
 		saveButton.addEventListener('click', () => this.startSavingCurrentView());
@@ -5184,7 +5200,7 @@ export class GraphPane {
 		this.viewsListContainerEl.empty();
 		const views = this.plugin.settings.savedViews;
 
-		if (views.length === 0) {
+		if (views.length === 0 && !this.isCreatingView) {
 			this.viewsListContainerEl.createEl('p', { text: 'No saved views yet.', cls: 'clew-filter-empty-note' });
 		}
 
@@ -5199,24 +5215,45 @@ export class GraphPane {
 	 * (renderFilterRow()) minus the drag handle/toggle (a saved view has no
 	 * enable/disable state of its own, and reordering wasn't asked for -
 	 * "Fertig wenn" only requires surviving a restart and restoring the exact
-	 * state on selection). Applying is its own explicit icon (not "click
-	 * anywhere on the row", the Layout panel's own convention) so it can sit
-	 * alongside the pencil/trash icons without an event.stopPropagation()
-	 * dance - ExtraButtonComponent's onClick takes no event argument at all.
+	 * state on selection). Applying/updating are their own explicit icons
+	 * (not "click anywhere on the row", the Layout panel's own convention)
+	 * so they can sit alongside the pencil/trash icons without an
+	 * event.stopPropagation() dance - ExtraButtonComponent's onClick takes
+	 * no event argument at all.
+	 *
+	 * `is-current-view` marks whichever row's captured state exactly matches
+	 * what's live right now (viewMatchesCurrentState()) - user feedback: the
+	 * list gave no indication which saved view (if any) you were actually
+	 * looking at. Recomputed on every render rather than tracked as its own
+	 * "last applied id" field, so it stays correct even after the live state
+	 * is changed by something other than applySavedView() (toggling a
+	 * filter, switching layout by hand, ...), and after updateSavedView()
+	 * re-captures a view to match the current state.
 	 */
 	private renderViewRow(view: SavedView): void {
+		const isCurrent = this.viewMatchesCurrentState(view);
 		const row = this.viewsListContainerEl.createDiv({ cls: 'clew-group-row clew-view-row' });
+		row.toggleClass('is-current-view', isCurrent);
+		const checkEl = row.createSpan({ cls: 'clew-view-row-check' });
+		if (isCurrent) {
+			setIcon(checkEl, 'check');
+			setTooltip(row, 'This is the currently applied view');
+		}
 		row.createSpan({ cls: 'clew-group-name', text: view.name });
 
 		new ExtraButtonComponent(row).setIcon('play').setTooltip('Apply').onClick(() => {
 			this.toggleViewsPanel();
 			this.applySavedView(view);
 		});
+		new ExtraButtonComponent(row)
+			.setIcon('save')
+			.setTooltip('Update with current filter/coloring/layout/focus')
+			.onClick(() => this.updateSavedView(view));
 		new ExtraButtonComponent(row).setIcon('pencil').setTooltip('Rename').onClick(() => this.toggleEditingView(view.id));
 		new ExtraButtonComponent(row).setIcon('trash').setTooltip('Delete').onClick(() => this.deleteSavedView(view.id));
 	}
 
-	/** The rename form for `view` - just its name (see this class's own toggleViewsPanel() docstring for why there's nothing else to edit). Saves as it's typed, same "no separate Save/Cancel step" convention as every other panel here. */
+	/** The rename form for `view` - just its name (see this class's own toggleViewsPanel() docstring for why there's nothing else to edit). Saves as it's typed, same "no separate Save/Cancel step" convention as every other panel here - unlike the create form below, a view already exists by the time it can be renamed, so there's nothing an explicit Save/Cancel would meaningfully discard. */
 	private renderViewEditForm(view: SavedView): void {
 		const formEl = this.viewsListContainerEl.createDiv({ cls: 'clew-group-edit clew-group-edit-flat' });
 		const nameRowEl = formEl.createDiv({ cls: 'clew-group-name-row' });
@@ -5225,6 +5262,30 @@ export class GraphPane {
 			void this.plugin.saveSettings();
 		});
 		new ExtraButtonComponent(nameRowEl).setIcon('x').setTooltip('Close').onClick(() => this.toggleEditingView(view.id));
+	}
+
+	/**
+	 * The create-a-view form (shown instead of "+ save current view" while
+	 * isCreatingView is true) - a name field plus an explicit Save button,
+	 * user feedback: saving a view should let you name it *before* it's
+	 * created, with a real Save action, rather than Filter/Color & size's
+	 * "creates immediately under a default name, rename after" pattern.
+	 * Nothing is written to plugin.settings until Save is clicked.
+	 */
+	private renderViewCreateForm(): void {
+		const formEl = this.viewsPanelEl.createDiv({ cls: 'clew-group-edit clew-group-edit-flat' });
+		const nameRowEl = formEl.createDiv({ cls: 'clew-group-name-row' });
+		const nameInput = new TextComponent(nameRowEl).setPlaceholder('View name…').setValue(this.newViewNameDraft);
+		nameInput.onChange((value) => {
+			this.newViewNameDraft = value;
+		});
+		nameInput.inputEl.addEventListener('keydown', (evt) => {
+			if (evt.key === 'Enter') this.finishSavingCurrentView();
+		});
+		new ExtraButtonComponent(nameRowEl).setIcon('x').setTooltip('Cancel').onClick(() => this.cancelSavingCurrentView());
+
+		const saveButton = formEl.createEl('button', { text: 'Save', cls: 'clew-filter-add-button' });
+		saveButton.addEventListener('click', () => this.finishSavingCurrentView());
 	}
 
 	private toggleEditingView(id: string): void {
@@ -5244,17 +5305,14 @@ export class GraphPane {
 	}
 
 	/**
-	 * Snapshots the current filter/group *enabled* sets, layout, and Focus
-	 * note into a new SavedView, saves it immediately, and opens it in rename
-	 * mode - same "exists and persists from the moment it's created" pattern
-	 * as startCreatingFilter()/startCreatingGroup(), a default name (with an
-	 * incrementing number) standing in until the user renames it.
+	 * The current filter/group *enabled* sets, layout, and Focus note,
+	 * shaped exactly like SavedView minus id/name - shared by
+	 * finishSavingCurrentView() (wraps this in a new SavedView),
+	 * updateSavedView() (overwrites an existing one's captured fields with
+	 * this), and viewMatchesCurrentState() (compares this against one).
 	 */
-	private startSavingCurrentView(): void {
-		if (this.plugin.settings.savedViews.length >= MAX_SAVED_VIEWS) return;
-		const view: SavedView = {
-			id: `view-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-			name: `View ${this.plugin.settings.savedViews.length + 1}`,
+	private captureCurrentViewState(): Omit<SavedView, 'id' | 'name'> {
+		return {
 			enabledFilterIds: this.plugin.settings.filterPresets.filter((preset) => preset.enabled).map((preset) => preset.id),
 			enabledGroupIds: this.plugin.settings.nodeGroups.filter((group) => group.enabled).map((group) => group.id),
 			layoutMode: this.layoutMode,
@@ -5262,23 +5320,85 @@ export class GraphPane {
 			focusPath: this.focusFile?.path ?? null,
 			focusHops: this.focusHops,
 		};
+	}
+
+	/** Whether `view`'s captured fields exactly match captureCurrentViewState() right now - id/set comparisons order-independent (enabledFilterIds/enabledGroupIds are stored/edited as arrays, but "which filters are on" has no meaningful order), see renderViewRow()'s own docstring for how this is used. */
+	private viewMatchesCurrentState(view: SavedView): boolean {
+		const current = this.captureCurrentViewState();
+		const sameIds = (a: string[], b: string[]): boolean => a.length === b.length && a.every((id) => b.includes(id));
+		return (
+			sameIds(view.enabledFilterIds, current.enabledFilterIds) &&
+			sameIds(view.enabledGroupIds, current.enabledGroupIds) &&
+			view.layoutMode === current.layoutMode &&
+			view.radialFocusPath === current.radialFocusPath &&
+			view.focusPath === current.focusPath &&
+			view.focusHops === current.focusHops
+		);
+	}
+
+	/** Opens the create-a-view form (renderViewCreateForm()) - see its own docstring for why this doesn't create/persist anything yet, unlike startCreatingFilter()/startCreatingGroup(). */
+	private startSavingCurrentView(): void {
+		if (this.plugin.settings.savedViews.length >= MAX_SAVED_VIEWS) return;
+		this.editingViewId = null;
+		this.isCreatingView = true;
+		this.newViewNameDraft = `View ${this.plugin.settings.savedViews.length + 1}`;
+		this.renderViewsPanel();
+	}
+
+	private cancelSavingCurrentView(): void {
+		this.isCreatingView = false;
+		this.newViewNameDraft = '';
+		this.renderViewsPanel();
+	}
+
+	/** The create form's Save action - only now does a SavedView actually get created and persisted, using whatever name was typed (falling back to the same default-numbered name the field was pre-filled with, if it was cleared to blank). */
+	private finishSavingCurrentView(): void {
+		if (this.plugin.settings.savedViews.length >= MAX_SAVED_VIEWS) return;
+		const name = this.newViewNameDraft.trim() || `View ${this.plugin.settings.savedViews.length + 1}`;
+		const view: SavedView = {
+			id: `view-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+			name,
+			...this.captureCurrentViewState(),
+		};
 		this.plugin.settings.savedViews.push(view);
 		void this.plugin.saveSettings();
-		this.editingViewId = view.id;
+		this.isCreatingView = false;
+		this.newViewNameDraft = '';
+		this.renderViewsPanel();
+	}
+
+	/** Re-captures the current filter/coloring/layout/focus state into an *existing* view, keeping its id/name - user feedback: there was no way to update a saved view short of deleting and re-saving it under the same name. */
+	private updateSavedView(view: SavedView): void {
+		Object.assign(view, this.captureCurrentViewState());
+		void this.plugin.saveSettings();
 		this.renderViewsList();
 	}
 
 	/**
-	 * Restores exactly what startSavingCurrentView() captured: which filters/
-	 * groups are enabled (by id - see SavedView's own docstring for why a
-	 * since-deleted id is silently a no-op rather than an error), the layout,
-	 * and the Focus note. Order matters: filters/groups first (their reducers
-	 * are the "base" every subsequent repaint below builds on), then layout
-	 * (setRadialLayout()/setForceLayout()/etc. each already call
+	 * Restores exactly what captureCurrentViewState() captures: which
+	 * filters/groups are enabled (by id - see SavedView's own docstring for
+	 * why a since-deleted id is silently a no-op rather than an error), the
+	 * layout, and the Focus note.
+	 *
+	 * Order: filters/groups first (applyFilters() is what actually installs
+	 * the graph's nodeReducer/edgeReducer when a filter is enabled), then
+	 * layout (setRadialLayout()/setForceLayout()/etc. each already call
 	 * activateLayoutMode() -> applyNodeSizeSettings(), repainting the ring/
-	 * color state), then Focus last (applyFocus()'s own ego-graph reducer is
-	 * the most specific override, same "last one wins" precedence every other
-	 * mutually-exclusive graph state here already follows).
+	 * color state without touching those reducers), then Focus last -
+	 * applyFocus()'s own ego-graph reducer is the most specific override,
+	 * same "last one wins" precedence every other mutually-exclusive graph
+	 * state here already follows (see applyFocus()'s own docstring).
+	 *
+	 * The one thing that ISN'T "last one wins" unconditionally: when the
+	 * view has no Focus note, this must not blindly call clearFocus() - that
+	 * nulls the nodeReducer/edgeReducer outright (see its own docstring),
+	 * which would silently wipe the filter reducer applyFilters() just
+	 * installed a moment ago (a real bug: "Filter werden beim Laden nicht
+	 * berücksichtigt" - loading a view with an enabled filter and no Focus
+	 * showed every node again). clearFocus() is only correct here when
+	 * nothing else (a filter) is holding the reducers; otherwise this only
+	 * resets Focus's own fields (resetFocusState()), leaving the filter's
+	 * reducer in place.
 	 */
 	private applySavedView(view: SavedView): void {
 		const enabledFilters = new Set(view.enabledFilterIds);
@@ -5303,8 +5423,13 @@ export class GraphPane {
 		}
 
 		const focusFile = view.focusPath ? this.app.vault.getAbstractFileByPath(view.focusPath) : null;
-		if (focusFile instanceof TFile) this.applyFocus(focusFile, view.focusHops);
-		else this.clearFocus();
+		if (focusFile instanceof TFile) {
+			this.applyFocus(focusFile, view.focusHops);
+		} else if (isAnyFilterEnabled(this.plugin.settings.filterPresets)) {
+			this.resetFocusState();
+		} else {
+			this.clearFocus();
+		}
 		this.updateFocusButtonState();
 	}
 

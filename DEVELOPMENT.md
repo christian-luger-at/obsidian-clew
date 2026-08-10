@@ -1128,25 +1128,51 @@ manual copy step. Then open `test-vault` in Obsidian and check:
   feeding into a sigma setting).
 - **Saved views** (GitHub backlog item 9, "Gespeicherte Ansichten/
   Workspaces" - bookmark icon in the top-left icon rail, `settings.ts`'s
-  `SavedView`): enable a filter, enable a Color & size group, switch to
-  Radial layout centered on some note, and apply Focus to a different note.
-  Open "Views…", click "+ save current view" - a new row (`View 1`) should
-  appear immediately, already renamed to that when the pencil icon is
-  clicked and something is typed (no separate Save button - saves as you
-  type, same as every other panel here). Now change everything (disable the
-  filter/group, switch to Force layout, clear Focus) and click the row's
-  "Apply" (play) icon - the exact original combination should come back:
-  the same filter and group re-enabled, Radial layout re-centered on the
-  same note, and Focus back on the same note with the same hop count. Close
-  and reopen the graph view (or reload the plugin) - the saved view should
-  still be listed and still apply correctly, same persistence as
-  filterPresets/nodeGroups. Delete a filter or Color & size group that a
-  saved view references, then apply that view - it should apply cleanly
-  (the vanished filter/group simply doesn't turn anything on, no error).
-  Same check for Radial: apply a saved Radial view, then rename/delete the
-  note it was centered on, then apply that view again - it should fall
-  back to Force layout instead of erroring. Trash icon deletes a view after
-  a confirm dialog, same convention as deleting a filter/group.
+  `SavedView`): click "Views…" - the icon should get the same accent
+  highlight Appearance's own icon gets while its panel is open, and lose it
+  again on close. Enable a filter (**with real matches**, not "no filter
+  enabled"), enable a Color & size group, switch to Radial layout centered
+  on some note, and apply Focus to a different note. Click "+ save current
+  view" - the "+ save current view" button itself should disappear,
+  replaced by a name field (pre-filled `View 1`) and an explicit "Save"
+  button (Enter in the field also saves); click the field's "x" instead -
+  the form should close with nothing created (re-open "Views…" to confirm
+  no `View 1` row exists). This time type a name and click "Save" (or press
+  Enter) - a new row should appear, and it should immediately show a
+  checkmark/accent tint (`is-current-view`) since what it just captured is
+  exactly the live state.
+  - **The saved-filter bug**: with that same view's filter still enabled,
+    verify the graph is actually still showing only the filtered notes
+    (not everything) - this exact scenario (an enabled filter + no Focus)
+    used to have `applySavedView()`'s Focus-clearing step silently wipe the
+    filter's own hiding via `clearFocus()`, making the filter look ignored
+    right after loading a view.
+  - **Active-view marking**: with the row still showing its checkmark,
+    disable the filter by hand (Filter panel) - reopen "Views…" and the
+    checkmark should be gone (nothing live matches any saved view's
+    captured state any more). Re-enable it - the checkmark should return
+    without touching the saved view itself.
+  - **Update**: change something (e.g. switch to Circular layout) and click
+    the row's floppy-disk "Update" icon - the view should silently
+    re-capture the new state (still under the same name), and immediately
+    show its checkmark again (now matching the new live state instead of
+    the old one).
+  - **Apply**: change everything back to something else entirely (disable
+    the filter/group, Force layout, clear Focus), then click the row's
+    "Apply" (play) icon - the exact combination last saved into it (from
+    the Update step above) should come back: same filter/group enabled,
+    same layout, same Focus note/hops.
+  - Close and reopen the graph view (or reload the plugin) - the saved view
+    should still be listed and still apply correctly, same persistence as
+    filterPresets/nodeGroups.
+  - Delete a filter or Color & size group that a saved view references,
+    then apply that view - it should apply cleanly (the vanished
+    filter/group simply doesn't turn anything on, no error). Same check for
+    Radial: apply a saved Radial view, then rename/delete the note it was
+    centered on, then apply that view again - it should fall back to Force
+    layout instead of erroring.
+  - Trash icon deletes a view after a confirm dialog, same convention as
+    deleting a filter/group.
 
 ## Performance testing at scale (rendering)
 
