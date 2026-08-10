@@ -1126,6 +1126,27 @@ manual copy step. Then open `test-vault` in Obsidian and check:
   disappear while hovering - if labels or the whole canvas ever go blank on
   hover again, suspect the same class of bug (an extreme/non-finite value
   feeding into a sigma setting).
+- **Saved views** (GitHub backlog item 9, "Gespeicherte Ansichten/
+  Workspaces" - bookmark icon in the top-left icon rail, `settings.ts`'s
+  `SavedView`): enable a filter, enable a Color & size group, switch to
+  Radial layout centered on some note, and apply Focus to a different note.
+  Open "Views…", click "+ save current view" - a new row (`View 1`) should
+  appear immediately, already renamed to that when the pencil icon is
+  clicked and something is typed (no separate Save button - saves as you
+  type, same as every other panel here). Now change everything (disable the
+  filter/group, switch to Force layout, clear Focus) and click the row's
+  "Apply" (play) icon - the exact original combination should come back:
+  the same filter and group re-enabled, Radial layout re-centered on the
+  same note, and Focus back on the same note with the same hop count. Close
+  and reopen the graph view (or reload the plugin) - the saved view should
+  still be listed and still apply correctly, same persistence as
+  filterPresets/nodeGroups. Delete a filter or Color & size group that a
+  saved view references, then apply that view - it should apply cleanly
+  (the vanished filter/group simply doesn't turn anything on, no error).
+  Same check for Radial: apply a saved Radial view, then rename/delete the
+  note it was centered on, then apply that view again - it should fall
+  back to Force layout instead of erroring. Trash icon deletes a view after
+  a confirm dialog, same convention as deleting a filter/group.
 
 ## Performance testing at scale (rendering)
 

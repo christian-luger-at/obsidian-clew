@@ -44,7 +44,7 @@ import {
 	StringOperator,
 	StructuralCohesionBucket,
 } from './nodeGroups';
-import { ClewAppearanceSettings, DEFAULT_APPEARANCE_SETTINGS } from '../settings';
+import { ClewAppearanceSettings, DEFAULT_APPEARANCE_SETTINGS, SavedView } from '../settings';
 import {
 	computeTimelineBounds,
 	computeTimelineSteps,
@@ -96,6 +96,9 @@ const MIN_FIT_EXTENT = 32;
  * decision made for this panel specifically.
  */
 const MAX_PATH_ROUTES = 4;
+
+/** Same cap (and reasoning: a manageable, scannable list, not a data store) as MAX_FILTER_PRESETS/MAX_NODE_GROUPS - GitHub backlog item 9, "Gespeicherte Ansichten/Workspaces". */
+const MAX_SAVED_VIEWS = 10;
 
 /**
  * How many entries a Diagnostics list (Orphans/Broken links/Isolated
@@ -721,6 +724,22 @@ export class GraphPane {
 	private radialFocusNode: string | null = null;
 
 	/**
+	 * GitHub backlog item 9, "Gespeicherte Ansichten/Workspaces" - a toolbar
+	 * button + panel for settings.ts's SavedView list, same shape as
+	 * Filter/Color & size (a `.clew-filter-panel` list of rows, each openable
+	 * into a small edit form), but with no "is-active" toggle-state to track
+	 * on the button itself - see SavedView's own docstring for why (nothing
+	 * here is ever "on" independent of a specific view being applied).
+	 */
+	private readonly viewsButton: HTMLButtonElement;
+	private readonly viewsPanelEl: HTMLElement;
+	// Reassigned on every renderViewsPanel() call, same reasoning as
+	// filterListContainerEl above.
+	private viewsListContainerEl!: HTMLElement;
+	/** id of the saved view currently expanded into its rename form - null when every view is shown collapsed. Same role as editingFilterId, minus any criteria (a saved view has nothing else to edit - re-saving under the same name is how you update its captured state, see startSavingCurrentView()'s docstring). */
+	private editingViewId: string | null = null;
+
+	/**
 	 * ctime-based time-lapse (see timeline.ts's docstring for the
 	 * ctime-only approximation this makes). Its own bottom-center scrubber
 	 * bar rather than sharing the Filter/Color & size/Appearance panel
@@ -883,6 +902,15 @@ export class GraphPane {
 		this.diagnosticsButton = iconButton('stethoscope', 'Diagnostics…');
 		this.diagnosticsButton.addEventListener('click', () => this.toggleDiagnosticsPanel());
 
+		// GitHub backlog item 9, "Gespeicherte Ansichten/Workspaces": saves the
+		// active filter(s)/group(s)/layout/Focus note as one named, re-
+		// applicable entry (settings.ts's SavedView) - no "is-active" state on
+		// the button itself, same reasoning as Appearance's/Diagnostics' own
+		// buttons (see SavedView's own docstring for why nothing here is ever
+		// "on" independent of a specific view being applied).
+		this.viewsButton = iconButton('bookmark', 'Views…');
+		this.viewsButton.addEventListener('click', () => this.toggleViewsPanel());
+
 		// Dialog-Management redesign, round 2 (user feedback: first "keine
 		// einheitliche Darstellung von Dialogen [...] mal zentral, mal
 		// rechts oben, mal rechts unter der Navigation", then - once Layout
@@ -927,6 +955,8 @@ export class GraphPane {
 		this.appearancePanelEl.hide();
 		this.diagnosticsPanelEl = topbarEl.createDiv({ cls: 'clew-filter-panel' });
 		this.diagnosticsPanelEl.hide();
+		this.viewsPanelEl = topbarEl.createDiv({ cls: 'clew-filter-panel' });
+		this.viewsPanelEl.hide();
 
 		// Bottom-left - a passive, always-visible corner (once renderLegend()
 		// has content to show), not an on-demand dialog like the zone above,
@@ -1521,7 +1551,7 @@ export class GraphPane {
 	 * clears a shown path result itself, directly, inside applyTimeline().
 	 */
 	private closeOtherPanels(
-		keep: 'filter' | 'colorAndSize' | 'appearance' | 'findPath' | 'diagnostics' | 'layout' | 'pathfindingInput' | 'focus',
+		keep: 'filter' | 'colorAndSize' | 'appearance' | 'findPath' | 'diagnostics' | 'layout' | 'pathfindingInput' | 'focus' | 'views',
 	): void {
 		if (keep !== 'layout' && this.layoutPanelEl.isShown()) {
 			this.layoutPanelEl.hide();
@@ -1558,6 +1588,10 @@ export class GraphPane {
 		if (keep !== 'diagnostics' && this.diagnosticsPanelEl.isShown()) {
 			this.diagnosticsPanelEl.hide();
 			this.clearClusterHighlight();
+		}
+		if (keep !== 'views' && this.viewsPanelEl.isShown()) {
+			this.viewsPanelEl.hide();
+			this.editingViewId = null;
 		}
 		if (keep !== 'findPath' && this.panelEl.isShown()) {
 			this.panelEl.empty();
@@ -5109,6 +5143,169 @@ export class GraphPane {
 		this.closeOtherPanels('colorAndSize');
 		this.renderColorAndSizePanel();
 		this.colorAndSizePanelEl.show();
+	}
+
+	/** Shows/hides the Views panel - see SavedView's own docstring in settings.ts. Nothing to discard on close (same reasoning as toggleColorAndSizePanel()): a rename-in-progress just collapses back to a plain row, nothing here has an unsaved draft. */
+	private toggleViewsPanel(): void {
+		if (this.viewsPanelEl.isShown()) {
+			this.viewsPanelEl.hide();
+			this.editingViewId = null;
+			return;
+		}
+		this.closeOtherPanels('views');
+		this.renderViewsPanel();
+		this.viewsPanelEl.show();
+	}
+
+	/** Same header/list/add-button shape as Filter's renderFilterPanel(), minus the criteria machinery (a saved view has nothing to configure beyond its name - see startSavingCurrentView()). */
+	private renderViewsPanel(): void {
+		this.viewsPanelEl.empty();
+		const headerEl = this.viewsPanelEl.createDiv({ cls: 'clew-appearance-panel-header' });
+		headerEl.createEl('h4', { text: 'Views' });
+		const closeButton = headerEl.createEl('button', { cls: 'clickable-icon' });
+		setIcon(closeButton, 'x');
+		setTooltip(closeButton, 'Close');
+		closeButton.addEventListener('click', () => this.toggleViewsPanel());
+
+		this.viewsPanelEl.createEl('p', {
+			text: 'Save the current filter, coloring, layout, and focus as a named view you can jump back to later.',
+			cls: 'clew-modal-description',
+		});
+
+		this.viewsListContainerEl = this.viewsPanelEl.createDiv({ cls: 'clew-group-list' });
+		this.renderViewsList();
+
+		const saveButton = this.viewsPanelEl.createEl('button', { text: '+ save current view', cls: 'clew-filter-add-button' });
+		saveButton.disabled = this.plugin.settings.savedViews.length >= MAX_SAVED_VIEWS;
+		saveButton.addEventListener('click', () => this.startSavingCurrentView());
+	}
+
+	private renderViewsList(): void {
+		this.viewsListContainerEl.empty();
+		const views = this.plugin.settings.savedViews;
+
+		if (views.length === 0) {
+			this.viewsListContainerEl.createEl('p', { text: 'No saved views yet.', cls: 'clew-filter-empty-note' });
+		}
+
+		for (const view of views) {
+			if (this.editingViewId === view.id) this.renderViewEditForm(view);
+			else this.renderViewRow(view);
+		}
+	}
+
+	/**
+	 * A saved view's collapsed row - same shape as a filter's row
+	 * (renderFilterRow()) minus the drag handle/toggle (a saved view has no
+	 * enable/disable state of its own, and reordering wasn't asked for -
+	 * "Fertig wenn" only requires surviving a restart and restoring the exact
+	 * state on selection). Applying is its own explicit icon (not "click
+	 * anywhere on the row", the Layout panel's own convention) so it can sit
+	 * alongside the pencil/trash icons without an event.stopPropagation()
+	 * dance - ExtraButtonComponent's onClick takes no event argument at all.
+	 */
+	private renderViewRow(view: SavedView): void {
+		const row = this.viewsListContainerEl.createDiv({ cls: 'clew-group-row clew-view-row' });
+		row.createSpan({ cls: 'clew-group-name', text: view.name });
+
+		new ExtraButtonComponent(row).setIcon('play').setTooltip('Apply').onClick(() => {
+			this.toggleViewsPanel();
+			this.applySavedView(view);
+		});
+		new ExtraButtonComponent(row).setIcon('pencil').setTooltip('Rename').onClick(() => this.toggleEditingView(view.id));
+		new ExtraButtonComponent(row).setIcon('trash').setTooltip('Delete').onClick(() => this.deleteSavedView(view.id));
+	}
+
+	/** The rename form for `view` - just its name (see this class's own toggleViewsPanel() docstring for why there's nothing else to edit). Saves as it's typed, same "no separate Save/Cancel step" convention as every other panel here. */
+	private renderViewEditForm(view: SavedView): void {
+		const formEl = this.viewsListContainerEl.createDiv({ cls: 'clew-group-edit clew-group-edit-flat' });
+		const nameRowEl = formEl.createDiv({ cls: 'clew-group-name-row' });
+		new TextComponent(nameRowEl).setValue(view.name).onChange((value) => {
+			view.name = value;
+			void this.plugin.saveSettings();
+		});
+		new ExtraButtonComponent(nameRowEl).setIcon('x').setTooltip('Close').onClick(() => this.toggleEditingView(view.id));
+	}
+
+	private toggleEditingView(id: string): void {
+		this.editingViewId = this.editingViewId === id ? null : id;
+		this.renderViewsList();
+	}
+
+	private deleteSavedView(id: string): void {
+		const view = this.plugin.settings.savedViews.find((v) => v.id === id);
+		if (!view) return;
+		new ConfirmModal(this.app, 'Delete view?', `"${view.name}" will be permanently deleted.`, 'Delete', () => {
+			this.plugin.settings.savedViews = this.plugin.settings.savedViews.filter((v) => v.id !== id);
+			void this.plugin.saveSettings();
+			if (this.editingViewId === id) this.editingViewId = null;
+			this.renderViewsList();
+		}).open();
+	}
+
+	/**
+	 * Snapshots the current filter/group *enabled* sets, layout, and Focus
+	 * note into a new SavedView, saves it immediately, and opens it in rename
+	 * mode - same "exists and persists from the moment it's created" pattern
+	 * as startCreatingFilter()/startCreatingGroup(), a default name (with an
+	 * incrementing number) standing in until the user renames it.
+	 */
+	private startSavingCurrentView(): void {
+		if (this.plugin.settings.savedViews.length >= MAX_SAVED_VIEWS) return;
+		const view: SavedView = {
+			id: `view-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+			name: `View ${this.plugin.settings.savedViews.length + 1}`,
+			enabledFilterIds: this.plugin.settings.filterPresets.filter((preset) => preset.enabled).map((preset) => preset.id),
+			enabledGroupIds: this.plugin.settings.nodeGroups.filter((group) => group.enabled).map((group) => group.id),
+			layoutMode: this.layoutMode,
+			radialFocusPath: this.layoutMode === 'radial' ? this.radialFocusNode : null,
+			focusPath: this.focusFile?.path ?? null,
+			focusHops: this.focusHops,
+		};
+		this.plugin.settings.savedViews.push(view);
+		void this.plugin.saveSettings();
+		this.editingViewId = view.id;
+		this.renderViewsList();
+	}
+
+	/**
+	 * Restores exactly what startSavingCurrentView() captured: which filters/
+	 * groups are enabled (by id - see SavedView's own docstring for why a
+	 * since-deleted id is silently a no-op rather than an error), the layout,
+	 * and the Focus note. Order matters: filters/groups first (their reducers
+	 * are the "base" every subsequent repaint below builds on), then layout
+	 * (setRadialLayout()/setForceLayout()/etc. each already call
+	 * activateLayoutMode() -> applyNodeSizeSettings(), repainting the ring/
+	 * color state), then Focus last (applyFocus()'s own ego-graph reducer is
+	 * the most specific override, same "last one wins" precedence every other
+	 * mutually-exclusive graph state here already follows).
+	 */
+	private applySavedView(view: SavedView): void {
+		const enabledFilters = new Set(view.enabledFilterIds);
+		for (const preset of this.plugin.settings.filterPresets) preset.enabled = enabledFilters.has(preset.id);
+		const enabledGroups = new Set(view.enabledGroupIds);
+		for (const group of this.plugin.settings.nodeGroups) group.enabled = enabledGroups.has(group.id);
+		void this.plugin.saveSettings();
+		this.applyFilters();
+		this.applyNodeGroups();
+
+		// A radial view whose center note was since deleted/renamed falls
+		// back to Force rather than erroring - same "silently a no-op, not a
+		// crash" reasoning as a since-deleted filter/group id above.
+		if (view.layoutMode === 'radial' && view.radialFocusPath && this.graph?.hasNode(view.radialFocusPath)) {
+			this.setRadialLayout(view.radialFocusPath);
+		} else if (view.layoutMode === 'hierarchical') {
+			this.setHierarchicalLayout();
+		} else if (view.layoutMode === 'circular') {
+			this.setCircularLayout();
+		} else {
+			this.setForceLayout();
+		}
+
+		const focusFile = view.focusPath ? this.app.vault.getAbstractFileByPath(view.focusPath) : null;
+		if (focusFile instanceof TFile) this.applyFocus(focusFile, view.focusHops);
+		else this.clearFocus();
+		this.updateFocusButtonState();
 	}
 
 	private async openNote(vaultPath: string): Promise<void> {

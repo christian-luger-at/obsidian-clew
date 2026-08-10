@@ -1,4 +1,5 @@
 import { FilterCombineMode, FilterPreset } from './graph/filter';
+import { LayoutMode } from './graph/layoutModal';
 import { NodeGroup } from './graph/nodeGroups';
 import { DEFAULT_TIMELINE_DURATION, DEFAULT_TIMELINE_PACE_MODE, TimelineDuration, TimelinePaceMode } from './graph/timeline';
 
@@ -271,6 +272,47 @@ export interface ClewSettings {
 	 * folder-excluded note from an individually-excluded one downstream.
 	 */
 	pathfindingExcludedFolders: string[];
+	/** See SavedView's own docstring. Empty array = none saved yet - GraphPane's Views button has no "is-active" state to track (unlike Filter/Color & size, there's nothing here that's ever "on" independent of a specific view being applied). */
+	savedViews: SavedView[];
+}
+
+/**
+ * "Ansicht speichern unter …" - a named snapshot of every *view* toggle a
+ * user might combine before finding a graph shape worth returning to
+ * (which filter(s)/group(s) are on, the layout, and an active Focus note),
+ * bundled as one settings entry instead of each of those persisting only
+ * its own single "last state" (which is all filterPresets/nodeGroups/
+ * layoutMode already do independently - see GraphPane's own fields). GitHub
+ * backlog item 9, "Gespeicherte Ansichten/Workspaces".
+ *
+ * Deliberately *ids*, not copies, of the filters/groups it references
+ * (enabledFilterIds/enabledGroupIds) - a saved view is "turn these on",
+ * not a frozen copy of their criteria at save time, so editing a filter
+ * later (renaming it, changing its criteria) is reflected the next time
+ * any saved view that references it is applied, same as it already would
+ * be if you'd just left that filter enabled yourself. A saved view whose
+ * referenced filter/group was since deleted simply leaves that id
+ * matching nothing on apply (see GraphPane's applySavedView()) - no
+ * dangling-reference cleanup needed.
+ *
+ * No cloud sync, no export/import in this iteration (scope explicitly
+ * excluded per the backlog item) - just plugin.saveSettings()/loadData(),
+ * same persistence every other saved-state field here already uses.
+ */
+export interface SavedView {
+	id: string;
+	name: string;
+	/** FilterPreset ids that were enabled when this view was saved - see this interface's own docstring for why ids, not a snapshot of the presets themselves. */
+	enabledFilterIds: string[];
+	/** NodeGroup ids that were enabled when this view was saved - same reasoning as enabledFilterIds. */
+	enabledGroupIds: string[];
+	layoutMode: LayoutMode;
+	/** The radial layout's center note (vault path) - only meaningful (and only ever set) when layoutMode is 'radial'; null otherwise, same convention as GraphPane's own radialFocusNode field. */
+	radialFocusPath: string | null;
+	/** Focus's centered note (vault path), or null if no Focus was active when this view was saved - same convention as GraphPane's own focusFile field, stored as a path (not a TFile) since settings are plain JSON. */
+	focusPath: string | null;
+	/** Focus's hop-depth setting - meaningless while focusPath is null, kept anyway (rather than defaulting to 1 on apply) so re-focusing the same note on apply restores the exact hop count it had when saved. */
+	focusHops: number;
 }
 
 export interface ClewTimelineSettings {

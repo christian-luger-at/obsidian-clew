@@ -77,6 +77,7 @@ export default class ClewPlugin extends Plugin {
 			showDefaultColorGroups: loaded?.showDefaultColorGroups ?? true,
 			pathfindingExcludedNotes: [...(loaded?.pathfindingExcludedNotes ?? [])],
 			pathfindingExcludedFolders: [...(loaded?.pathfindingExcludedFolders ?? [])],
+			savedViews: [...(loaded?.savedViews ?? [])],
 		};
 		this.syncDefaultPresets();
 	}
