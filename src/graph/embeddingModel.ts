@@ -38,15 +38,18 @@ import type { FeatureExtractionPipeline, ProgressInfo } from '@huggingface/trans
  * (an earlier version had exactly that) is hoisted and evaluated before
  * any of this file's own code can run, so there is no way to intervene in
  * time. loadTransformers() below uses a *dynamic* `import()` instead,
- * bracketed by a temporary, narrowly-scoped shim of `process.release`
- * (not all of `process` - the smallest change that still makes
- * `process?.release?.name === "node"` false) for just the duration of
- * that one import call, restored immediately after in a `finally`. With
- * `IS_NODE_ENV` correctly false, transformers.js binds to the real
- * `onnxruntime-web` build instead, and `"wasm"` becomes a valid device -
- * exactly the code path already confirmed working in a plain (non-
- * Electron) browser context - see DEVELOPMENT.md's own write-up for that
- * verification.
+ * bracketed by a temporary, narrowly-scoped shim - swapping out
+ * `window.process` itself for a shallow copy with `release` overridden,
+ * not (an earlier version's attempt) mutating `process.release` on the
+ * *real* process object in place, which throws `TypeError: Cannot assign
+ * to read only property 'release' of object '#<process>'` - Electron
+ * locks that specific property down (user-reported), even though
+ * `window.process` as a whole is still a plain, reassignable property.
+ * Restored immediately after in a `finally`. With `IS_NODE_ENV` correctly
+ * false, transformers.js binds to the real `onnxruntime-web` build
+ * instead, and `"wasm"` becomes a valid device - exactly the code path
+ * already confirmed working in a plain (non-Electron) browser context -
+ * see DEVELOPMENT.md's own write-up for that verification.
  */
 async function loadTransformers(): Promise<typeof import('@huggingface/transformers')> {
 	// `window`, not `globalThis` (Obsidian plugin-review lint) - Electron
@@ -55,13 +58,19 @@ async function loadTransformers(): Promise<typeof import('@huggingface/transform
 	// process-wide Node/Electron global with no per-pop-out-window meaning
 	// at all (unlike the DOM globals `no-global-this` actually exists for,
 	// e.g. `document`/`localStorage`, which really do differ per window).
-	const proc = (window as unknown as { process?: { release?: unknown } }).process;
-	const originalRelease = proc?.release;
+	const win = window as unknown as { process?: object };
+	const originalProcess = win.process;
 	try {
-		if (proc) proc.release = { name: 'browser' };
+		// A shallow copy, not a bare `{ release: ... }` - transformers.js
+		// also reads `process.platform`/`process.arch`/`process.versions`
+		// elsewhere (see deviceToExecutionProviders() in this file's own
+		// docstring), and nothing else in Obsidian/Electron should notice
+		// `process` briefly pointing at a copy instead of the original
+		// object, since every *other* property still reads identically.
+		if (originalProcess) win.process = { ...originalProcess, release: { name: 'browser' } };
 		return await import('@huggingface/transformers');
 	} finally {
-		if (proc) proc.release = originalRelease;
+		if (originalProcess) win.process = originalProcess;
 	}
 }
 
