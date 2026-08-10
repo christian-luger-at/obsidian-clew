@@ -32,6 +32,7 @@ export type GroupCriterionType =
 	| 'pageRank'
 	| 'isolatedComponent'
 	| 'community'
+	| 'semanticCluster'
 	| 'text'
 	| 'folder'
 	| 'filename'
@@ -219,6 +220,27 @@ export interface CommunityCriterion {
 }
 
 /**
+ * Matches notes in one specific *semantic* cluster - same "ranked by size,
+ * 0 is the largest" numbering as CommunityCriterion above, but grouped by
+ * meaning (cosine similarity between each note's title+content embedding -
+ * see embeddings.ts) instead of by link structure. GitHub backlog item 16,
+ * "Semantisches Clustering": the whole point is surfacing notes that read
+ * as related even though nothing links them, so this deliberately doesn't
+ * reuse `community` itself (which is inherently a *link*-graph concept -
+ * two notes with identical content but zero shared links, direct or
+ * indirect, can never land in the same Louvain community, no matter how
+ * this criterion is defined). `clusterId` is a rank into
+ * embeddings.ts's detectSemanticClusters() output, computed once per
+ * repaint and shared across every enabled `semanticCluster` criterion the
+ * same way Louvain communities already are - see needsSemanticClustering()
+ * and GraphPane's buildCriteriaFacts().
+ */
+export interface SemanticClusterCriterion {
+	type: 'semanticCluster';
+	clusterId: number;
+}
+
+/**
  * `& { negate?: boolean }` rather than adding the field to each of the 13
  * interfaces above - an intersection with a union still distributes over
  * it (so `criterion.type` narrowing in the switches below is unaffected),
@@ -250,6 +272,7 @@ export type GroupCriterion = (
 	| PageRankCriterion
 	| IsolatedComponentCriterion
 	| CommunityCriterion
+	| SemanticClusterCriterion
 	| TextCriterion
 	| FolderCriterion
 	| FilenameCriterion
@@ -317,6 +340,8 @@ export interface NodeGroupFacts {
 	isolatedComponent: boolean | null;
 	/** The note's Louvain community, ranked by size (0 = largest present) - null if not computed (no enabled group needs it, see needsCommunity()). Backs the `community` criterion. */
 	communityId: number | null;
+	/** The note's semantic cluster (embeddings.ts's detectSemanticClusters()), ranked by size (0 = largest present) - null if not computed (no enabled group needs it, see needsSemanticClustering()), or if embedding hasn't finished yet. Backs the `semanticCluster` criterion. */
+	semanticClusterId: number | null;
 	/** File modification time (ms since epoch) - backs the `staleDays` criterion, same source as filter.ts's NoteFilterFacts.mtime. */
 	mtime: number;
 	/** Link count (graph.degree()) - backs the `minLinks` criterion, same source as filter.ts's NoteFilterFacts.degree. */
@@ -435,6 +460,8 @@ function matchesCriterionValue(facts: NodeGroupFacts, criterion: GroupCriterion)
 			return facts.isolatedComponent === criterion.isolated;
 		case 'community':
 			return facts.communityId !== null && facts.communityId === criterion.communityId;
+		case 'semanticCluster':
+			return facts.semanticClusterId !== null && facts.semanticClusterId === criterion.clusterId;
 		case 'text': {
 			const query = criterion.query.trim().toLowerCase();
 			return query !== '' && facts.content.includes(query);
@@ -500,6 +527,7 @@ function isCriterionUnconfigured(criterion: GroupCriterion): boolean {
 		case 'pageRank':
 		case 'isolatedComponent':
 		case 'community':
+		case 'semanticCluster':
 		case 'staleDays':
 		case 'minLinks':
 		case 'existence':
@@ -586,6 +614,11 @@ export function needsCommunity(owners: CriteriaOwner[]): boolean {
 	return owners.some((o) => o.enabled && o.criteria.some((c) => c.type === 'community'));
 }
 
+/** Whether any enabled group/preset has at least one `semanticCluster` criterion - GraphPane only pays for embedding every note's content + clustering it (real I/O + CPU cost, and a one-time model download the first time) when this is true. Own gate, not folded into needsCommunity() - see SemanticClusterCriterion's own docstring for why the two are unrelated computations. */
+export function needsSemanticClustering(owners: CriteriaOwner[]): boolean {
+	return owners.some((o) => o.enabled && o.criteria.some((c) => c.type === 'semanticCluster'));
+}
+
 const STRING_OPERATOR_LABELS: Record<StringOperator, string> = {
 	contains: 'contains',
 	equals: 'equals',
@@ -644,6 +677,8 @@ export function describeCriterion(criterion: GroupCriterion): string {
 			return criterion.isolated ? "Connectivity: cut off from the vault's main body" : "Connectivity: in the vault's main body";
 		case 'community':
 			return `Community ${negate ? 'is not' : 'is'} ${criterion.communityId + 1}`;
+		case 'semanticCluster':
+			return `Semantic cluster ${negate ? 'is not' : 'is'} ${criterion.clusterId + 1}`;
 		case 'staleDays':
 			return `${negate ? 'Less than' : 'At least'} ${criterion.days} days ago`;
 		case 'minLinks':

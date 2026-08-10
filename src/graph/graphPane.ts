@@ -37,6 +37,7 @@ import {
 	needsContentSearch,
 	needsIsolatedComponent,
 	needsPageRank,
+	needsSemanticClustering,
 	needsStructuralDeviation,
 	NodeGroup,
 	NodeGroupFacts,
@@ -44,6 +45,8 @@ import {
 	StringOperator,
 	StructuralCohesionBucket,
 } from './nodeGroups';
+import { embedText, loadEmbeddingModel } from './embeddingModel';
+import { detectSemanticClusters } from './semanticClustering';
 import { ClewAppearanceSettings, DEFAULT_APPEARANCE_SETTINGS, SavedView } from '../settings';
 import {
 	computeTimelineBounds,
@@ -169,6 +172,7 @@ const CRITERION_TYPE_LABELS: Record<GroupCriterionType, string> = {
 	// color/size/filter by directly).
 	isolatedComponent: 'Connectivity',
 	community: 'Community',
+	semanticCluster: 'Semantic cluster',
 	// Not "Not edited at least"/"Minimum number of links" any more - those
 	// phrases now live in the controls themselves as the clickable
 	// include/exclude word (renderCriterionEditRow()'s staleDays/minLinks
@@ -211,6 +215,8 @@ const CRITERION_DESCRIPTIONS: Record<GroupCriterionType, string> = {
 	isolatedComponent: "Whether the note's connected component is the vault's single largest one, or a smaller pocket cut off from it.",
 	community:
 		'Notes are grouped into tightly-linked neighborhoods automatically, the same grouping Activity/Structure use. Pick any note that belongs to the neighborhood you want - every other note in it matches too.',
+	semanticCluster:
+		"Notes are grouped by what they're actually about (their title and body text), regardless of whether anything links them - unlike Community, above, which only ever groups notes that are already linked, directly or through others. The first time you add this, Clew reads every note's content and computes it locally (nothing leaves your device); after that it's cached and only redone for notes you've changed.",
 	existence: "Whether this is a real note, or a 'ghost' node - a link to a note that doesn't exist yet.",
 };
 
@@ -634,6 +640,32 @@ export class GraphPane {
 	private availableFolders: string[] = [];
 	/** Lowercased "title\ncontent" per note path - only populated when at least one enabled group has a `text` criterion (see nodeGroups.ts's needsContentSearch()); refreshed by refreshNoteContentCache(). Reading every note's body is a real I/O cost, so this stays empty (and unused) otherwise. */
 	private noteContentCache = new Map<string, string>();
+	/**
+	 * GitHub backlog item 16, "Semantisches Clustering" - each note's
+	 * semantic cluster, ranked by size (0 = largest present), same
+	 * "null until something needs it" convention as noteContentCache above -
+	 * only populated once at least one enabled group has a `semanticCluster`
+	 * criterion (see nodeGroups.ts's needsSemanticClustering()), set by
+	 * refreshSemanticClusters(). Backs the `semanticCluster` criterion via
+	 * buildCriteriaFacts().
+	 */
+	private semanticClusterByPath: Map<string, number> | null = null;
+	/**
+	 * Each note's embedding vector, keyed by `${path}:${mtime}` - the mtime
+	 * in the key is the entire invalidation mechanism (an edited note gets a
+	 * new key, so its stale vector is simply never looked up again, no
+	 * explicit "clear this one entry" step needed - same pattern
+	 * ctimeByPath/mtimeByPath already rely on being refreshed wholesale in
+	 * setFiles()). Session-lifetime only (an instance field, not persisted
+	 * to plugin.settings) - see embeddingModel.ts's own docstring for why
+	 * only the *model* is memoized at module scope; re-embedding on plugin
+	 * reload is the deliberate, documented first-cut tradeoff (see
+	 * DEVELOPMENT.md's spike write-up) against bloating data.json with a
+	 * float array per note.
+	 */
+	private semanticEmbeddingCache = new Map<string, Float32Array>();
+	/** Drives the Color & size panel's "Computing embeddings…" status line (renderColorAndSizePanel()) while refreshSemanticClusters() is in flight - a first-time model download/load can take several seconds to tens of seconds (see the spike write-up), long enough that the panel would otherwise look frozen with no feedback at all. */
+	private semanticClusteringStatus: 'idle' | 'loading' | 'ready' | 'error' = 'idle';
 	private readonly appearanceButton: HTMLButtonElement;
 	private readonly diagnosticsButton: HTMLButtonElement;
 	private readonly diagnosticsPanelEl: HTMLElement;
@@ -2946,6 +2978,7 @@ export class GraphPane {
 				pageRank: pageRankByNode?.get(file.path) ?? null,
 				isolatedComponent: isolatedComponentByNode?.get(file.path) ?? null,
 				communityId: communityRankByNode?.get(file.path) ?? null,
+				semanticClusterId: this.semanticClusterByPath?.get(file.path) ?? null,
 				mtime: this.mtimeByPath.get(file.path) ?? file.stat.mtime,
 				degree: this.graph?.degree(file.path) ?? 0,
 				exists: true,
@@ -2965,6 +2998,7 @@ export class GraphPane {
 				pageRank: null,
 				isolatedComponent: null,
 				communityId: null,
+				semanticClusterId: null,
 				mtime: 0,
 				degree: this.graph?.degree(node) ?? 0,
 				exists: false,
@@ -3075,6 +3109,23 @@ export class GraphPane {
 		const sizeByRank = new Map<number, number>();
 		for (const rank of rankByNode.values()) sizeByRank.set(rank, (sizeByRank.get(rank) ?? 0) + 1);
 		return { rankByNode, sizeByRank };
+	}
+
+	/**
+	 * Same shape as communityRanking() above, for the `semanticCluster`
+	 * criterion's own note picker - but derived from the already-computed
+	 * semanticClusterByPath (null until refreshSemanticClusters() has run at
+	 * least once) rather than recomputed fresh on every call. Unlike Louvain
+	 * over the link graph (cheap enough to redo on demand, see
+	 * communityRanking()'s own docstring), re-running this would mean
+	 * re-embedding every note - a real cost this deliberately avoids paying
+	 * more than once per content change.
+	 */
+	private semanticClusterRanking(): { rankByNode: Map<string, number>; sizeByRank: Map<number, number> } | null {
+		if (!this.semanticClusterByPath) return null;
+		const sizeByRank = new Map<number, number>();
+		for (const rank of this.semanticClusterByPath.values()) sizeByRank.set(rank, (sizeByRank.get(rank) ?? 0) + 1);
+		return { rankByNode: this.semanticClusterByPath, sizeByRank };
 	}
 
 	/** graphAnalytics.ts's computeBetweenness(), normalized relative to every other node present - backs the `betweenness` group criterion. */
@@ -4299,6 +4350,50 @@ export class GraphPane {
 		this.noteContentCache = new Map(entries);
 	}
 
+	/**
+	 * GitHub backlog item 16, "Semantisches Clustering" - the async pipeline
+	 * behind the `semanticCluster` criterion. Loads the embedding model
+	 * (embeddingModel.ts's loadEmbeddingModel(), memoized for the whole
+	 * plugin session - only genuinely slow the very first time this runs at
+	 * all), embeds every current note not already in
+	 * semanticEmbeddingCache (reusing noteContentCache's own "title\ncontent"
+	 * text when it's already populated, same as buildCriteriaFacts()'s
+	 * `content` field does, rather than reading every file a second time),
+	 * then re-clusters over all of them (semanticClustering.ts's
+	 * detectSemanticClusters()).
+	 *
+	 * Errors - most likely no network on a first-ever model download, since
+	 * the model itself is fetched from the Hugging Face Hub's CDN rather
+	 * than bundled (see embeddingModel.ts's own docstring) - are caught and
+	 * surfaced via semanticClusteringStatus instead of becoming an
+	 * unhandled rejection; refreshCriteriaContent() awaits this directly.
+	 */
+	private async refreshSemanticClusters(): Promise<void> {
+		this.semanticClusteringStatus = 'loading';
+		if (this.colorAndSizePanelEl.isShown()) this.renderColorAndSizePanel();
+		try {
+			const extractor = await loadEmbeddingModel();
+			const vectors = new Map<string, Float32Array>();
+			for (const file of this.files) {
+				const mtime = this.mtimeByPath.get(file.path) ?? file.stat.mtime;
+				const cacheKey = `${file.path}:${mtime}`;
+				let vector = this.semanticEmbeddingCache.get(cacheKey);
+				if (!vector) {
+					const content = this.noteContentCache.get(file.path) ?? `${file.basename}\n${await this.app.vault.cachedRead(file)}`.toLowerCase();
+					vector = await embedText(extractor, content);
+					this.semanticEmbeddingCache.set(cacheKey, vector);
+				}
+				vectors.set(file.path, vector);
+			}
+			this.semanticClusterByPath = detectSemanticClusters([...vectors.keys()], vectors);
+			this.semanticClusteringStatus = 'ready';
+		} catch (err) {
+			console.error('Clew: failed to compute semantic embeddings', err);
+			this.semanticClusterByPath = null;
+			this.semanticClusteringStatus = 'error';
+		}
+	}
+
 	/** Synchronous repaint using whatever's already in noteContentCache - the part of applyNodeGroups() every group-definition change needs *immediately*, split out so refreshNodeGroupContent() below can call it again once fresh content lands, without redoing the button-state/graph-guard bookkeeping twice. */
 	private repaintNodeGroups(): void {
 		this.updateColorAndSizeButtonState();
@@ -4310,19 +4405,31 @@ export class GraphPane {
 
 	/**
 	 * The async half of applyNodeGroups()/filterCriteriaContext()'s onChange
-	 * - refreshes (or clears) noteContentCache to match whether any enabled
-	 * group *or the filter* currently needs it (see filter.ts's docstring
-	 * for why both now share the exact same `text` criterion), repainting
-	 * both again only when that cache actually changed.
+	 * - refreshes (or clears) noteContentCache and semanticClusterByPath to
+	 * match whether any enabled group *or the filter* currently needs each
+	 * (see filter.ts's docstring for why both share the exact same `text`
+	 * criterion, and needsSemanticClustering()'s own docstring for why
+	 * semantic clustering is a separate, independent gate), repainting once
+	 * more only when either actually changed.
 	 */
 	private async refreshCriteriaContent(): Promise<void> {
+		let changed = false;
 		if (needsContentSearch(this.allCriteriaOwners())) {
 			await this.refreshNoteContentCache();
+			changed = true;
 		} else if (this.noteContentCache.size > 0) {
 			this.noteContentCache = new Map();
-		} else {
-			return;
+			changed = true;
 		}
+		if (needsSemanticClustering(this.allCriteriaOwners())) {
+			await this.refreshSemanticClusters();
+			changed = true;
+		} else if (this.semanticClusterByPath !== null) {
+			this.semanticClusterByPath = null;
+			this.semanticClusteringStatus = 'idle';
+			changed = true;
+		}
+		if (!changed) return;
 		this.repaintNodeGroups();
 		this.applyFilter();
 	}
@@ -4547,6 +4654,11 @@ export class GraphPane {
 			// (arbitrary) internal numbering.
 			case 'community':
 				return { type, communityId: 0 };
+			// Same "0 - the largest, ranked by size" reasoning as `community`
+			// above, just over semanticClusterRanking() instead of
+			// communityRanking().
+			case 'semanticCluster':
+				return { type, clusterId: 0 };
 			case 'text':
 				return { type, query: '' };
 			case 'folder':
@@ -4619,7 +4731,12 @@ export class GraphPane {
 					// (see renderCriterionEditRow()'s 'community' case). A
 					// no-op for Filter (filterCriteriaContext() leaves this
 					// hook unset - a FilterPreset has no color of its own).
+					// `semanticCluster` reuses the exact same hook/palette -
+					// nodeGroups.ts's communityColor() is just "id modulo the
+					// palette", equally meaningful for a semantic cluster's
+					// own rank as for a Louvain community's.
 					if (criterion.type === 'community') ctx.onCommunityColorSync?.(criterion.communityId);
+					else if (criterion.type === 'semanticCluster') ctx.onCommunityColorSync?.(criterion.clusterId);
 					// Opens straight into its expanded controls rather than
 					// showing as an unconfigured chip first - it needs setting
 					// up right away, and there's nothing useful a collapsed
@@ -4649,6 +4766,7 @@ export class GraphPane {
 		addOption('pageRank', 'Prominence (PageRank)');
 		addOption('isolatedComponent', "Connectivity (cut off from the vault's main body)");
 		addOption('community', 'Community');
+		addOption('semanticCluster', 'Semantic cluster');
 		addOption('minLinks', 'Minimum number of links');
 		addOption('existence', 'Existence (real vs. missing note)');
 		menu.showAtMouseEvent(evt);
@@ -5054,6 +5172,57 @@ export class GraphPane {
 				controlsEl.createSpan({
 					cls: 'clew-criterion-community-badge',
 					text: size !== undefined ? `→ Community ${criterion.communityId + 1} · ${size} ${size === 1 ? 'note' : 'notes'}` : `→ Community ${criterion.communityId + 1}`,
+				});
+				break;
+			}
+			case 'semanticCluster': {
+				// Same note-picker shape as `community` above (and the exact
+				// same reasoning for it) - the one real difference is that
+				// this can't just recompute on demand the way Louvain over the
+				// link graph can (communityRanking()'s own docstring):
+				// semanticClusterByPath is only ever set by
+				// refreshSemanticClusters(), an async embedding pass
+				// refreshCriteriaContent() already kicked off the moment this
+				// criterion was added/enabled (needsSemanticClustering()) - so
+				// this shows that pass's current status instead of a picker
+				// while it's still running, rather than a picker with nothing
+				// real to resolve names against yet.
+				this.renderNegateWord(controlsEl, criterion, { include: 'is', exclude: 'is not' }, applyLive);
+
+				if (this.semanticClusteringStatus === 'error') {
+					controlsEl.createSpan({
+						cls: 'clew-criterion-community-badge',
+						text: 'Could not compute embeddings - check your connection, then reopen this panel to retry.',
+					});
+					break;
+				}
+				if (this.semanticClusteringStatus !== 'ready') {
+					controlsEl.createSpan({ cls: 'clew-criterion-community-badge', text: 'Computing embeddings…' });
+					break;
+				}
+
+				const ranking = this.semanticClusterRanking();
+				const pickerInput = new TextComponent(controlsEl);
+				pickerInput.setPlaceholder('Pick a note in it…');
+				pickerInput.inputEl.addClass('clew-note-picker-input');
+				const suggest = new NoteSuggest(this.app, pickerInput.inputEl, this.files);
+				suggest.onSelect((file) => {
+					const rank = ranking?.rankByNode.get(file.path);
+					if (rank === undefined) return; // a ghost node, or a note that hasn't been embedded (e.g. added after the last refresh) - nothing to resolve to
+					criterion.clusterId = rank;
+					suggest.setValue(file.basename);
+					suggest.close();
+					ctx.onCommunityColorSync?.(criterion.clusterId);
+					rerender(); // the "(N notes)" badge below depends on clusterId
+				});
+
+				const size = ranking?.sizeByRank.get(criterion.clusterId);
+				controlsEl.createSpan({
+					cls: 'clew-criterion-community-badge',
+					text:
+						size !== undefined
+							? `→ Semantic cluster ${criterion.clusterId + 1} · ${size} ${size === 1 ? 'note' : 'notes'}`
+							: `→ Semantic cluster ${criterion.clusterId + 1}`,
 				});
 				break;
 			}

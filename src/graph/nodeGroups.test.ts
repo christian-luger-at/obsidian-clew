@@ -29,6 +29,7 @@ function facts(overrides: Partial<NodeGroupFacts> = {}): NodeGroupFacts {
 		pageRank: null,
 		isolatedComponent: null,
 		communityId: null,
+		semanticClusterId: null,
 		mtime: 0,
 		degree: 0,
 		exists: true,
