@@ -178,6 +178,45 @@ export interface CreateRendererOptions {
 	edgeArrowSize?: number;
 }
 
+/**
+ * sigma's own default `labelSize` (settings/dist's DEFAULT_SETTINGS) - the
+ * font size used at the camera's resting ratio (1), and the ceiling
+ * updateLabelSizeForZoom() below clamps to, so zooming in never grows
+ * labels past how they already look today.
+ */
+const LABEL_SIZE_BASE = 14;
+/** Floor updateLabelSizeForZoom() clamps to while zoomed out - small enough to noticeably reduce overlap, still legible (not far off labelRenderedSizeThreshold's own default floor). */
+const LABEL_SIZE_MIN = 6;
+
+/**
+ * GitHub backlog item 13, "Dynamische Schriftgröße bei Zoom": sigma's
+ * `labelSize` is a single fixed number (not, as it turns out, a
+ * per-camera-ratio function - checked sigma's own settings types), drawn at
+ * that constant CSS pixel size regardless of zoom. At vault scale, zooming
+ * out to see the whole graph packs many more node labels into the same
+ * screen area while each stays full-size, so they overlap into unreadable
+ * mush - user-reported. Re-deriving `labelSize` from the camera's own
+ * `ratio` (sigma's zoom-out measure - 1 at rest, growing as you zoom out,
+ * shrinking below 1 as you zoom in) on every camera change and pushing it
+ * back in via `renderer.setSetting()` makes labels shrink as you zoom out,
+ * without touching labelDensity (which still separately governs *how many*
+ * labels are allowed to render at all at a given zoom - a deliberately
+ * untouched, separate lever, see this backlog item's own "Abgrenzung").
+ * Scoped to this renderer's own camera instance - no explicit teardown
+ * needed, since GraphPane always creates a fresh Sigma (and so a fresh
+ * camera) per createRenderer() call and never keeps the old one around
+ * after renderer.kill() (see GraphPane's setFiles()/onClose()).
+ */
+function watchZoomForLabelSize(renderer: Sigma): void {
+	const camera = renderer.getCamera();
+	const update = (): void => {
+		const scaled = LABEL_SIZE_BASE / camera.ratio;
+		renderer.setSetting('labelSize', Math.min(LABEL_SIZE_BASE, Math.max(LABEL_SIZE_MIN, scaled)));
+	};
+	camera.on('updated', update);
+	update();
+}
+
 export function createRenderer(graph: Graph, container: HTMLElement, options: CreateRendererOptions = {}): Sigma {
 	const {
 		defaultEdgeColor = '#888888',
@@ -188,7 +227,7 @@ export function createRenderer(graph: Graph, container: HTMLElement, options: Cr
 		edgeArrowSize = 1,
 	} = options;
 
-	return new Sigma(graph, container, {
+	const renderer = new Sigma(graph, container, {
 		// sigma ignores every node/edge `zIndex` attribute by default (drawn
 		// in graph/insertion order instead) unless this is explicitly
 		// turned on - GraphPane's highlight reducers (hover, search,
@@ -268,4 +307,7 @@ export function createRenderer(graph: Graph, container: HTMLElement, options: Cr
 		labelDensity,
 		hideLabelsOnMove: true,
 	});
+
+	watchZoomForLabelSize(renderer);
+	return renderer;
 }

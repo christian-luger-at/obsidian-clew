@@ -1196,6 +1196,24 @@ manual copy step. Then open `test-vault` in Obsidian and check:
     back to Force layout instead of erroring.
   - Trash icon deletes a view after a confirm dialog, same convention as
     deleting a filter/group.
+- **Dynamic label size on zoom** (GitHub backlog item 13, "Dynamische
+  Schriftgröße bei Zoom" - renderer.ts's `watchZoomForLabelSize()`): labels
+  used to render at a single fixed size (sigma's own `labelSize`,
+  independent of zoom) - overlapping into unreadable mush once enough of
+  them packed into the same screen area while zoomed out. Open a vault with
+  enough notes to have visible clustering, zoom to fit (or "Reset view"),
+  then zoom out further with the scroll wheel/pinch past that point -
+  labels should visibly shrink as you go, not stay full-size and overlap.
+  Zoom back in - they should grow back, capped at their original size (not
+  bigger than normal at 1:1 zoom or closer). `labelDensity` (*how many*
+  labels are allowed to render per area) is untouched by this - confirm the
+  *number* of labels showing at a given zoom looks the same as before, only
+  their individual size differs. Also lowered `labelSizeThreshold`'s
+  default from 9 to 2 (settings.ts's `DEFAULT_APPEARANCE_SETTINGS` - the
+  Appearance panel's "Label size threshold" slider's own floor is already
+  2) so more labels are visible to shrink in the first place - existing
+  vaults keep whatever value they'd already saved; this only changes what a
+  fresh install (or "Reset to defaults") starts at.
 
 ## Performance testing at scale (rendering)
 

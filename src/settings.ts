@@ -139,7 +139,7 @@ export const DEFAULT_APPEARANCE_SETTINGS: ClewAppearanceSettings = {
 	scalingRatio: 10,
 	dissuadeHubs: false,
 	linLogMode: false,
-	labelSizeThreshold: 9,
+	labelSizeThreshold: 2,
 	labelDensity: 0.5,
 	radialRingSpacing: 120,
 	circularRadius: 400,
