@@ -42,6 +42,11 @@ const VIEW_TYPE = 'clew-standalone-graph';
 // notes are the highest-degree nodes) - a good subject for the "hover
 // highlights connections" shot.
 const HOVER_NODE_ID = 'History/4-Modern/World War II Era.md';
+// Note title typed into the Focus panel's note picker for the focus-panel
+// shot - a well-connected, recognizable entry (not a hub) so the resulting
+// ego-graph reads as a meaningful neighborhood, not an entire era's worth
+// of notes.
+const FOCUS_NODE_NAME = 'World War II Era';
 
 const log = (m) => console.log(`  ${m}`);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -321,10 +326,16 @@ async function capture(page) {
 
 		await attempt(`layout-picker-${theme}`, async () => {
 			await clickToolbarIcon(page, 'Layout');
-			await page.waitForSelector('.clew-layout-option-list', { timeout: 5000 });
+			// The Layout picker used to be a separate Obsidian Modal
+			// (`.modal-container`) - the Dialog-Management redesign folded it
+			// into the same `.clew-filter-panel` shell every other panel uses
+			// (see graphPane.ts's topbarEl docstring), so it's captured the
+			// same way as Filter/Color & size/etc. below, not as a modal.
+			await page.waitForSelector('.clew-filter-panel:visible .clew-layout-option-list', { timeout: 5000 });
 			await sleep(300);
-			await shoot(page, 'layout-picker', theme, '.modal-container');
-			await closeModals(page);
+			await shoot(page, 'layout-picker', theme, '.clew-filter-panel');
+			await closePanel(page, '.clew-filter-panel:visible');
+			await sleep(200);
 		});
 
 		await attempt(`filter-panel-${theme}`, async () => {
@@ -364,6 +375,36 @@ async function capture(page) {
 			await sleep(300);
 			await shoot(page, 'appearance-panel', theme, '.clew-appearance-panel');
 			await closePanel(page, '.clew-appearance-panel');
+			await sleep(200);
+		});
+
+		await attempt(`focus-panel-${theme}`, async () => {
+			await clickToolbarIcon(page, 'Focus');
+			await page.waitForSelector('.clew-filter-panel:visible', { timeout: 5000 });
+			await sleep(300);
+			// Pick a note and apply Focus, so the panel shows a real "active
+			// focus" summary rather than the empty note-picker state.
+			const input = page.locator('.clew-filter-panel:visible input[type="text"]').first();
+			await input.click();
+			await input.fill(FOCUS_NODE_NAME);
+			await sleep(400);
+			await page.keyboard.press('Enter');
+			await sleep(500);
+			await shoot(page, 'focus-panel', theme, '.clew-filter-panel');
+			// Focus's own Close button clears the active focus too (there's no
+			// separate "Clear" control - see renderFocusPanel()'s docstring), so
+			// this alone stops it lingering and hiding most of the graph for
+			// later shots.
+			await closePanel(page, '.clew-filter-panel:visible');
+			await sleep(200);
+		});
+
+		await attempt(`diagnostics-panel-${theme}`, async () => {
+			await clickToolbarIcon(page, 'Diagnostics');
+			await page.waitForSelector('.clew-filter-panel:visible', { timeout: 5000 });
+			await sleep(300);
+			await shoot(page, 'diagnostics-panel', theme, '.clew-filter-panel');
+			await closePanel(page, '.clew-filter-panel:visible');
 			await sleep(200);
 		});
 

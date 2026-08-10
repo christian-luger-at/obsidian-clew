@@ -520,6 +520,15 @@ for (const category of CATEGORIES) {
 	written++;
 }
 
+// A couple of entries get an extra link to a note that doesn't exist -
+// deliberately, so the Diagnostics panel's "Broken links" section (and the
+// `existence`/ghost-node filter criterion) has something real to show
+// instead of an empty state in screenshots/demos.
+const BROKEN_LINKS = new Map([
+	['World Wide Web', 'Lost Internet Archive Draft'],
+	['Rise of Artificial Intelligence', 'Turing Test Committee Report'],
+]);
+
 // Individual entries.
 for (const entry of ENTRIES) {
 	const category = categoryByName.get(entry.category);
@@ -527,15 +536,44 @@ for (const entry of ENTRIES) {
 	const frontmatterLines = [`era: ${entry.category}`, `region: ${category.region}`, `period: ${category.period}`, `year: ${entry.year}`];
 	if (entry.cover) frontmatterLines.push('cover: attachments/cover.svg');
 	const frontmatter = `---\n${frontmatterLines.join('\n')}\n---\n\n`;
+	const brokenTarget = BROKEN_LINKS.get(entry.name);
 	const body = [
 		frontmatter,
 		`# ${entry.name}\n\n`,
 		`*${yearLabel(entry.year)}*\n\n`,
 		`${entry.summary}\n\n`,
 		links.length ? `## Links\n\n${links.map((l) => `[[${l}]]`).join(' ')}\n` : '',
+		brokenTarget ? `## Also see\n\n[[${brokenTarget}]]\n` : '',
 	].join('');
 	writeNote(PERIOD_FOLDER[category.period], entry.name, body, mtimeFor(entry.year, index));
 	index++;
+	written++;
+}
+
+// A handful of deliberately "flawed" notes - not part of the CATEGORIES/
+// ENTRIES structure above, and not linked into the hub-and-spoke graph at
+// all - so the Diagnostics panel has real, non-empty content to show for
+// every section, not just Orphans/Broken links (both already covered
+// above): two true orphans (no links in or out at all) and a small
+// three-note cluster that's both cut off from the vault's main body
+// ("Isolated clusters") and scattered across three different period
+// folders despite being tightly linked to each other ("Structural
+// deviation" - Louvain groups them as one community, and their folder
+// spread pushes that community's homogeneity below the 'cohesive'
+// threshold).
+writeNote('5-Contemporary', 'Unattributed Fragment', '# Unattributed Fragment\n\nA short, undated note with no known context or connections.\n', mtimeFor(2020, index++));
+written++;
+writeNote('5-Contemporary', 'Anonymous Chronicle', '# Anonymous Chronicle\n\nA chronicle of unclear authorship, never linked to any other record.\n', mtimeFor(2015, index++));
+written++;
+
+const FORGOTTEN_KINGDOMS = [
+	{ name: 'Forgotten Kingdom A', folder: '1-Ancient', period: 'Ancient', links: ['Forgotten Kingdom B', 'Forgotten Kingdom C'] },
+	{ name: 'Forgotten Kingdom B', folder: '2-Medieval', period: 'Medieval', links: ['Forgotten Kingdom A', 'Forgotten Kingdom C'] },
+	{ name: 'Forgotten Kingdom C', folder: '4-Modern', period: 'Modern', links: ['Forgotten Kingdom A', 'Forgotten Kingdom B'] },
+];
+for (const kingdom of FORGOTTEN_KINGDOMS) {
+	const body = `---\nperiod: ${kingdom.period}\n---\n\n# ${kingdom.name}\n\nA minor realm known only through the notes of its neighbors, never connected to the wider historical record.\n\n## Links\n\n${kingdom.links.map((l) => `[[${l}]]`).join(' ')}\n`;
+	writeNote(kingdom.folder, kingdom.name, body, mtimeFor(500, index++));
 	written++;
 }
 

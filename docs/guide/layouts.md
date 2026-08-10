@@ -18,7 +18,7 @@ Arranges notes top-down by link direction, like a tree or outline. Best when you
 
 ## Radial
 
-Rings every note out from one you pick, by link distance - its direct links on the first ring, their links on the next ring, and so on. Choosing "Radial" always opens a note picker first, since it needs to know which note to center on. Best for "how does the rest of my vault relate to this one note?".
+Rings every note out from one you pick, by link distance - its direct links on the first ring, their links on the next ring, and so on. Choosing "Radial" always opens a note picker first, since it needs to know which note to center on. Best for "how does the rest of my vault relate to this one note?" while still seeing everything. If the whole vault is too much even laid out this way, see [Focus](./focus) - it hides everything past a hop distance you pick, instead of just ringing it further out.
 
 ## Circular
 

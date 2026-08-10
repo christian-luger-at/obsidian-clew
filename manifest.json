@@ -3,7 +3,7 @@
 	"name": "Clew",
 	"version": "1.2.0",
 	"minAppVersion": "1.12.0",
-	"description": "See your whole vault as a graph and find how any two notes connect, without every path routing through your index notes.",
+	"description": "Understand how your vault actually connects - hub, bridge, and stale-cluster analytics plus smart filters, not just a prettier graph.",
 	"author": "Christian Luger",
 	"authorUrl": "https://github.com/christian-luger-at",
 	"fundingUrl": {

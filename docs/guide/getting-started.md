@@ -29,9 +29,13 @@ A vertical icon rail sits in the top-right corner of the graph:
 | Reset view | Re-fits the camera to the whole graph |
 | Filter | The [Filter](./filter) panel |
 | Color & size | The [Color & size](./color-and-size) panel |
+| Find path | Finds a route through the link graph between two notes |
+| Focus | The [Focus](./focus) panel - one note and its neighborhood, everything else hidden |
+| Timeline | The [Timeline](./timeline) panel |
 | Appearance | The [Appearance](./appearance) panel |
+| Diagnostics | The [Diagnostics](./diagnostics) panel - orphans, broken links, isolated clusters, scattered communities |
 
-Only one of Filter, Color & size, and Appearance is ever open at a time - opening one closes whichever of the other two was open.
+Only one panel is ever open at a time - opening one closes whichever other one was open.
 
 ## Everything else is optional
 
