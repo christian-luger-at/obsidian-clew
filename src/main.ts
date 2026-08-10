@@ -75,6 +75,8 @@ export default class ClewPlugin extends Plugin {
 			diagnostics: { ...DEFAULT_DIAGNOSTICS_SETTINGS, ...loaded?.diagnostics },
 			showDefaultFilters: loaded?.showDefaultFilters ?? true,
 			showDefaultColorGroups: loaded?.showDefaultColorGroups ?? true,
+			pathfindingExcludedNotes: [...(loaded?.pathfindingExcludedNotes ?? [])],
+			pathfindingExcludedFolders: [...(loaded?.pathfindingExcludedFolders ?? [])],
 		};
 		this.syncDefaultPresets();
 	}

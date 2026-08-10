@@ -45,7 +45,7 @@ Nothing here edits your notes - filters, groups, and appearance settings are Cle
 - **Watch your vault grow.** The Timeline panel replays your notes and links in the order they were created - pick how long the replay takes and whether it paces evenly or maps onto real elapsed time.
 - **Tune the look live.** Node/edge size, color, physics, and label density are all adjustable while watching the graph react.
 - **Interact directly with the graph.** Click a node to open that note, hover one to highlight its connections, drag a note to pin it exactly where you want it.
-- **Find how two notes connect.** Pick a start and end note and Clew finds the shortest route through the link graph - favoring notes with fewer links over big hub notes, with a couple of alternative routes alongside.
+- **Find how two notes connect.** Pick a start and end note and Clew finds the shortest route through the link graph - favoring notes with fewer links over big hub notes, with a couple of alternative routes alongside. Notes and folders excluded in Settings are routed around entirely and get a ring on the graph so you can see which ones at a glance.
 
 ## Installing the plugin
 

@@ -21,6 +21,16 @@ export interface ThemeColors {
 	 * hover, gave away that anything was there).
 	 */
 	ghostNodeColor: string;
+	/**
+	 * The ring renderer.ts's "bordered" node program draws around a note
+	 * excluded from Find-path (GitHub backlog item 6 follow-up: "Kennzeichnen
+	 * die ausgeschlossenen Knoten") - a distinct, always-legible accent
+	 * (Obsidian's own "this needs attention" red), not reused from any
+	 * existing graph color, since a ring needs to read as "flagged" at a
+	 * glance regardless of whatever fill color that same note already has
+	 * (its own theme color, a Color & size group's color, ...).
+	 */
+	excludedBorderColor: string;
 	/** `--background-primary` - the graph canvas's own background. Exposed (not just used internally for ensureContrast) so GraphPane can pass it to renderer.ts's hover-label background fix - see readThemeColors()'s docstring. */
 	backgroundColor: string;
 }
@@ -359,6 +369,12 @@ export function readThemeColors(referenceEl: HTMLElement, edgeIntensity: number 
 		// not the "nearly the background" treatment dimNodeColor's
 		// temporary de-emphasis job calls for.
 		ghostNodeColor: ensureContrast(cssVar('--text-faint', '#6b7280'), backgroundColor),
+		// --text-error - Obsidian's own "something's wrong here" red, reused
+		// (not a hardcoded hex) so this stays consistent with whatever a
+		// theme itself calls "flagged"/"error", the same reasoning every
+		// other color here has for reading its own CSS var instead of a
+		// fixed value.
+		excludedBorderColor: ensureContrast(cssVar('--text-error', '#e93147'), backgroundColor),
 		backgroundColor,
 	};
 

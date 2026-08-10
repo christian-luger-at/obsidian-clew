@@ -1,6 +1,7 @@
 import Graph from 'graphology';
 import Sigma from 'sigma';
 import { NodeImageProgram } from '@sigma/node-image';
+import { createNodeBorderProgram } from '@sigma/node-border';
 import {
 	drawDiscNodeLabel,
 	NodeHoverDrawingFunction,
@@ -12,6 +13,47 @@ import { GeneratedGraph } from './generateGraph';
 
 const GRAPH_COLOR = '#7c3aed';
 const IMAGE_NODE_COLOR = '#f59e0b';
+
+/**
+ * How much of a node's own radius the outer ring layer, and the gap layer
+ * just inside it, each claim - GitHub backlog item 6 follow-up:
+ * "Kennzeichnen die ausgeschlossenen Knoten. Geht ein Ring um den Kreis?",
+ * then "Ist es möglich zwischen dem roten Ring und dem Knoten einen
+ * Abstand zu haben?" A three-layer concentric-discs technique (see
+ * createNodeBorderProgram()'s own docs), not a real CSS "border" - outer
+ * ring, then a gap band, then the node's own fill, each colored by its own
+ * per-node attribute (`borderColor`/`gapColor`/`color`). GraphPane sets
+ * `borderColor` and `gapColor` to match the node's own fill for every
+ * ordinary note - all three discs then paint the same color, no visible
+ * ring *or* gap, indistinguishable from a plain circle - and to
+ * theme.ts's excludedBorderColor/backgroundColor for a note excluded from
+ * Find-path, making both bands visible: an accent ring with a gap of
+ * canvas-background color between it and the note's own dot. Both sizes
+ * stay fixed constants, not attribute-driven - only presence/color needs
+ * to vary per node, not thickness.
+ */
+const EXCLUDED_RING_RELATIVE_SIZE = 0.14;
+const EXCLUDED_RING_GAP_RELATIVE_SIZE = 0.12;
+
+/**
+ * Registered as `nodeProgramClasses.bordered` below and set as sigma's own
+ * `defaultNodeType`, so every node that doesn't explicitly request the
+ * `image` program (vaultGraph.ts only ever sets `type: 'image'`, never
+ * `'bordered'`) renders through this one automatically - real notes and
+ * ghost nodes alike, with no vaultGraph.ts change needed (see sigma's own
+ * `if (!data.type) data.type = settings.defaultNodeType` fallback). Cover-
+ * image notes don't get a ring this way (NodeImageProgram doesn't compose
+ * with the border technique) - an accepted gap, not a goal: excluding a
+ * cover-image note from Find-path still works exactly the same, it just
+ * won't visibly ring on the graph.
+ */
+const NodeBorderProgram = createNodeBorderProgram({
+	borders: [
+		{ size: { value: EXCLUDED_RING_RELATIVE_SIZE }, color: { attribute: 'borderColor' } },
+		{ size: { value: EXCLUDED_RING_GAP_RELATIVE_SIZE }, color: { attribute: 'gapColor' } },
+		{ size: { fill: true }, color: { attribute: 'color' } },
+	],
+});
 
 /**
  * sigma's own default hover renderer (drawDiscNodeHover, from sigma's
@@ -158,7 +200,12 @@ export function createRenderer(graph: Graph, container: HTMLElement, options: Cr
 		// report ("hervorgehobene Kanten werden von gedimmten Kanten
 		// überdeckt").
 		zIndex: true,
-		nodeProgramClasses: { image: NodeImageProgram },
+		nodeProgramClasses: { image: NodeImageProgram, bordered: NodeBorderProgram },
+		// Every node without an explicit `type` (i.e. everything except
+		// vaultGraph.ts's cover-image notes) renders through the border
+		// program above instead of sigma's own built-in default - see that
+		// program's own docstring for why.
+		defaultNodeType: 'bordered',
 		// 'arrow'/'doubleArrow' are only actually used once GraphPane sets an
 		// edge's `type` attribute to one of them (showEdgeDirection) -
 		// registered unconditionally here regardless, since sigma's own

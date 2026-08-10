@@ -662,6 +662,19 @@ export class GraphPane {
 	private mtimeByPath = new Map<string, number>();
 	private layoutMode: LayoutMode = 'force';
 	private theme: ThemeColors;
+	/**
+	 * Cached by paintVisualEncoding() (its own resolveExcludedNodePaths()
+	 * call) - null whenever Find-path isn't currently active (its own
+	 * "isShown()" gate), a real Set of excluded paths otherwise. Reused by
+	 * applyHighlight()'s and setupNodeHover()'s own nodeReducers so a
+	 * dimmed/hovered node's ring can stay correct without recomputing the
+	 * whole excluded-notes set on every single node, every single frame -
+	 * see paintVisualEncoding()'s own docstring for why those reducers need
+	 * to know this at all (GitHub feedback: "Den Ring soll es nur bei
+	 * Knoten haben, die ausgeschlossen sind. Die anderen Knoten sollen
+	 * normal dargestellt werden.").
+	 */
+	private excludedNodePaths: Set<string> | null = null;
 	private draggedNode: string | null = null;
 	/**
 	 * Whether the mouse actually moved between downNode and mouseup - a
@@ -1909,10 +1922,15 @@ export class GraphPane {
 	 * entirely, not just wrong) because findPathButton was a local const in
 	 * the constructor with nothing ever updating its `is-active` class.
 	 * Called everywhere renderPathPanel()/clearHighlight()/resetPathState()
-	 * change whether this.panelEl is shown.
+	 * change whether this.panelEl is shown - also the one place that
+	 * repaints the excluded-note ring (paintVisualEncoding() only draws it
+	 * while this.panelEl.isShown()), so the ring appears/disappears at
+	 * exactly the same moments the toolbar icon lights up/off, instead of
+	 * waiting for some unrelated repaint to catch up.
 	 */
 	private updateFindPathButtonState(): void {
 		this.findPathButton?.toggleClass('is-active', this.panelEl.isShown());
+		this.applyNodeSizeSettings();
 	}
 
 	/**
@@ -2237,7 +2255,7 @@ export class GraphPane {
 		const searchGraph = directed ? buildVaultGraph(this.app, this.files, { directed: true }) : this.graph;
 		if (!searchGraph) return;
 
-		const result = findPaths(searchGraph, source.path, target.path, MAX_PATH_ROUTES);
+		const result = findPaths(searchGraph, source.path, target.path, MAX_PATH_ROUTES, this.resolveExcludedNodePaths());
 		this.renderResult(result);
 	}
 
@@ -2362,9 +2380,41 @@ export class GraphPane {
 		const pathEdges = new Set(edgeKeysAlongPath(this.graph, path));
 
 		this.renderer.setSetting('nodeReducer', (node, attr) => {
-			if (pathNodes.has(node))
-				return { ...attr, color: this.theme.primaryPathColor, labelColor: this.theme.primaryPathColor, zIndex: 2, forceLabel: true };
-			return { ...attr, color: this.theme.dimNodeColor, labelColor: this.theme.dimNodeColor };
+			if (pathNodes.has(node)) {
+				// Never an excluded note - pathfinding.ts's excludeNodes()
+				// already dropped every excluded note from the search graph
+				// entirely, so nothing on a real route can be one. `border`/
+				// `gapColor` just follow the new fill here, same reasoning
+				// as the dimmed branch below.
+				return {
+					...attr,
+					color: this.theme.primaryPathColor,
+					labelColor: this.theme.primaryPathColor,
+					borderColor: this.theme.primaryPathColor,
+					gapColor: this.theme.primaryPathColor,
+					zIndex: 2,
+					forceLabel: true,
+				};
+			}
+			// Overriding `color` here without also overriding `borderColor`/
+			// `gapColor` left them at whatever paintVisualEncoding() set
+			// before this dim kicked in - visibly mismatched against the new
+			// dimmed fill, i.e. a stray ring around *every* dimmed node, not
+			// just excluded ones. User feedback: "Den Ring soll es nur bei
+			// Knoten haben, die ausgeschlossen sind. Die anderen Knoten
+			// sollen normal dargestellt werden." Excluded nodes are the one
+			// deliberate exception - their ring should stay visible even
+			// while dimmed (that's the actual reason to show a ring during a
+			// Find-path result at all), so they keep the accent/background
+			// pair from paintVisualEncoding() instead of following the dim.
+			const isExcluded = this.excludedNodePaths?.has(node) ?? false;
+			return {
+				...attr,
+				color: this.theme.dimNodeColor,
+				labelColor: this.theme.dimNodeColor,
+				borderColor: isExcluded ? this.theme.excludedBorderColor : this.theme.dimNodeColor,
+				gapColor: isExcluded ? this.theme.backgroundColor : this.theme.dimNodeColor,
+			};
 		});
 
 		this.renderer.setSetting('edgeReducer', (edge, attr) => {
@@ -2575,6 +2625,32 @@ export class GraphPane {
 	 * refreshTheme() calls this again (a one-time pass over the graph)
 	 * rather than needing a live reducer to react to a theme change.
 	 */
+	/**
+	 * Every note path Find-path leaves out of a search - GitHub backlog item
+	 * 6, "Find-path: Knoten von der Pfadsuche ausschließen", narrowed by
+	 * follow-up feedback to Settings-only config ("In Find path keine
+	 * Einstellung von Dokumenten, die ausgeschlossen werden. Nur in globalen
+	 * Settings") plus whole-folder exclusion ("In Settings sollen ganze
+	 * Ordner ausgeschlossen werden."). Unions
+	 * plugin.settings.pathfindingExcludedNotes with every note under
+	 * pathfindingExcludedFolders (same "is this path inside that folder,
+	 * subfolders included" convention as nodeGroups.ts's `folder`
+	 * criterion) - feeds both runPathSearch()'s findPaths() call and
+	 * paintVisualEncoding()'s excluded-note ring below, so the two always
+	 * agree on exactly which notes are excluded.
+	 */
+	private resolveExcludedNodePaths(): Set<string> {
+		const excluded = new Set(this.plugin.settings.pathfindingExcludedNotes);
+		const folders = this.plugin.settings.pathfindingExcludedFolders;
+		if (folders.length > 0) {
+			for (const file of this.files) {
+				const folder = file.parent?.path ?? '';
+				if (folders.some((f) => folder === f || folder.startsWith(`${f}/`))) excluded.add(file.path);
+			}
+		}
+		return excluded;
+	}
+
 	private paintVisualEncoding(): void {
 		if (!this.graph) return;
 		const graph = this.graph;
@@ -2598,6 +2674,19 @@ export class GraphPane {
 			const baseSize = graph.getNodeAttribute(node, 'size') as number;
 			graph.setNodeAttribute(node, 'size', baseSize * group.sizeMultiplier);
 		}
+		// Only while a Find-path result is actually showing (this.panelEl -
+		// same "is-active" signal updateFindPathButtonState() already
+		// tracks) - user feedback: "Diese Knoten nur so anzeigen, wenn Find
+		// path aktiv ist." Ordinary browsing of the graph shouldn't carry a
+		// permanent "some of these notes are flagged" visual, only an
+		// actual find-path search should. Cached on the instance (not just a
+		// local here) - applyHighlight()'s and setupNodeHover()'s own
+		// nodeReducers need this same set too, to keep a dimmed/hovered
+		// excluded node's ring correct instead of falling back to whatever
+		// this base pass computed before the dim/hover override ran (see
+		// this field's own docstring).
+		this.excludedNodePaths = this.panelEl.isShown() ? this.resolveExcludedNodePaths() : null;
+		const excludedPaths = this.excludedNodePaths;
 		graph.forEachNode((node, attr) => {
 			// Ghost nodes (vaultGraph.ts's `kind: 'ghost'`) default to
 			// ghostNodeColor - NOT dimNodeColor (a real bug this exact line
@@ -2612,8 +2701,42 @@ export class GraphPane {
 			// ghost node specifically so that criterion has something to
 			// match against.
 			const defaultColor = attr.kind === 'ghost' ? this.theme.ghostNodeColor : attr.type === 'image' ? this.theme.imageNodeColor : this.resolvedNodeColor();
-			graph.setNodeAttribute(node, 'color', groupByNode.get(node)?.color ?? defaultColor);
+			const resolvedColor = groupByNode.get(node)?.color ?? defaultColor;
+			graph.setNodeAttribute(node, 'color', resolvedColor);
+			// The ring (and the gap just inside it) renderer.ts's "bordered"
+			// node program draws for a note excluded from Find-path (GitHub
+			// backlog item 6 follow-ups: "Kennzeichnen die ausgeschlossenen
+			// Knoten. Geht ein Ring um den Kreis?", then "Ist es möglich
+			// zwischen dem roten Ring und dem Knoten einen Abstand zu
+			// haben?") - both match the node's own resolved fill when it
+			// isn't excluded (or Find-path isn't active at all), so neither
+			// band is visible (same color as the fill on both sides, no
+			// seam) for every ordinary note. The gap uses the canvas's own
+			// background color when excluded, not a fully transparent
+			// value - reads as "a real gap of empty canvas," and avoids
+			// alpha-blending oddities where an edge or another node happens
+			// to sit behind it.
+			const isExcluded = excludedPaths?.has(node) ?? false;
+			graph.setNodeAttribute(node, 'borderColor', isExcluded ? this.theme.excludedBorderColor : resolvedColor);
+			graph.setNodeAttribute(node, 'gapColor', isExcluded ? this.theme.backgroundColor : resolvedColor);
 		});
+	}
+
+	/**
+	 * Repaints the excluded-note ring after Settings tab changes
+	 * pathfindingExcludedNotes/Folders - user feedback: "Wenn Setting
+	 * geändert wird, dann wird der Graph nicht aktualisiert. Das ist ein
+	 * Fehler." A settings-tab edit has no way to reach this GraphPane
+	 * instance on its own (it's a separate screen, no shared event bus) -
+	 * ClewSettingTab calls this directly via GraphPane.getActive(), same
+	 * "reach the live pane from outside" mechanism main.ts's `find-path`
+	 * command already uses. A no-op when Find-path isn't currently active
+	 * (paintVisualEncoding() only paints the ring then anyway) or no graph
+	 * view is open at all (getActive() returns null, nothing to call this
+	 * on).
+	 */
+	refreshPathfindingExclusions(): void {
+		this.applyNodeSizeSettings();
 	}
 
 	/**
@@ -3452,12 +3575,35 @@ export class GraphPane {
 
 		const nodeReducer = (n: string, attr: Attributes) => {
 			const base = previousNodeReducer ? previousNodeReducer(n, attr) : attr;
+			// Whether `n` is currently excluded from Find-path (only ever
+			// non-null while a result is showing - see excludedNodePaths's
+			// own docstring) - read once per node here, not recomputed, so
+			// both branches below agree on it. Every branch that overrides
+			// `color` also overrides `borderColor`/`gapColor` to either
+			// match that same new color (ordinary node - ring stays
+			// invisible) or stay at the accent/background pair (excluded
+			// node - ring stays visible through the hover/dim, which is the
+			// actual point of showing one at all) - leaving them at
+			// whatever `base` had would visibly mismatch the new fill,
+			// i.e. a stray ring around *every* hovered/dimmed node, not
+			// just excluded ones (user feedback: "Den Ring soll es nur bei
+			// Knoten haben, die ausgeschlossen sind. Die anderen Knoten
+			// sollen normal dargestellt werden.").
+			const isExcluded = this.excludedNodePaths?.has(n) ?? false;
 			// Same reasoning as the incident-edge color below: a chosen node
 			// color override shouldn't get silently replaced by the theme's
 			// accent color the moment the node is hovered.
 			if (n === hoveredNode) {
 				const color = this.plugin.settings.appearance.nodeColorOverride ?? this.theme.matchColor;
-				return { ...base, color, image: undefined, zIndex: 2, forceLabel: true };
+				return {
+					...base,
+					color,
+					image: undefined,
+					borderColor: isExcluded ? this.theme.excludedBorderColor : color,
+					gapColor: isExcluded ? this.theme.backgroundColor : color,
+					zIndex: 2,
+					forceLabel: true,
+				};
 			}
 			// No forceLabel here (unlike the hovered node above) - user
 			// feedback: neighbor labels should only show when they'd
@@ -3465,7 +3611,9 @@ export class GraphPane {
 			// as any other node, not unconditionally. Staying undimmed
 			// (this branch returns `base` as-is, skipping the dim blend
 			// below) is already the highlight - a neighbor doesn't also
-			// need a forced label to read as "part of the hover".
+			// need a forced label to read as "part of the hover". `base`'s
+			// own borderColor/gapColor are already correct here (untouched
+			// by this reducer), whatever the layer below it decided.
 			if (neighbors.has(n)) return base;
 			// A cover-image node (type: 'image', see vaultGraph.ts) ignores
 			// `color` entirely once its texture has loaded - @sigma/node-image's
@@ -3499,7 +3647,14 @@ export class GraphPane {
 			// The label fades in step with the dot (same computed color,
 			// same dimProgress) instead of staying full-brightness while
 			// everything around it dims - user feedback.
-			return { ...base, color, image, labelColor: color };
+			return {
+				...base,
+				color,
+				image,
+				labelColor: color,
+				borderColor: isExcluded ? this.theme.excludedBorderColor : color,
+				gapColor: isExcluded ? this.theme.backgroundColor : color,
+			};
 		};
 		const edgeReducer = (e: string, attr: Attributes) => {
 			const base = previousEdgeReducer ? previousEdgeReducer(e, attr) : attr;

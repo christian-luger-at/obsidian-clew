@@ -52,16 +52,42 @@ function samePrefix(path: string[], prefix: string[]): boolean {
 	return true;
 }
 
-export function findPaths(graph: Graph, source: string, target: string, k = 5): PathResult {
-	if (!graph.hasNode(source) || !graph.hasNode(target)) return { found: false };
+/**
+ * Drops `excluded` from a copy of `graph`, before the search ever runs -
+ * GitHub backlog item 6, "Find-path: Knoten von der Pfadsuche
+ * ausschließen". A node removed here can't appear as a routed-through step
+ * on *any* candidate path, not even a worse one Yen's algorithm would
+ * otherwise still consider - filtering excluded nodes out of the results
+ * afterward instead would have let a cheaper route silently disappear in
+ * favor of one that still passes through a note the user explicitly ruled
+ * out. Returns `graph` itself, unmodified, when there's nothing to exclude
+ * (or none of `excluded` is even in it) - the common case (no exclusions
+ * set), so the normal search path pays no extra copy for a feature it
+ * isn't using.
+ */
+function excludeNodes(graph: Graph, excluded?: Iterable<string>): Graph {
+	if (!excluded) return graph;
+	const toRemove = [...excluded].filter((id) => graph.hasNode(id));
+	if (toRemove.length === 0) return graph;
+	const working = graph.copy();
+	for (const id of toRemove) working.dropNode(id);
+	return working;
+}
+
+export function findPaths(graph: Graph, source: string, target: string, k = 5, excluded?: Iterable<string>): PathResult {
+	const searchGraph = excludeNodes(graph, excluded);
+	// Covers both "source/target don't exist at all" and "source/target is
+	// itself one of the excluded notes" - both mean the same thing here,
+	// there's nothing to search for.
+	if (!searchGraph.hasNode(source) || !searchGraph.hasNode(target)) return { found: false };
 
 	// graphology-shortest-path's own types don't reflect this, but its
 	// bidirectional Dijkstra returns null (not an empty array) when no path
 	// exists - confirmed by reading dijkstra.js directly.
-	const shortest = bidirectional(graph, source, target, 'pathCost') as string[] | null;
+	const shortest = bidirectional(searchGraph, source, target, 'pathCost') as string[] | null;
 	if (!shortest) return { found: false };
 
-	const A: Candidate[] = [{ path: shortest, cost: pathCost(graph, shortest) }];
+	const A: Candidate[] = [{ path: shortest, cost: pathCost(searchGraph, shortest) }];
 	const seen = new Set<string>([shortest.join('>')]);
 
 	for (let ki = 1; ki < k; ki++) {
@@ -72,7 +98,7 @@ export function findPaths(graph: Graph, source: string, target: string, k = 5): 
 			const spurNode = previous[i]!;
 			const rootPath = previous.slice(0, i + 1);
 
-			const working = graph.copy();
+			const working = searchGraph.copy();
 
 			// Remove the edge each previously-found path takes out of this
 			// same root, so the spur search can't just retrace one of them.
@@ -98,7 +124,7 @@ export function findPaths(graph: Graph, source: string, target: string, k = 5): 
 			const key = totalPath.join('>');
 			if (seen.has(key) || B.some((c) => c.path.join('>') === key)) continue;
 
-			B.push({ path: totalPath, cost: pathCost(graph, totalPath) });
+			B.push({ path: totalPath, cost: pathCost(searchGraph, totalPath) });
 		}
 
 		if (B.length === 0) break;

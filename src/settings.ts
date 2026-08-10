@@ -244,6 +244,33 @@ export interface ClewSettings {
 	showDefaultFilters: boolean;
 	/** Same mechanism as showDefaultFilters, for nodeGroups.ts's DEFAULT_NODE_GROUPS ("Non-existing notes", orange) instead. */
 	showDefaultColorGroups: boolean;
+	/**
+	 * Vault paths of notes Find-path always leaves out of every search -
+	 * GitHub backlog item 6, "Find-path: Knoten von der Pfadsuche
+	 * ausschließen". Edited only in Obsidian's own Settings tab
+	 * (settingsTab.ts), same "one-time, no graph needed to make sense of it"
+	 * reasoning as diagnostics/showDefaultFilters above - user feedback: "In
+	 * Find path keine Einstellung von Dokumenten, die ausgeschlossen werden.
+	 * Nur in globalen Settings" (an earlier version also let the Find-path
+	 * dialog itself add/remove notes per search - removed on that feedback,
+	 * this list is now the only place exclusions are configured). GraphPane
+	 * resolves this - unioned with every note under pathfindingExcludedFolders
+	 * below - into a plain path Set once per search/repaint (see its
+	 * resolveExcludedNodePaths()), which is what actually reaches
+	 * pathfinding.ts's findPaths() `excluded` param and renderer.ts's
+	 * excluded-note ring.
+	 */
+	pathfindingExcludedNotes: string[];
+	/**
+	 * Whole folders (vault paths, including subfolders - same "is this path
+	 * inside that folder" convention as nodeGroups.ts's `folder` criterion)
+	 * Find-path always leaves out - user feedback: "In Settings sollen
+	 * ganze Ordner ausgeschlossen werden." Same resolution/edit-location
+	 * reasoning as pathfindingExcludedNotes above; the two lists are simply
+	 * unioned once expanded to concrete note paths, nothing distinguishes a
+	 * folder-excluded note from an individually-excluded one downstream.
+	 */
+	pathfindingExcludedFolders: string[];
 }
 
 export interface ClewTimelineSettings {

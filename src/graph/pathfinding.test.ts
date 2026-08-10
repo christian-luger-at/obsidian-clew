@@ -180,5 +180,95 @@ describe('pathfinding', () => {
 				expect(result.paths[1]).toEqual(['A', 'C', 'D']);
 			}
 		});
+
+		describe('excluded notes (GitHub backlog item 6)', () => {
+			it('routes around an excluded node entirely, never appearing in any candidate path', () => {
+				// A-B-D and A-C-D (two paths from A to D) - excluding B should
+				// force every route through C instead.
+				const g = new Graph({ type: 'undirected' });
+				for (const n of ['A', 'B', 'C', 'D']) g.addNode(n);
+				g.addEdge('A', 'B', { pathCost: 1 });
+				g.addEdge('B', 'D', { pathCost: 1 });
+				g.addEdge('A', 'C', { pathCost: 1 });
+				g.addEdge('C', 'D', { pathCost: 1 });
+
+				const result = findPaths(g, 'A', 'D', 5, ['B']);
+
+				expect(result.found).toBe(true);
+				if (result.found) {
+					expect(result.paths).toHaveLength(1);
+					expect(result.paths[0]).toEqual(['A', 'C', 'D']);
+					expect(result.paths.flat()).not.toContain('B');
+				}
+			});
+
+			it('excludes a node even when it would only appear on a worse alternative route, not the shortest one', () => {
+				// Shortest: A-B-E. Excluding C (which only appears on the
+				// costlier A-C-E detour) must never surface it as "Alt 1" -
+				// filtering after the fact instead of before could otherwise
+				// let a still-cheaper-than-nothing excluded route through.
+				const g = new Graph({ type: 'undirected' });
+				for (const n of ['A', 'B', 'C', 'D', 'E']) g.addNode(n);
+				g.addEdge('A', 'B', { pathCost: 1 });
+				g.addEdge('B', 'E', { pathCost: 1 });
+				g.addEdge('A', 'C', { pathCost: 1 });
+				g.addEdge('C', 'D', { pathCost: 1 });
+				g.addEdge('D', 'E', { pathCost: 1 });
+
+				const result = findPaths(g, 'A', 'E', 5, ['C']);
+
+				expect(result.found).toBe(true);
+				if (result.found) {
+					expect(result.paths).toHaveLength(1);
+					expect(result.paths[0]).toEqual(['A', 'B', 'E']);
+				}
+			});
+
+			it('returns no path when every route is blocked by an excluded node', () => {
+				const g = new Graph({ type: 'undirected' });
+				for (const n of ['A', 'B', 'D']) g.addNode(n);
+				g.addEdge('A', 'B', { pathCost: 1 });
+				g.addEdge('B', 'D', { pathCost: 1 });
+				// B is the only connection between A and D.
+
+				const result = findPaths(g, 'A', 'D', 5, ['B']);
+
+				expect(result.found).toBe(false);
+			});
+
+			it('returns no path when the source or target itself is excluded', () => {
+				const g = new Graph({ type: 'undirected' });
+				g.addNode('A');
+				g.addNode('B');
+				g.addEdge('A', 'B', { pathCost: 1 });
+
+				expect(findPaths(g, 'A', 'B', 5, ['A']).found).toBe(false);
+				expect(findPaths(g, 'A', 'B', 5, ['B']).found).toBe(false);
+			});
+
+			it('ignores excluded ids that are not in the graph at all', () => {
+				const g = new Graph({ type: 'undirected' });
+				g.addNode('A');
+				g.addNode('B');
+				g.addEdge('A', 'B', { pathCost: 1 });
+
+				const result = findPaths(g, 'A', 'B', 5, ['DoesNotExist']);
+
+				expect(result.found).toBe(true);
+				if (result.found) expect(result.paths[0]).toEqual(['A', 'B']);
+			});
+
+			it('behaves exactly like no exclusions at all when the excluded list is empty', () => {
+				const g = new Graph({ type: 'undirected' });
+				for (const n of ['A', 'B', 'C']) g.addNode(n);
+				g.addEdge('A', 'B', { pathCost: 1 });
+				g.addEdge('B', 'C', { pathCost: 1 });
+
+				const withEmpty = findPaths(g, 'A', 'C', 5, []);
+				const without = findPaths(g, 'A', 'C', 5);
+
+				expect(withEmpty).toEqual(without);
+			});
+		});
 	});
 });
