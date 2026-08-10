@@ -1214,6 +1214,16 @@ manual copy step. Then open `test-vault` in Obsidian and check:
   2) so more labels are visible to shrink in the first place - existing
   vaults keep whatever value they'd already saved; this only changes what a
   fresh install (or "Reset to defaults") starts at.
+- **Focus/Diagnostics icons mark themselves active while open** (user
+  feedback: neither lit up at all, unlike Filter/Color & size/Appearance/
+  Views): click "Focus…" - the crosshair icon should get the accent
+  highlight immediately, even before picking a note (an empty, nothing-
+  focused-yet panel still counts as "open"). Click it again to close - the
+  highlight should clear. Same check for "Diagnostics…" (stethoscope icon).
+  Open Focus, then click Diagnostics without closing Focus first - Focus's
+  panel and its icon highlight should both clear (closeOtherPanels()'s
+  mutual-exclusion), and Diagnostics' icon should light up instead; then
+  close Diagnostics - no icon should stay highlighted.
 
 ## Performance testing at scale (rendering)
 

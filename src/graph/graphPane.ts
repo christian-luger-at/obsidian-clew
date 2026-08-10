@@ -1195,15 +1195,26 @@ export class GraphPane {
 		}
 	}
 
+	/**
+	 * Shows/hides the Diagnostics panel. `is-active` on diagnosticsButton
+	 * tracks "the panel is open" here (same convention as Appearance's own
+	 * button, toggleAppearancePanel()) - user feedback: the icon never
+	 * lit up while its dialog was open at all, unlike Filter/Color & size's
+	 * (whose `is-active` tracks something *enabled*, not "open" - see those
+	 * buttons' own docstrings) or Focus/Find-path's (see
+	 * updateFocusButtonState()/updateFindPathButtonState()).
+	 */
 	private toggleDiagnosticsPanel(): void {
 		if (this.diagnosticsPanelEl.isShown()) {
 			this.diagnosticsPanelEl.hide();
+			this.diagnosticsButton.removeClass('is-active');
 			this.clearClusterHighlight();
 		} else {
 			this.closeOtherPanels('diagnostics');
 			this.resetDiagnosticsListState();
 			this.renderDiagnosticsPanel();
 			this.diagnosticsPanelEl.show();
+			this.diagnosticsButton.addClass('is-active');
 		}
 	}
 
@@ -1614,6 +1625,7 @@ export class GraphPane {
 		}
 		if (keep !== 'diagnostics' && this.diagnosticsPanelEl.isShown()) {
 			this.diagnosticsPanelEl.hide();
+			this.diagnosticsButton.removeClass('is-active');
 			this.clearClusterHighlight();
 		}
 		if (keep !== 'views' && this.viewsPanelEl.isShown()) {
@@ -2517,15 +2529,25 @@ export class GraphPane {
 		this.renderer?.setSetting('edgeReducer', null);
 	}
 
-	/** Shows/hides the Focus panel - same toggle shape as every other dialog (Dialog-Management redesign, round 2). GitHub backlog item 3, "Lokaler/Ego-Graph-Modus". */
+	/**
+	 * Shows/hides the Focus panel - same toggle shape as every other dialog
+	 * (Dialog-Management redesign, round 2). GitHub backlog item 3, "Lokaler/
+	 * Ego-Graph-Modus". updateFocusButtonState() at the end refreshes
+	 * focusButton's `is-active` for the panel's own new open/closed state -
+	 * user feedback: opening the (still empty, nothing focused yet) panel
+	 * didn't light up its icon at all, since every other call site of
+	 * updateFocusButtonState() only ever fires as a side effect of applying
+	 * or clearing Focus, never from this toggle itself.
+	 */
 	toggleFocusPanel(): void {
 		if (this.focusPanelEl.isShown()) {
 			this.focusPanelEl.hide();
-			return;
+		} else {
+			this.renderFocusPanel();
+			this.closeOtherPanels('focus');
+			this.focusPanelEl.show();
 		}
-		this.renderFocusPanel();
-		this.closeOtherPanels('focus');
-		this.focusPanelEl.show();
+		this.updateFocusButtonState();
 	}
 
 	/**
