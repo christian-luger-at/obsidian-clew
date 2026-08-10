@@ -1177,12 +1177,23 @@ manual copy step. Then open `test-vault` in Obsidian and check:
   - Close and reopen the graph view (or reload the plugin) - the saved view
     should still be listed and still apply correctly, same persistence as
     filterPresets/nodeGroups.
-  - Delete a filter or Color & size group that a saved view references,
-    then apply that view - it should apply cleanly (the vanished
-    filter/group simply doesn't turn anything on, no error). Same check for
-    Radial: apply a saved Radial view, then rename/delete the note it was
-    centered on, then apply that view again - it should fall back to Force
-    layout instead of erroring.
+  - **A view restores the full filter/group definition, not just on/off**
+    (user-reported: "Die Definitionen von Filtern und Color&Size wird nicht
+    gespeichert, nur ob diese aktiv oder inaktiv sind"). Save a view with a
+    filter enabled, then go edit that *same* filter's criteria in the
+    Filter panel (add/remove a criterion) and leave it enabled - apply the
+    saved view again: the criteria should snap back to exactly what they
+    were when the view was saved, not stay as your later edit. Now delete
+    that filter entirely (trash icon in the Filter panel) and apply the
+    view once more - the filter should reappear in the Filter panel, fully
+    defined and enabled, as if it was never deleted (not silently skipped).
+    Same check with a Color & size group's criteria/color. A filter/group
+    the view *doesn't* reference should be untouched by any of this except
+    turned off if it was on.
+  - Same check for Radial specifically (its note reference, not a
+    definition it owns): apply a saved Radial view, then rename/delete the
+    note it was centered on, then apply that view again - it should fall
+    back to Force layout instead of erroring.
   - Trash icon deletes a view after a confirm dialog, same convention as
     deleting a filter/group.
 

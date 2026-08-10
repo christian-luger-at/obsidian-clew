@@ -5331,21 +5331,52 @@ export class GraphPane {
 	}
 
 	/**
-	 * The current filter/group *enabled* sets, layout, and Focus note,
-	 * shaped exactly like SavedView minus id/name - shared by
+	 * The current filter/group *definitions* (deep copies, not references -
+	 * see SavedView's own docstring for why), layout, and Focus note, shaped
+	 * exactly like SavedView minus id/name - shared by
 	 * finishSavingCurrentView() (wraps this in a new SavedView) and
 	 * updateSavedView() (overwrites an existing one's captured fields with
-	 * this).
+	 * this). The deep copy matters here, not just at apply time
+	 * (restoreCriteriaOwnerList()) - without it, a saved view's
+	 * enabledFilters/enabledGroups would alias the *live* FilterPreset/
+	 * NodeGroup objects, so editing that filter's criteria afterward would
+	 * silently edit the "saved" snapshot too.
 	 */
 	private captureCurrentViewState(): Omit<SavedView, 'id' | 'name'> {
 		return {
-			enabledFilterIds: this.plugin.settings.filterPresets.filter((preset) => preset.enabled).map((preset) => preset.id),
-			enabledGroupIds: this.plugin.settings.nodeGroups.filter((group) => group.enabled).map((group) => group.id),
+			enabledFilters: this.plugin.settings.filterPresets.filter((preset) => preset.enabled).map((preset) => deepClone(preset)),
+			enabledGroups: this.plugin.settings.nodeGroups.filter((group) => group.enabled).map((group) => deepClone(group)),
 			layoutMode: this.layoutMode,
 			radialFocusPath: this.layoutMode === 'radial' ? this.radialFocusNode : null,
 			focusPath: this.focusFile?.path ?? null,
 			focusHops: this.focusHops,
 		};
+	}
+
+	/**
+	 * Builds the next plugin.settings.filterPresets/nodeGroups list for
+	 * applySavedView(): every entry from `current` whose id is also in
+	 * `snapshot` gets *replaced* with its saved definition (deep-cloned,
+	 * `enabled: true`) - a restore, not a merge, so a since-edited criterion
+	 * reverts back to exactly what was saved. Every other entry from
+	 * `current` is kept as-is except turned off if it was on (same "restores
+	 * exactly this combination, nothing more" behavior the id-only version
+	 * had). Any snapshot entry whose id no longer exists in `current` at all
+	 * (deleted since the view was saved) is appended at the end, deep-cloned
+	 * - resurrecting it rather than silently dropping it, per SavedView's
+	 * own docstring. Shared by both filterPresets and nodeGroups since both
+	 * are plain CriteriaOwner lists keyed by id.
+	 */
+	private restoreCriteriaOwnerList<T extends CriteriaOwner & { id: string }>(current: T[], snapshot: T[]): T[] {
+		const remaining = new Map(snapshot.map((entry) => [entry.id, entry]));
+		const restored = current.map((entry) => {
+			const match = remaining.get(entry.id);
+			if (!match) return entry.enabled ? { ...entry, enabled: false } : entry;
+			remaining.delete(entry.id);
+			return { ...deepClone(match), enabled: true };
+		});
+		for (const match of remaining.values()) restored.push({ ...deepClone(match), enabled: true });
+		return restored;
 	}
 
 	/** Opens the create-a-view form (renderViewCreateForm()) - see its own docstring for why this doesn't create/persist anything yet, unlike startCreatingFilter()/startCreatingGroup(). */
@@ -5395,10 +5426,10 @@ export class GraphPane {
 	}
 
 	/**
-	 * Restores exactly what captureCurrentViewState() captures: which
-	 * filters/groups are enabled (by id - see SavedView's own docstring for
-	 * why a since-deleted id is silently a no-op rather than an error), the
-	 * layout, and the Focus note.
+	 * Restores exactly what captureCurrentViewState() captures: each saved
+	 * filter/group's full *definition* (restoreCriteriaOwnerList(), not just
+	 * an enabled flag - see SavedView's own docstring for why), the layout,
+	 * and the Focus note.
 	 *
 	 * Order: filters/groups first (applyFilters() is what actually installs
 	 * the graph's nodeReducer/edgeReducer when a filter is enabled), then
@@ -5421,10 +5452,8 @@ export class GraphPane {
 	 * reducer in place.
 	 */
 	private applySavedView(view: SavedView): void {
-		const enabledFilters = new Set(view.enabledFilterIds);
-		for (const preset of this.plugin.settings.filterPresets) preset.enabled = enabledFilters.has(preset.id);
-		const enabledGroups = new Set(view.enabledGroupIds);
-		for (const group of this.plugin.settings.nodeGroups) group.enabled = enabledGroups.has(group.id);
+		this.plugin.settings.filterPresets = this.restoreCriteriaOwnerList(this.plugin.settings.filterPresets, view.enabledFilters);
+		this.plugin.settings.nodeGroups = this.restoreCriteriaOwnerList(this.plugin.settings.nodeGroups, view.enabledGroups);
 		void this.plugin.saveSettings();
 		this.applyFilters();
 		this.applyNodeGroups();
@@ -5462,6 +5491,11 @@ export class GraphPane {
 		const file = this.app.vault.getAbstractFileByPath(vaultPath);
 		if (file instanceof TFile) await this.app.workspace.getLeaf(false).openFile(file);
 	}
+}
+
+/** Plain-data deep copy (FilterPreset/NodeGroup are pure JSON-shaped objects - strings/numbers/booleans/arrays, no Dates/functions) - used by captureCurrentViewState()/restoreCriteriaOwnerList() so a saved view's snapshot never aliases the live filterPresets/nodeGroups objects it was copied from. */
+function deepClone<T>(value: T): T {
+	return JSON.parse(JSON.stringify(value)) as T;
 }
 
 function edgeKeysAlongPath(graph: Graph, path: string[]): string[] {

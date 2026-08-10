@@ -285,15 +285,18 @@ export interface ClewSettings {
  * layoutMode already do independently - see GraphPane's own fields). GitHub
  * backlog item 9, "Gespeicherte Ansichten/Workspaces".
  *
- * Deliberately *ids*, not copies, of the filters/groups it references
- * (enabledFilterIds/enabledGroupIds) - a saved view is "turn these on",
- * not a frozen copy of their criteria at save time, so editing a filter
- * later (renaming it, changing its criteria) is reflected the next time
- * any saved view that references it is applied, same as it already would
- * be if you'd just left that filter enabled yourself. A saved view whose
- * referenced filter/group was since deleted simply leaves that id
- * matching nothing on apply (see GraphPane's applySavedView()) - no
- * dangling-reference cleanup needed.
+ * Full deep copies of the enabled filters/groups (enabledFilters/
+ * enabledGroups), not just their ids - user feedback: an id-only version
+ * ("Die Definitionen von Filtern und Color&Size wird nicht gespeichert, nur
+ * ob diese aktiv oder inaktiv sind") meant editing or deleting a filter
+ * after saving a view silently changed what that view looked like on next
+ * apply, which defeats the point of a named snapshot to "jump back to".
+ * Applying a view now *restores* each saved filter/group's full definition
+ * (criteria, name, color, ...) into plugin.settings.filterPresets/
+ * nodeGroups by id - overwriting a since-edited one back to how it looked
+ * at save time, or re-adding one that was since deleted entirely (see
+ * GraphPane's restoreCriteriaOwnerList()) - rather than leaving a
+ * since-deleted id matching nothing, the way a plain id reference would.
  *
  * No cloud sync, no export/import in this iteration (scope explicitly
  * excluded per the backlog item) - just plugin.saveSettings()/loadData(),
@@ -302,10 +305,10 @@ export interface ClewSettings {
 export interface SavedView {
 	id: string;
 	name: string;
-	/** FilterPreset ids that were enabled when this view was saved - see this interface's own docstring for why ids, not a snapshot of the presets themselves. */
-	enabledFilterIds: string[];
-	/** NodeGroup ids that were enabled when this view was saved - same reasoning as enabledFilterIds. */
-	enabledGroupIds: string[];
+	/** Deep copies of every FilterPreset that was enabled when this view was saved - see this interface's own docstring for why copies, not ids. */
+	enabledFilters: FilterPreset[];
+	/** Deep copies of every NodeGroup that was enabled when this view was saved - same reasoning as enabledFilters. */
+	enabledGroups: NodeGroup[];
 	layoutMode: LayoutMode;
 	/** The radial layout's center note (vault path) - only meaningful (and only ever set) when layoutMode is 'radial'; null otherwise, same convention as GraphPane's own radialFocusNode field. */
 	radialFocusPath: string | null;
