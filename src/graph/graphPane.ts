@@ -675,6 +675,18 @@ export class GraphPane {
 	 * normal dargestellt werden.").
 	 */
 	private excludedNodePaths: Set<string> | null = null;
+	/**
+	 * Cached by paintVisualEncoding() alongside excludedNodePaths above -
+	 * the one note Focus or Radial layout is currently centered on (null
+	 * when neither applies), for the same "own color" ring GitHub feedback
+	 * asked for: "Focus: Ring in Knotenfarbe um gewählten Knoten (Form wie
+	 * bei Find Path)", "Radial Layout: [dasselbe]." Reused by
+	 * ringOverrideFor() so applyHighlight()'s/setupNodeHover()'s reducers
+	 * keep that ring intact instead of losing it to whatever dim/highlight
+	 * color they're applying, same reasoning as excludedNodePaths's own
+	 * docstring.
+	 */
+	private singledOutNodePath: string | null = null;
 	private draggedNode: string | null = null;
 	/**
 	 * Whether the mouse actually moved between downNode and mouseup - a
@@ -2380,40 +2392,31 @@ export class GraphPane {
 		const pathEdges = new Set(edgeKeysAlongPath(this.graph, path));
 
 		this.renderer.setSetting('nodeReducer', (node, attr) => {
+			// Overriding `color` without also overriding `borderColor`/
+			// `gapColor` left them at whatever paintVisualEncoding() set
+			// before this reducer ran - visibly mismatched against the new
+			// fill, i.e. a stray ring around *every* path/dimmed node, not
+			// just excluded/singled-out ones. ringOverrideFor() preserves
+			// the excluded-note ring or the Focus/Radial "own color" ring
+			// through this override; for every other node it just matches
+			// the new color (ring stays invisible) - user feedback: "Den
+			// Ring soll es nur bei Knoten haben, die ausgeschlossen sind.
+			// Die anderen Knoten sollen normal dargestellt werden."
 			if (pathNodes.has(node)) {
-				// Never an excluded note - pathfinding.ts's excludeNodes()
-				// already dropped every excluded note from the search graph
-				// entirely, so nothing on a real route can be one. `border`/
-				// `gapColor` just follow the new fill here, same reasoning
-				// as the dimmed branch below.
 				return {
 					...attr,
 					color: this.theme.primaryPathColor,
 					labelColor: this.theme.primaryPathColor,
-					borderColor: this.theme.primaryPathColor,
-					gapColor: this.theme.primaryPathColor,
+					...this.ringOverrideFor(node, this.theme.primaryPathColor),
 					zIndex: 2,
 					forceLabel: true,
 				};
 			}
-			// Overriding `color` here without also overriding `borderColor`/
-			// `gapColor` left them at whatever paintVisualEncoding() set
-			// before this dim kicked in - visibly mismatched against the new
-			// dimmed fill, i.e. a stray ring around *every* dimmed node, not
-			// just excluded ones. User feedback: "Den Ring soll es nur bei
-			// Knoten haben, die ausgeschlossen sind. Die anderen Knoten
-			// sollen normal dargestellt werden." Excluded nodes are the one
-			// deliberate exception - their ring should stay visible even
-			// while dimmed (that's the actual reason to show a ring during a
-			// Find-path result at all), so they keep the accent/background
-			// pair from paintVisualEncoding() instead of following the dim.
-			const isExcluded = this.excludedNodePaths?.has(node) ?? false;
 			return {
 				...attr,
 				color: this.theme.dimNodeColor,
 				labelColor: this.theme.dimNodeColor,
-				borderColor: isExcluded ? this.theme.excludedBorderColor : this.theme.dimNodeColor,
-				gapColor: isExcluded ? this.theme.backgroundColor : this.theme.dimNodeColor,
+				...this.ringOverrideFor(node, this.theme.dimNodeColor),
 			};
 		});
 
@@ -2597,9 +2600,22 @@ export class GraphPane {
 		this.focusHops = 1;
 	}
 
-	/** Same "tied to the panel being open" convention as updateFindPathButtonState() - see its own docstring for why. */
+	/**
+	 * Same "tied to the panel being open" convention as
+	 * updateFindPathButtonState() - see its own docstring for why. Also the
+	 * one place that repaints the Focus "own color" ring
+	 * (paintVisualEncoding() only draws it when this.focusFile is set) -
+	 * applyFocus()/clearFocus() both call this right after changing
+	 * focusFile, same reasoning as Find-path's own ring repaint. Without
+	 * this, focusing a note only installed the hide-reducer (applyFocus())
+	 * - the base color/borderColor/gapColor attributes paintVisualEncoding()
+	 * sets were never told a note was newly focused at all, so the ring
+	 * never appeared (user-reported: "Ringe nicht sichtbar in den neuen
+	 * Funktionen").
+	 */
 	private updateFocusButtonState(): void {
 		this.focusButton.toggleClass('is-active', this.focusPanelEl.isShown());
+		this.applyNodeSizeSettings();
 	}
 
 	/**
@@ -2687,6 +2703,24 @@ export class GraphPane {
 		// this field's own docstring).
 		this.excludedNodePaths = this.panelEl.isShown() ? this.resolveExcludedNodePaths() : null;
 		const excludedPaths = this.excludedNodePaths;
+		// The one note Focus or Radial layout is currently centered on -
+		// user feedback: "Focus: Ring in Knotenfarbe um gewählten Knoten
+		// (Form wie bei Find Path)", "Radial Layout: [dasselbe]," then "Die
+		// Ringe in Knotenfarbe sind nicht gut sichtbar. Verwende das
+		// gleiche grün, wie Find Path beim gefundenen Pfad" - the note's
+		// own resolved color was often too close to its own fill (or to
+		// other notes' colors) to read as a ring at all; theme.ts's
+		// primaryPathColor (the same green Find-path's own route uses) is
+		// reliably distinct from every other color on the graph instead.
+		// Same three-layer ring/gap/fill technique as the excluded-note
+		// ring above, just with this accent instead of that one, and
+		// without excluded's "flagged/warning" connotation - reads as a
+		// "spotlight" on whichever note anchors the current view. Focus
+		// wins if somehow both apply at once (persists across its own
+		// panel closing, see focusFile's own docstring - Radial's center
+		// only matters while layoutMode is actually 'radial').
+		this.singledOutNodePath = this.focusFile?.path ?? (this.layoutMode === 'radial' ? this.radialFocusNode : null);
+		const singledOutPath = this.singledOutNodePath;
 		graph.forEachNode((node, attr) => {
 			// Ghost nodes (vaultGraph.ts's `kind: 'ghost'`) default to
 			// ghostNodeColor - NOT dimNodeColor (a real bug this exact line
@@ -2704,22 +2738,50 @@ export class GraphPane {
 			const resolvedColor = groupByNode.get(node)?.color ?? defaultColor;
 			graph.setNodeAttribute(node, 'color', resolvedColor);
 			// The ring (and the gap just inside it) renderer.ts's "bordered"
-			// node program draws for a note excluded from Find-path (GitHub
-			// backlog item 6 follow-ups: "Kennzeichnen die ausgeschlossenen
-			// Knoten. Geht ein Ring um den Kreis?", then "Ist es möglich
-			// zwischen dem roten Ring und dem Knoten einen Abstand zu
-			// haben?") - both match the node's own resolved fill when it
-			// isn't excluded (or Find-path isn't active at all), so neither
-			// band is visible (same color as the fill on both sides, no
-			// seam) for every ordinary note. The gap uses the canvas's own
-			// background color when excluded, not a fully transparent
-			// value - reads as "a real gap of empty canvas," and avoids
+			// node program draws - for a note excluded from Find-path
+			// (GitHub backlog item 6 follow-ups: "Kennzeichnen die
+			// ausgeschlossenen Knoten. Geht ein Ring um den Kreis?", then
+			// "Ist es möglich zwischen dem roten Ring und dem Knoten einen
+			// Abstand zu haben?") in the fixed accent color, or for
+			// whichever note Focus/Radial is centered on (see
+			// singledOutPath above) in Find-path's own green
+			// (primaryPathColor - see that field's own docstring for why
+			// not the note's own color). Both default to matching the
+			// node's own resolved fill (both bands invisible, no seam) for
+			// every other, ordinary note. The gap uses the canvas's own
+			// background color, not a fully transparent value, in either
+			// case - reads as "a real gap of empty canvas," and avoids
 			// alpha-blending oddities where an edge or another node happens
 			// to sit behind it.
 			const isExcluded = excludedPaths?.has(node) ?? false;
-			graph.setNodeAttribute(node, 'borderColor', isExcluded ? this.theme.excludedBorderColor : resolvedColor);
-			graph.setNodeAttribute(node, 'gapColor', isExcluded ? this.theme.backgroundColor : resolvedColor);
+			const isSingledOut = node === singledOutPath;
+			graph.setNodeAttribute(
+				node,
+				'borderColor',
+				isExcluded ? this.theme.excludedBorderColor : isSingledOut ? this.theme.primaryPathColor : resolvedColor,
+			);
+			graph.setNodeAttribute(node, 'gapColor', isExcluded || isSingledOut ? this.theme.backgroundColor : resolvedColor);
 		});
+	}
+
+	/**
+	 * borderColor/gapColor for `node` once a reducer is about to override
+	 * its fill to `newColor` - preserves the excluded-note ring (accent/
+	 * background, excludedNodePaths) or the Focus/Radial ring
+	 * (primaryPathColor/background, singledOutNodePath - Find-path's own
+	 * green, not the note's own color; user feedback: "Die Ringe in
+	 * Knotenfarbe sind nicht gut sichtbar. Verwende das gleiche grün, wie
+	 * Find Path beim gefundenen Pfad") instead of losing it to whatever
+	 * *this* reducer's own dim/highlight color happens to be; for any
+	 * other node, both just match `newColor` (ring stays invisible).
+	 * Shared by applyHighlight()'s and setupNodeHover()'s own nodeReducers
+	 * - see excludedNodePaths's own docstring for why a static attribute
+	 * alone isn't enough once any reducer overrides `color`.
+	 */
+	private ringOverrideFor(node: string, newColor: string): { borderColor: string; gapColor: string } {
+		if (this.excludedNodePaths?.has(node)) return { borderColor: this.theme.excludedBorderColor, gapColor: this.theme.backgroundColor };
+		if (node === this.singledOutNodePath) return { borderColor: this.theme.primaryPathColor, gapColor: this.theme.backgroundColor };
+		return { borderColor: newColor, gapColor: newColor };
 	}
 
 	/**
@@ -3144,6 +3206,18 @@ export class GraphPane {
 		// re-render so switching layout while the panel is already open
 		// swaps them immediately instead of only on next open/close.
 		if (this.appearancePanelEl.isShown()) this.renderAppearancePanel();
+		// The one place that repaints the Radial-layout "own color" ring
+		// (paintVisualEncoding() only draws it while this.layoutMode is
+		// 'radial') - setRadialLayout() sets radialFocusNode *before*
+		// calling this, so by the time this runs both are in sync. Without
+		// this, switching to Radial only ever repositioned nodes
+		// (computeRadialLayout()) - the base color/borderColor/gapColor
+		// attributes were never told a new center was picked at all, so no
+		// ring ever appeared; switching *away* from Radial left a stale
+		// ring around whatever used to be the center, since nothing else
+		// here repaints on a plain layout switch either (user-reported:
+		// "Ringe nicht sichtbar in den neuen Funktionen").
+		this.applyNodeSizeSettings();
 	}
 
 	private setHierarchicalLayout(): void {
@@ -3575,35 +3649,12 @@ export class GraphPane {
 
 		const nodeReducer = (n: string, attr: Attributes) => {
 			const base = previousNodeReducer ? previousNodeReducer(n, attr) : attr;
-			// Whether `n` is currently excluded from Find-path (only ever
-			// non-null while a result is showing - see excludedNodePaths's
-			// own docstring) - read once per node here, not recomputed, so
-			// both branches below agree on it. Every branch that overrides
-			// `color` also overrides `borderColor`/`gapColor` to either
-			// match that same new color (ordinary node - ring stays
-			// invisible) or stay at the accent/background pair (excluded
-			// node - ring stays visible through the hover/dim, which is the
-			// actual point of showing one at all) - leaving them at
-			// whatever `base` had would visibly mismatch the new fill,
-			// i.e. a stray ring around *every* hovered/dimmed node, not
-			// just excluded ones (user feedback: "Den Ring soll es nur bei
-			// Knoten haben, die ausgeschlossen sind. Die anderen Knoten
-			// sollen normal dargestellt werden.").
-			const isExcluded = this.excludedNodePaths?.has(n) ?? false;
 			// Same reasoning as the incident-edge color below: a chosen node
 			// color override shouldn't get silently replaced by the theme's
 			// accent color the moment the node is hovered.
 			if (n === hoveredNode) {
 				const color = this.plugin.settings.appearance.nodeColorOverride ?? this.theme.matchColor;
-				return {
-					...base,
-					color,
-					image: undefined,
-					borderColor: isExcluded ? this.theme.excludedBorderColor : color,
-					gapColor: isExcluded ? this.theme.backgroundColor : color,
-					zIndex: 2,
-					forceLabel: true,
-				};
+				return { ...base, color, image: undefined, ...this.ringOverrideFor(n, color), zIndex: 2, forceLabel: true };
 			}
 			// No forceLabel here (unlike the hovered node above) - user
 			// feedback: neighbor labels should only show when they'd
@@ -3647,14 +3698,7 @@ export class GraphPane {
 			// The label fades in step with the dot (same computed color,
 			// same dimProgress) instead of staying full-brightness while
 			// everything around it dims - user feedback.
-			return {
-				...base,
-				color,
-				image,
-				labelColor: color,
-				borderColor: isExcluded ? this.theme.excludedBorderColor : color,
-				gapColor: isExcluded ? this.theme.backgroundColor : color,
-			};
+			return { ...base, color, image, labelColor: color, ...this.ringOverrideFor(n, color) };
 		};
 		const edgeReducer = (e: string, attr: Attributes) => {
 			const base = previousEdgeReducer ? previousEdgeReducer(e, attr) : attr;
