@@ -1037,6 +1037,23 @@ export class GraphPane {
 	setFiles(files: TFile[]): void {
 		this.layout?.stop();
 		this.renderer?.kill();
+		// kill() tears down the Sigma instance's own node/edge programs (its
+		// nodePrograms map ends up empty) but doesn't touch this.renderer
+		// itself - without nulling it out here, activateLayoutMode('force')
+		// a few lines below (which calls applyNodeSizeSettings() ->
+		// this.renderer?.refresh()) would call refresh() on that now-gutted,
+		// still-referenced instance before a fresh one is created later in
+		// this same method (this.renderer = createRenderer(...)), crashing
+		// with "Sigma: could not find a suitable program for node type
+		// ..." the moment it tried to draw any node (image-cover notes hit
+		// this first, but any node type could) - user-reported, happening on
+		// every vault refresh after the very first one (a first-ever
+		// setFiles() call has this.renderer already null, so it happened to
+		// not crash then, which is exactly why this went unnoticed for a
+		// while - very likely the same underlying issue as the earlier,
+		// never-fully-explained "graph not rendered after plugin reload"
+		// report).
+		this.renderer = null;
 		this.graphContainerEl.empty();
 		// Isn't rebuilt from the new file set automatically - a note deleted
 		// (or filtered out) mid-result would otherwise leave stale entries
