@@ -217,6 +217,28 @@ export interface IsolatedComponentCriterion {
 export interface CommunityCriterion {
 	type: 'community';
 	communityId: number;
+	/**
+	 * The basename of whichever note the user picked in the note-picker
+	 * (renderCriterionEditRow()'s 'community' case) when this `communityId`
+	 * was last set - purely a display label, never read for matching (that's
+	 * still `communityId` alone). User feedback: "Wird eine Community
+	 * gewählt, dann wird z.B. 'Community 14' [...] gezeigt. Das ist nicht
+	 * userfreundlich" - a raw Louvain-rank number means nothing to anyone
+	 * without opening the graph and checking, where the note they
+	 * deliberately picked to represent it already is a meaningful label
+	 * describeCriterion() can show instead ("Community is like 'Project
+	 * Notes'"). Deliberately *not* re-derived from the live graph on every
+	 * render (e.g. "the current largest-degree note in this community") -
+	 * describeCriterion() has no graph to derive it from at all (kept
+	 * Obsidian-app-free, see this module's own docstring), and a fixed
+	 * label the user recognizes ("what I picked") is more predictable than
+	 * one that could silently change to a different note after a Louvain
+	 * re-run reshuffles membership. `undefined`/`null` (a criterion saved
+	 * before this field existed, or one whose communityId was never
+	 * actually picked via the note-picker) falls back to the plain
+	 * "Community N" wording - see describeCriterion().
+	 */
+	sampleLabel?: string | null;
 }
 
 /**
@@ -238,6 +260,8 @@ export interface CommunityCriterion {
 export interface SemanticClusterCriterion {
 	type: 'semanticCluster';
 	clusterId: number;
+	/** Same role as CommunityCriterion's own `sampleLabel` - see its docstring. */
+	sampleLabel?: string | null;
 }
 
 /**
@@ -676,9 +700,13 @@ export function describeCriterion(criterion: GroupCriterion): string {
 		case 'isolatedComponent':
 			return criterion.isolated ? "Connectivity: cut off from the vault's main body" : "Connectivity: in the vault's main body";
 		case 'community':
-			return `Community ${negate ? 'is not' : 'is'} ${criterion.communityId + 1}`;
+			return criterion.sampleLabel
+				? `Community ${negate ? 'is not' : 'is'} like "${criterion.sampleLabel}"`
+				: `Community ${negate ? 'is not' : 'is'} ${criterion.communityId + 1}`;
 		case 'semanticCluster':
-			return `Semantic cluster ${negate ? 'is not' : 'is'} ${criterion.clusterId + 1}`;
+			return criterion.sampleLabel
+				? `Semantic cluster ${negate ? 'is not' : 'is'} like "${criterion.sampleLabel}"`
+				: `Semantic cluster ${negate ? 'is not' : 'is'} ${criterion.clusterId + 1}`;
 		case 'staleDays':
 			return `${negate ? 'Less than' : 'At least'} ${criterion.days} days ago`;
 		case 'minLinks':

@@ -472,6 +472,19 @@ describe('describeCriterion', () => {
 		expect(describeCriterion({ type: 'community', communityId: 2, negate: true })).toBe('Community is not 3');
 	});
 
+	it('describes a community/semanticCluster criterion by its sampleLabel when set, instead of the raw rank', () => {
+		expect(describeCriterion({ type: 'community', communityId: 13, sampleLabel: 'Project Notes' })).toBe('Community is like "Project Notes"');
+		expect(describeCriterion({ type: 'community', communityId: 13, sampleLabel: 'Project Notes', negate: true })).toBe(
+			'Community is not like "Project Notes"',
+		);
+		// null/undefined sampleLabel (a criterion saved before this field
+		// existed, or whose communityId was never actually picked via the
+		// note-picker) falls back to the plain rank wording.
+		expect(describeCriterion({ type: 'community', communityId: 13, sampleLabel: null })).toBe('Community is 14');
+		expect(describeCriterion({ type: 'semanticCluster', clusterId: 5, sampleLabel: 'Recipes' })).toBe('Semantic cluster is like "Recipes"');
+		expect(describeCriterion({ type: 'semanticCluster', clusterId: 5 })).toBe('Semantic cluster is 6');
+	});
+
 	it('describes staleDays/minLinks criteria', () => {
 		expect(describeCriterion({ type: 'staleDays', days: 30 })).toBe('At least 30 days ago');
 		expect(describeCriterion({ type: 'minLinks', count: 3 })).toBe('At least 3 links');

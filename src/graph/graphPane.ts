@@ -4669,13 +4669,16 @@ export class GraphPane {
 			// GraphPane's rankCommunitiesBySize()) so this is always a
 			// meaningful starting point regardless of Louvain's own
 			// (arbitrary) internal numbering.
+			// sampleLabel starts null - nothing's been picked in the note-
+			// picker yet, so describeCriterion() falls back to the plain
+			// "Community 1" wording until it has.
 			case 'community':
-				return { type, communityId: 0 };
+				return { type, communityId: 0, sampleLabel: null };
 			// Same "0 - the largest, ranked by size" reasoning as `community`
 			// above, just over semanticClusterRanking() instead of
 			// communityRanking().
 			case 'semanticCluster':
-				return { type, clusterId: 0 };
+				return { type, clusterId: 0, sampleLabel: null };
 			case 'text':
 				return { type, query: '' };
 			case 'folder':
@@ -5164,6 +5167,15 @@ export class GraphPane {
 					const rank = ranking?.rankByNode.get(file.path);
 					if (rank === undefined) return; // a ghost node, or Louvain didn't reach this file (e.g. no graph yet) - nothing to resolve to
 					criterion.communityId = rank;
+					// User feedback: "Wird eine Community gewählt, dann wird
+					// z.B. 'Community 14' [...] gezeigt. Das ist nicht
+					// userfreundlich" - the picked note's own name becomes the
+					// display label from here on (describeCriterion(), the
+					// badge below), not the raw rank - see
+					// CommunityCriterion.sampleLabel's own docstring for why
+					// this is a fixed "what I picked" label, not re-derived
+					// live from the graph.
+					criterion.sampleLabel = file.basename;
 					suggest.setValue(file.basename);
 					suggest.close();
 					// Community-Färbung mit fester Palette - keeps the
@@ -5171,7 +5183,7 @@ export class GraphPane {
 					// currently picked, see CriteriaEditorContext.
 					// onCommunityColorSync's own docstring.
 					ctx.onCommunityColorSync?.(criterion.communityId);
-					rerender(); // the "(N notes)" badge below depends on communityId
+					rerender(); // the badge below depends on communityId/sampleLabel
 				});
 
 				// Confirms what's actually selected without ever showing the
@@ -5179,16 +5191,17 @@ export class GraphPane {
 				// the number real meaning (how big that neighborhood is),
 				// the same context Option A's dropdown proposal would have
 				// shown per-option. Reads from the currently-persisted
-				// communityId, not from whatever's typed in the picker above
-				// (which resets on every open, see NoteSuggest's own
-				// docstring on empty-until-typed suggestions) - so this
+				// communityId/sampleLabel, not from whatever's typed in the
+				// picker above (which resets on every open, see NoteSuggest's
+				// own docstring on empty-until-typed suggestions) - so this
 				// badge is accurate immediately on reopening a
 				// previously-configured criterion, before anything is
 				// re-picked.
 				const size = ranking?.sizeByRank.get(criterion.communityId);
+				const label = criterion.sampleLabel ? `"${criterion.sampleLabel}"` : `Community ${criterion.communityId + 1}`;
 				controlsEl.createSpan({
 					cls: 'clew-criterion-community-badge',
-					text: size !== undefined ? `→ Community ${criterion.communityId + 1} · ${size} ${size === 1 ? 'note' : 'notes'}` : `→ Community ${criterion.communityId + 1}`,
+					text: size !== undefined ? `→ ${label} · ${size} ${size === 1 ? 'note' : 'notes'}` : `→ ${label}`,
 				});
 				break;
 			}
@@ -5227,19 +5240,21 @@ export class GraphPane {
 					const rank = ranking?.rankByNode.get(file.path);
 					if (rank === undefined) return; // a ghost node, or a note that hasn't been embedded (e.g. added after the last refresh) - nothing to resolve to
 					criterion.clusterId = rank;
+					// Same "picked note's name becomes the display label"
+					// fix as `community`'s own onSelect - see
+					// CommunityCriterion.sampleLabel's docstring.
+					criterion.sampleLabel = file.basename;
 					suggest.setValue(file.basename);
 					suggest.close();
 					ctx.onCommunityColorSync?.(criterion.clusterId);
-					rerender(); // the "(N notes)" badge below depends on clusterId
+					rerender(); // the badge below depends on clusterId/sampleLabel
 				});
 
 				const size = ranking?.sizeByRank.get(criterion.clusterId);
+				const label = criterion.sampleLabel ? `"${criterion.sampleLabel}"` : `Semantic cluster ${criterion.clusterId + 1}`;
 				controlsEl.createSpan({
 					cls: 'clew-criterion-community-badge',
-					text:
-						size !== undefined
-							? `→ Semantic cluster ${criterion.clusterId + 1} · ${size} ${size === 1 ? 'note' : 'notes'}`
-							: `→ Semantic cluster ${criterion.clusterId + 1}`,
+					text: size !== undefined ? `→ ${label} · ${size} ${size === 1 ? 'note' : 'notes'}` : `→ ${label}`,
 				});
 				break;
 			}
