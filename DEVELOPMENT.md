@@ -668,6 +668,50 @@ manual copy step. Then open `test-vault` in Obsidian and check:
     `buildCriteriaFacts()` call, not twice - the two share one
     `detectCommunities()` result (see `buildCriteriaFacts()`'s own
     docstring).
+- **Debounced live-apply while typing a criterion's text value** (`graphPane.ts`'s
+  `renderCriterionEditRow()`, `applyLiveDebounced`) - user report: "Wenn ich
+  in Color/Size den Namen einer Gruppe ändere, dann wird immer wieder der
+  Graph refreshed, wenn ich tippe. Gleiches beim Filter. [...] Es würde
+  genügen den Graph zu refreshen, wenn ich einen Wert komplett gewählt
+  habe." Two separate fixes, same root complaint:
+  - **A group's name field** (`renderColorAndSizePanel()`'s name
+    `TextComponent`) called `applyNodeGroups()` - a full repaint
+    (`paintVisualEncoding()` + `renderer.refresh()`) plus the async
+    `refreshCriteriaContent()` - on every keystroke, even though a group's
+    `name` has zero effect on which nodes match or how they're colored/
+    sized (only `criteria`/`color`/`sizeMultiplier` do), and the one place
+    a name used to need to show up live, `renderLegend()`, is a no-op now
+    (the legend itself was removed earlier - "Legende kann weg"). Fixed by
+    just calling `debouncedSaveNodeGroups()` there - no repaint call at
+    all, matching what the Filter preset's own name field already did
+    correctly (it never called `applyFilters()`).
+  - **A criterion's text-valued fields** (`text`/`filename` query, `folder`,
+    `property` value, `staleDays`/`minLinks`) - shared by both Color & size
+    and Filter (`renderCriterionEditRow()` backs both panels' criteria via
+    `CriteriaEditorContext`) - called `applyLive()` (→ `ctx.onChange()` →
+    `applyNodeGroups()`/`applyFilters()`, an actual repaint/re-filter, this
+    one legitimately necessary since the *value* does affect matching)
+    synchronously on every keystroke instead of once typing settles.
+    `applyLiveDebounced` (400ms, a fresh debouncer per `renderCriterionEditRow()`
+    call - same "own timer, not shared across rows" reasoning as
+    `renderAppearanceSlider()`'s own per-slider debouncer) now backs every
+    `TextComponent`'s `.onChange()` in that method - `DropdownComponent`/
+    checkbox/tag-pill/note-picker controls elsewhere in the same method
+    still call `applyLive()` directly, unchanged: each of those already
+    fires once per discrete choice (a select, a toggle, a picked note) -
+    exactly "a value fully chosen" per the user's own framing, so
+    debouncing them would only add perceptible lag for no benefit.
+  - Manual QA: open Color & size, rename a group by typing several
+    characters in a row - the graph should not visibly repaint until
+    roughly 400ms after the last keystroke, not once per character; same
+    check typing into a `folder`/`property value`/`text`/`filename` value
+    field, and into `staleDays`/`minLinks`. Confirm the *end result* still
+    applies correctly once typing stops (matching nodes update, badge/chip
+    text updates). Confirm dropdown-based criteria (`property`'s operator,
+    `clusterFreshness`, `structuralDeviation`, `betweenness`, `pageRank`,
+    `isolatedComponent`, `nodeKind`) still apply instantly on selection, no
+    added lag. Same checks in the Filter panel (shares the same
+    `renderCriterionEditRow()`).
 - **`With Cover`** should render its frontmatter `cover` image as the node,
   not a plain dot.
 - **`Isolated`** (no links at all) should still render with degree 0 and be

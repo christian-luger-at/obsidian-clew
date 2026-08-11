@@ -5107,8 +5107,21 @@ export class GraphPane {
 		else {
 			new TextComponent(nameRowEl).setValue(group.name).onChange((value) => {
 				group.name = value;
+				// Just the save, not applyNodeGroups() - user report: the
+				// graph visibly refreshed on every keystroke while typing a
+				// group's name. A name has zero effect on which nodes match
+				// or how they're colored/sized (only `criteria`/`color`/
+				// `sizeMultiplier` do - see NodeGroup's own docstring), and
+				// renderLegend() (the one place a name used to need to show
+				// up live) is a no-op now (user feedback removed the legend
+				// entirely - "Legende kann weg", see its own docstring) - so
+				// there was nothing left needing that per-keystroke repaint/
+				// renderer.refresh()/async refreshCriteriaContent() call at
+				// all, only the cost of running it. The collapsed row's own
+				// name label (`group.name`) still picks up the final value
+				// correctly, since it's read fresh from settings.nodeGroups
+				// every time the panel re-renders (e.g. closing this form).
 				this.debouncedSaveNodeGroups();
-				this.applyNodeGroups();
 			});
 		}
 		const optionsButton = new ExtraButtonComponent(nameRowEl).setIcon('more-vertical').setTooltip('More options');
@@ -5233,6 +5246,21 @@ export class GraphPane {
 	private renderCriterionEditRow(container: HTMLElement, ctx: CriteriaEditorContext, index: number, criterion: GroupCriterion): void {
 		const editEl = container.createDiv({ cls: 'clew-criterion-edit' });
 		const applyLive = (): void => ctx.onChange();
+		// Debounced version of applyLive(), for the TextComponent fields
+		// below whose value changes on every keystroke (text/filename
+		// query, folder, property value, staleDays/minLinks) - user report:
+		// the graph visibly refreshed on every single character typed,
+		// "es würde genügen den Graph zu refreshen, wenn ich einen Wert
+		// komplett gewählt habe" (refreshing once a value is fully chosen
+		// would be enough). A fresh debouncer per row-render call, same
+		// "own timer, not shared" reasoning as renderAppearanceSlider()'s
+		// own per-slider debouncer - typing in one criterion's field
+		// shouldn't reset another's pending timer. Dropdown/checkbox/note-
+		// picker controls below still call applyLive() directly, not this -
+		// each of those fires once per discrete choice already (a select,
+		// a toggle, a picked note), which *is* "a value fully chosen";
+		// debouncing those would only add perceptible lag for no benefit.
+		const applyLiveDebounced = debounce(applyLive, 400);
 		const rerender = (): void => {
 			ctx.onChange();
 			ctx.rerenderPanel();
@@ -5297,7 +5325,7 @@ export class GraphPane {
 				if (criterion.operator !== 'isEmpty' && criterion.operator !== 'isNotEmpty') {
 					new TextComponent(controlsEl).setPlaceholder('Value').setValue(criterion.value).onChange((value) => {
 						criterion.value = value;
-						applyLive();
+						applyLiveDebounced();
 					});
 				}
 				break;
@@ -5313,7 +5341,7 @@ export class GraphPane {
 				input.inputEl.setAttribute('list', ctx.folderDatalistId);
 				input.onChange((value) => {
 					criterion.folder = value;
-					applyLive();
+					applyLiveDebounced();
 				});
 				break;
 			}
@@ -5323,7 +5351,7 @@ export class GraphPane {
 				this.renderNegateWord(controlsEl, criterion, { include: 'contains', exclude: 'does not contain' }, applyLive);
 				new TextComponent(controlsEl).setValue(criterion.query).onChange((value) => {
 					criterion.query = value;
-					applyLive();
+					applyLiveDebounced();
 				});
 				break;
 			case 'text':
@@ -5331,7 +5359,7 @@ export class GraphPane {
 				this.renderNegateWord(controlsEl, criterion, { include: 'contains', exclude: 'does not contain' }, applyLive);
 				new TextComponent(controlsEl).setValue(criterion.query).onChange((value) => {
 					criterion.query = value;
-					applyLive();
+					applyLiveDebounced();
 				});
 				break;
 			case 'clusterFreshness':
@@ -5530,7 +5558,7 @@ export class GraphPane {
 				input.inputEl.min = '0';
 				input.onChange((value) => {
 					criterion.days = parsePositiveInt(value) ?? 0;
-					applyLive();
+					applyLiveDebounced();
 				});
 				controlsEl.createSpan({ cls: 'clew-criterion-label', text: 'days ago' });
 				break;
@@ -5542,7 +5570,7 @@ export class GraphPane {
 				input.inputEl.min = '0';
 				input.onChange((value) => {
 					criterion.count = parsePositiveInt(value) ?? 0;
-					applyLive();
+					applyLiveDebounced();
 				});
 				// No trailing "links" label - the type badge already reads
 				// "Links" right before it (user feedback: "Labels ... werden
