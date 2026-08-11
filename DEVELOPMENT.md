@@ -553,6 +553,13 @@ manual copy step. Then open `test-vault` in Obsidian and check:
   it (a real file at a real vault path - Obsidian previews an image/PDF the
   same as it would from clicking it in the file explorer). `nodeKind`
   criterion set to "Attachment node" should match only `diagram.svg`.
+  **Default color**: with no Color & size group enabled, `diagram.svg`
+  should render in the plain node color, not `imageNodeColor` - same fix,
+  same user feedback, as tag nodes above ("Das selbe gilt für Attachments.
+  Diese haben per Default auch nicht die normale Knotenfarbe"). `With
+  Cover`'s own cover-image note is unaffected either way - that's a
+  distinct mechanism (`attr.type === 'image'`, a real note, not
+  `kind: 'attachment'`) that still defaults to `imageNodeColor`.
 - **Cluster freshness** (an "Activity" criterion on a node group - see
   "Color & size" below and `nodeGroups.ts`): create a group with a single
   Activity criterion, reading "Notes in [an inactive area of the vault]" -

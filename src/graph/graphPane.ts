@@ -2923,20 +2923,22 @@ export class GraphPane {
 			// criterion (nodeGroups.ts), same as any other node -
 			// buildCriteriaFacts() emits an `exists: false` fact for every
 			// ghost node specifically so that criterion has something to
-			// match against. Attachment nodes (backlog item 15) share
-			// imageNodeColor with cover-image notes, overridable the same
-			// way via the `nodeKind` criterion. Tag nodes (backlog item 11)
-			// deliberately do NOT get a special default color - user
-			// feedback: "Tags-Knoten werden immer grün dargestellt, obwohl
-			// kein Color&Size gesetzt ist. Diese sollten in der normalen
-			// Knotenfarbe sein" - an earlier version gave them their own
-			// theme.ts tagNodeColor, but the plain node color is the
-			// expected default; a `nodeKind: 'tag'` Color & size group is
-			// still the way to color them differently on purpose.
+			// match against. `attr.type === 'image'` (a real note with a
+			// frontmatter `cover:` image, an unrelated, pre-existing
+			// feature) still defaults to imageNodeColor - only that one
+			// keeps a special default. Tag *and* attachment nodes (backlog
+			// items 11/15) deliberately do NOT get one - user feedback (tag
+			// nodes first, then the same report for attachments): "Tags-
+			// Knoten werden immer grün dargestellt, obwohl kein Color&Size
+			// gesetzt ist. Diese sollten in der normalen Knotenfarbe sein" /
+			// "Das selbe gilt für Attachments" - both now fall through to
+			// the plain node color; a `nodeKind: 'tag'`/`'attachment'`
+			// Color & size group is still the way to color them
+			// differently on purpose.
 			const defaultColor =
 				attr.kind === 'ghost'
 					? this.theme.ghostNodeColor
-					: attr.kind === 'attachment' || attr.type === 'image'
+					: attr.type === 'image'
 						? this.theme.imageNodeColor
 						: this.resolvedNodeColor();
 			const resolvedColor = groupByNode.get(node)?.color ?? defaultColor;
