@@ -235,6 +235,25 @@ const LABEL_SIZE_MIN = 6;
 function watchZoomForLabelSize(renderer: Sigma): void {
 	const camera = renderer.getCamera();
 	const update = (): void => {
+		// A non-finite ratio (NaN/Infinity) means something upstream already
+		// broke - a corrupt pinned node position poisoning ForceAtlas2 and,
+		// through it, the camera's own fit (see
+		// resetToDeterministicPositions()'s docstring in vaultGraph.ts for
+		// the real story) is the one confirmed cause, fixed at its source
+		// there and in GraphPane's fittedBBox()/finishDrag(). This check
+		// stays anyway, as the actual guard against *this* crash
+		// specifically: without it, a non-finite `next` never equals
+		// `renderer.getSetting('labelSize')` (`NaN !== NaN` is always true,
+		// same for the setting's own stored NaN once one gets written), so
+		// the "did this actually change" guard below never fires and this
+		// recurses through sigma's own setSetting -> handleSettingsUpdate ->
+		// camera.setState -> 'updated' cycle until the call stack overflows
+		// - "Uncaught RangeError: Maximum call stack size exceeded",
+		// user-reported switching Radial -> Force, root-caused via a non-
+		// minified debug build with temporary console logging (since
+		// removed) that confirmed `camera.ratio` was genuinely `NaN` at the
+		// point of the loop.
+		if (!Number.isFinite(camera.ratio)) return;
 		const scaled = LABEL_SIZE_BASE / camera.ratio;
 		const next = Math.min(LABEL_SIZE_BASE, Math.max(LABEL_SIZE_MIN, scaled));
 		if (renderer.getSetting('labelSize') === next) return;

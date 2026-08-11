@@ -3663,11 +3663,25 @@ export class GraphPane {
 		this.graph.forEachNode((_node, attr) => {
 			const x = attr.x as number;
 			const y = attr.y as number;
+			// Skip a non-finite coordinate rather than let it poison the
+			// whole extent - `x < xMin`/`x > xMax` are both false for a NaN
+			// `x` anyway (NaN comparisons are always false), so this node
+			// alone is already excluded from xMin/xMax; the explicit check
+			// is for `y`, which could still be finite while `x` isn't (or
+			// vice versa) and would otherwise sneak a `NaN` into yMin/yMax.
+			// A prior version had no such guard anywhere upstream either -
+			// see resetToDeterministicPositions()'s own docstring
+			// (vaultGraph.ts) for how one bad node made it this far and what
+			// letting it through here did to the camera/whole plugin.
+			if (!Number.isFinite(x) || !Number.isFinite(y)) return;
 			if (x < xMin) xMin = x;
 			if (x > xMax) xMax = x;
 			if (y < yMin) yMin = y;
 			if (y > yMax) yMax = y;
 		});
+		// Every node was non-finite (or there were none) - nothing valid to
+		// fit to, same as the empty-graph case above.
+		if (xMin > xMax) return null;
 		const centerX = (xMin + xMax) / 2;
 		const centerY = (yMin + yMax) / 2;
 		const half = Math.max(xMax - xMin, yMax - yMin, MIN_FIT_EXTENT) / 2;
@@ -3745,8 +3759,17 @@ export class GraphPane {
 		const y = Number(this.graph.getNodeAttribute(node, 'y'));
 		this.graph.setNodeAttribute(node, 'fixed', true);
 
-		this.plugin.settings.pinnedPositions[node] = { x, y };
-		void this.plugin.saveSettings();
+		// Never persist a non-finite coordinate - see
+		// resetToDeterministicPositions()'s own docstring (vaultGraph.ts) for
+		// what one saved NaN/Infinity pin does to every future Force layout
+		// (poisons the whole simulation, crashes the plugin). Silently drops
+		// the pin instead of saving a broken one - the node just stays at
+		// wherever its normal (deterministic-seed or FA2-settled) position
+		// would already put it, same as if it had never been dragged.
+		if (Number.isFinite(x) && Number.isFinite(y)) {
+			this.plugin.settings.pinnedPositions[node] = { x, y };
+			void this.plugin.saveSettings();
+		}
 
 		this.layout?.stop();
 		this.layout = runLayout(this.graph, this.layoutOptions(DRAG_SETTLE_DURATION_MS));

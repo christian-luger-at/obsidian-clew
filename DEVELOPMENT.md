@@ -1279,36 +1279,64 @@ manual copy step. Then open `test-vault` in Obsidian and check:
   2) so more labels are visible to shrink in the first place - existing
   vaults keep whatever value they'd already saved; this only changes what a
   fresh install (or "Reset to defaults") starts at.
-  **Regression (fixed later)**: this feature's `watchZoomForLabelSize()`
-  originally called `renderer.setSetting('labelSize', …)` unconditionally
-  on every camera `updated` event, with no "did the value actually change"
-  guard. sigma's own `setSetting()` unconditionally re-derives the
-  camera's state afterward (`handleSettingsUpdate()` calls
-  `camera.setState(camera.validateState(camera.getState()))` regardless of
-  which setting changed, sigma's own source, not something this plugin
-  controls), and `Camera.setState()` re-emits `updated` whenever the
-  result isn't `===` the previous state - during setForceLayout()'s
-  repeating 150ms `resetCameraAndRefresh()` interval (which keeps the
-  camera tracking ForceAtlas2 live while it settles), the ratio genuinely
-  keeps changing frame to frame, so this kept re-triggering sigma's own
-  re-derive → re-emit cycle deep enough to overflow the stack - "Uncaught
-  RangeError: Maximum call stack size exceeded", user-reported as
-  "Wechsel von Radial auf Force => Fehler in der Console. Graph
-  funktioniert dann nicht mehr", graph left unusable until the pane was
-  reopened. Root-caused via a non-minified debug build (`sourcemap:
-  'inline'`, `minify: false` - the production build's minified stack trace
-  alone wasn't enough to tell sigma-internal frames from this plugin's
-  own) to get a readable call chain rather than guessing from one.
-  **Not** caused by the edges-after-panning feature below, despite an
-  earlier (wrong) hypothesis blaming that one first - disabling it
-  entirely and reproducing again confirmed the crash was unrelated. Fixed
-  by skipping the `setSetting()` call whenever the computed label size
-  hasn't actually changed - breaks the ping-pong at its source without
-  changing the feature's own behavior at all. Switch Radial → Force (and
-  every other layout pair) a few times in a row, including while
-  ForceAtlas2 is still visibly settling - no console error, graph stays
-  responsive, labels still resize correctly on zoom exactly as described
-  above.
+  **Regression, three rounds to actually root-cause**: switching Radial →
+  Force crashed with "Uncaught RangeError: Maximum call stack size
+  exceeded" - user-reported as "Wechsel von Radial auf Force => Fehler in
+  der Console. Graph funktioniert dann nicht mehr", graph left unusable
+  until the pane was reopened.
+  - Round 1 (wrong): blamed the edges-after-panning feature below (newest
+    change at the time) - disabling it entirely and reproducing again
+    confirmed the crash was unrelated.
+  - Round 2 (real bug, incomplete fix): a non-minified debug build
+    (`sourcemap: 'inline'`, `minify: false` - the production build's
+    minified stack trace alone wasn't enough to tell sigma-internal
+    frames from this plugin's own) showed `watchZoomForLabelSize()`'s
+    `update()` ping-ponging with sigma's own `setSetting()` ->
+    `handleSettingsUpdate()` -> `camera.setState()` -> `updated` cycle
+    (sigma's `setSetting()` unconditionally re-derives camera state on
+    every call, regardless of which setting changed - sigma's own
+    source, not something this plugin controls). Added a "did the label
+    size actually change" guard before calling `setSetting()` again,
+    reasoning the ratio genuinely kept changing during
+    setForceLayout()'s repeating 150ms `resetCameraAndRefresh()`
+    interval. Crash persisted - the guard was correct but not sufficient,
+    for the reason round 3 found.
+  - Round 3 (actual root cause): temporary diagnostic logging inside
+    `update()` showed `camera.ratio` itself was `NaN` - not genuinely
+    changing each call, just permanently broken. `NaN !== NaN` is always
+    true, so round 2's guard (`current === next`) could never fire once
+    the setting itself became `NaN`, and the ping-pong continued exactly
+    as before. Traced further: a **pinned node position with a
+    non-finite `x`/`y`** (`plugin.settings.pinnedPositions`, GitHub issue
+    #12) flowed straight into ForceAtlas2 via
+    `resetToDeterministicPositions()` (vaultGraph.ts) with no validation
+    anywhere upstream - once FA2's repulsion math touches one NaN
+    coordinate, NaN propagates through the *entire* simulation (every
+    node it repels becomes NaN too), which poisons GraphPane's
+    `fittedBBox()` extent, which poisons the camera's `ratio`. This
+    explains why every earlier fix attempt failed to help at all: the
+    corrupt coordinate lives in the user's saved settings (`data.json`),
+    completely unaffected by any code change, and re-poisons the layout
+    fresh every single time Force layout runs. Actually fixed at the
+    source: `vaultGraph.ts`'s new `validPinnedPosition()` helper (shared
+    by `buildVaultGraph()` and `resetToDeterministicPositions()`) treats
+    a non-finite pin as if it weren't saved at all, falling back to the
+    deterministic seed instead; `finishDrag()` (graphPane.ts) now refuses
+    to *write* a non-finite position in the first place; `fittedBBox()`
+    skips any node whose x/y still somehow isn't finite rather than
+    letting one poison the whole extent (defense in depth);
+    `watchZoomForLabelSize()` also keeps an explicit
+    `Number.isFinite(camera.ratio)` guard as a last line of defense
+    against this *specific* failure mode recurring from some future,
+    different source. `vaultGraph.test.ts`'s "resetToDeterministicPositions
+    falls back to the deterministic seed for a pin with a non-finite
+    x/y" test covers this directly. For manual QA: drag a node in Force
+    layout to pin it, then switch to Radial and back to Force a few times,
+    including while ForceAtlas2 is still visibly settling - no console
+    error, graph stays responsive, labels still resize correctly on zoom
+    exactly as described above, and the pinned node stays exactly where
+    you put it (a *valid* pin still round-trips correctly - only a
+    corrupt one falls back).
 - **Edges stay visible after panning** (`renderer.ts`'s
   `watchMoveForEdgeVisibility()`) - user report: "Nach dem Verschieben des
   Graphen werden oft nur die Punkte ohne Kanten dargestellt." sigma's own

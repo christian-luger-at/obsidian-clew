@@ -6,6 +6,20 @@ export interface PinnedPosition {
 	y: number;
 }
 
+/**
+ * `position` with a non-finite `x`/`y` (NaN or Infinity) treated as if it
+ * weren't saved at all - shared by buildVaultGraph() and
+ * resetToDeterministicPositions() below, the two places a pinned position
+ * gets read. See resetToDeterministicPositions()'s own docstring for why
+ * this matters far more than a single misplaced node: one bad coordinate
+ * here used to poison ForceAtlas2's entire simulation and, through it, the
+ * camera and the whole plugin, every single time the graph was built or
+ * Force layout ran - not a cosmetic edge case.
+ */
+function validPinnedPosition(position: PinnedPosition | undefined): PinnedPosition | undefined {
+	return position && Number.isFinite(position.x) && Number.isFinite(position.y) ? position : undefined;
+}
+
 export interface BuildVaultGraphOptions {
 	/** "Undirected by default, with a toggle" (doc section 3.2). */
 	directed?: boolean;
@@ -74,7 +88,7 @@ export function buildVaultGraph(app: App, files: TFile[], options: BuildVaultGra
 	for (const file of files) {
 		const cover = app.metadataCache.getFileCache(file)?.frontmatter?.cover as string | undefined;
 		const image = cover ? resolveImage(app, cover) : undefined;
-		const pinned = pinnedPositions[file.path];
+		const pinned = validPinnedPosition(pinnedPositions[file.path]);
 		const position = pinned ?? deterministicPosition(file.path);
 		graph.addNode(file.path, {
 			label: file.basename,
@@ -303,10 +317,30 @@ function fnv1a(str: string): number {
  * pins (dagre lays out the whole graph fresh, no per-node exceptions), so
  * without this a pin would silently not survive a hierarchical-then-back-
  * to-force round trip.
+ *
+ * A pinned position with a non-finite `x`/`y` (NaN or Infinity - e.g. a
+ * value saved before `finishDrag()`'s own validation existed, or `data.json`
+ * hand-edited/corrupted some other way) is treated as if it weren't pinned
+ * at all, falling back to the deterministic seed instead - user-reported:
+ * a single such node crashed the *entire* plugin every time Force layout
+ * ran, not just that one node's own position. Once ForceAtlas2 starts
+ * repelling nodes using a NaN coordinate, NaN propagates through the whole
+ * simulation (every distance calculation touching that node becomes NaN,
+ * every node it repels in turn becomes NaN, ...), which poisons
+ * `fittedBBox()`'s extent, which poisons the camera's `ratio` - and
+ * `NaN !== NaN` is always true, so anything gating on "did this actually
+ * change" (e.g. renderer.ts's watchZoomForLabelSize()) never converges,
+ * looping until the call stack overflows ("Uncaught RangeError: Maximum
+ * call stack size exceeded"). This is the actual, persistent root cause of
+ * that crash - not any of the renderer.ts changes it was previously (and
+ * wrongly) attributed to, which is why none of those fixes ever made it
+ * stop: the corrupt coordinate lives in `pinnedPositions`, on disk,
+ * unaffected by any code change, and re-poisons the layout fresh every
+ * single time Force runs.
  */
 export function resetToDeterministicPositions(graph: Graph, pinnedPositions: Record<string, PinnedPosition> = {}): void {
 	graph.forEachNode((node) => {
-		const pinned = pinnedPositions[node];
+		const pinned = validPinnedPosition(pinnedPositions[node]);
 		const position = pinned ?? deterministicPosition(node);
 		graph.setNodeAttribute(node, 'x', position.x);
 		graph.setNodeAttribute(node, 'y', position.y);

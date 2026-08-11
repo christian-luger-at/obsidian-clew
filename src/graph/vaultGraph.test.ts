@@ -279,6 +279,25 @@ describe('buildVaultGraph', () => {
 			expect(graph.getNodeAttribute('B.md', 'y')).toBe(originalBy);
 			expect(graph.getNodeAttribute('B.md', 'fixed')).toBeUndefined();
 		});
+
+		it('resetToDeterministicPositions falls back to the deterministic seed for a pin with a non-finite x/y, instead of poisoning the layout with NaN', () => {
+			// The actual root cause of a real crash - see this function's own
+			// docstring in vaultGraph.ts: a NaN pinned position (however it
+			// got saved) used to flow straight into the graph, poisoning
+			// ForceAtlas2's whole simulation and, through it, the camera
+			// itself, with no guard anywhere upstream.
+			const { app, files } = createFakeApp([{ path: 'A.md' }, { path: 'B.md' }]);
+			const pinnedPositions = { 'A.md': { x: NaN, y: 99 } };
+			const graph = buildVaultGraph(app, files, { pinnedPositions });
+
+			resetToDeterministicPositions(graph, pinnedPositions);
+
+			expect(Number.isFinite(graph.getNodeAttribute('A.md', 'x'))).toBe(true);
+			expect(Number.isFinite(graph.getNodeAttribute('A.md', 'y'))).toBe(true);
+			// Not treated as pinned at all - same as an unpinned node, not
+			// "pinned to a fallback position".
+			expect(graph.getNodeAttribute('A.md', 'fixed')).toBeUndefined();
+		});
 	});
 
 	describe('ghost nodes (unresolved links)', () => {
