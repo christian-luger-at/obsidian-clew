@@ -19,7 +19,7 @@ import { LayoutMode, LAYOUT_MODE_LABELS, LAYOUT_OPTIONS } from './layoutModal';
 import { ConfirmModal } from './confirmModal';
 import { communityHomogeneity, computeCommunityStats, detectCommunities, staleness } from './stagnation';
 import { readThemeColors, ThemeColors, blendToward, parseRgbString } from './theme';
-import { HeatmapLayer, createHeatmapLayer } from './heatmapLayer';
+import { HeatmapLayer, HeatmapRegion, createHeatmapLayer } from './heatmapLayer';
 import { DEFAULT_FILTER_PRESETS, evaluateFilters, FilterCombineMode, FilterPreset, isAnyFilterEnabled, MAX_FILTER_PRESETS } from './filter';
 import {
 	CentralityBucket,
@@ -726,8 +726,12 @@ export class GraphPane {
 	private diagnosticsClusterVisibleCount = DIAGNOSTICS_PAGE_SIZE;
 	private diagnosticsDeviationVisibleCount = DIAGNOSTICS_PAGE_SIZE;
 	private renderer: Sigma | null = null;
-	/** Density-field overlay for the Isolated-clusters highlight (toggleClusterHighlight()) - see heatmapLayer.ts's own docstring. Tied to this.renderer's lifecycle: (re)created alongside it in setFiles(), never reused across a renderer rebuild since it holds that renderer's camera/afterRender listeners. */
+	/** Density-field overlay for the Isolated-clusters/Structural-deviation highlight and Semantic clustering's Color & size groups - see heatmapLayer.ts's own docstring. Tied to this.renderer's lifecycle: (re)created alongside it in setFiles(), never reused across a renderer rebuild since it holds that renderer's camera/afterRender listeners. Its regions are driven by updateHeatmapRegions() below, not set directly. */
 	private heatmapLayer: HeatmapLayer | null = null;
+	/** The Diagnostics panel's currently Show-in-graph'd Isolated cluster/Structural deviation, as a heatmap region (highlightNodeSet()) - null when nothing is highlighted. Composed with semanticHeatmapRegions by updateHeatmapRegions() into whatever this.heatmapLayer actually draws. */
+	private clusterHighlightRegion: HeatmapRegion | null = null;
+	/** One heatmap region per enabled Semantic clustering Color & size group - recomputed by paintVisualEncoding() (computeSemanticHeatmapRegions()) every time groups/facts are re-evaluated, unlike clusterHighlightRegion above which only changes on an explicit Diagnostics toggle click. Drawn continuously (not a toggle) since Semantic clustering has no Diagnostics "Show in graph" list of its own - a group being enabled in the Color & size panel already means the user asked to see it. */
+	private semanticHeatmapRegions: HeatmapRegion[] = [];
 	private layout: LayoutRun | null = null;
 	private graph: Graph | null = null;
 	private files: TFile[] = [];
@@ -1150,6 +1154,11 @@ export class GraphPane {
 			edgeArrowSize: appearance.edgeArrowSize,
 		});
 		this.heatmapLayer = createHeatmapLayer(this.graphContainerEl, this.renderer);
+		// paintVisualEncoding() above already computed semanticHeatmapRegions
+		// (and tried to push them - a no-op then, since this.heatmapLayer was
+		// still null) - flush that now that the layer actually exists,
+		// rather than waiting for some later change to trigger it.
+		this.updateHeatmapRegions();
 		this.applyEdgeStyle();
 		this.setupNodeDragging();
 		this.setupNodeClick();
@@ -1509,7 +1518,7 @@ export class GraphPane {
 		} else {
 			this.highlightedDeviationIndex = null;
 			this.highlightedClusterIndex = index;
-			this.highlightNodeSet(new Set(cluster), { heatmap: true });
+			this.highlightNodeSet(new Set(cluster));
 		}
 		this.renderDiagnosticsPanel();
 	}
@@ -1517,23 +1526,20 @@ export class GraphPane {
 	/**
 	 * Same dim treatment as applyHighlight() (Find-path), generalized from
 	 * "nodes along one path" to "any given node set" - an isolated cluster
-	 * (or, since GitHub issue #5, a scattered Structural-deviation
-	 * community) has no meaningful path/edge direction to draw, just
-	 * membership.
-	 *
-	 * `heatmap: true` additionally paints a soft density field behind the
-	 * set (heatmapLayer.ts) - user request: "die betroffenen Knoten [sollen]
-	 * mit einer Dichtekarte / Heatmap ausgestattet werden, um die visuelle
-	 * Zusammengehörigkeit zu zeigen", scoped to Isolated clusters only
-	 * (toggleClusterHighlight() above), not Structural deviation
-	 * (toggleDeviationHighlight() below still passes nothing, i.e. the
-	 * flat-recolor-only treatment this method always had) - a scattered
-	 * community's whole *point* is that its notes sit far apart on the
-	 * canvas, where a Gaussian density field would mostly just look like
-	 * several disconnected smudges rather than the "one cohesive blob"
-	 * effect it's meant for.
+	 * or a scattered Structural-deviation community (GitHub issue #5) has no
+	 * meaningful path/edge direction to draw, just membership. Also paints a
+	 * soft density field behind the set (heatmapLayer.ts) - user request:
+	 * "die betroffenen Knoten [sollen] mit einer Dichtekarte / Heatmap
+	 * ausgestattet werden, um die visuelle Zusammengehörigkeit zu zeigen",
+	 * first for Isolated clusters only, then ("Mach das gleiche mit [...]
+	 * Structural deviation") extended here too - both toggleClusterHighlight()
+	 * and toggleDeviationHighlight() call this the same way, so both get the
+	 * heatmap. (Semantic clustering's own regions are separate - see
+	 * semanticHeatmapRegions/computeSemanticHeatmapRegions(), continuous
+	 * rather than toggle-driven, composed alongside this one by
+	 * updateHeatmapRegions().)
 	 */
-	private highlightNodeSet(nodes: Set<string>, options?: { heatmap?: boolean }): void {
+	private highlightNodeSet(nodes: Set<string>): void {
 		if (!this.renderer || !this.graph) return;
 		const graph = this.graph;
 
@@ -1548,25 +1554,61 @@ export class GraphPane {
 			return { ...attr, color: this.theme.dimEdgeColor };
 		});
 
-		if (options?.heatmap) {
-			// Falls back to a fixed blue if the theme's primaryPathColor
-			// somehow isn't canvas-parseable (see parseRgbString()'s own
-			// docstring for when that can happen) - same fallback triple the
-			// prototype's own hardcoded BLUE used, so a heatmap always draws
-			// something rather than silently rendering as nothing.
-			const rgb = parseRgbString(this.theme.primaryPathColor) ?? [37, 99, 235];
-			this.heatmapLayer?.setNodes(Array.from(nodes), rgb);
-		}
+		// Falls back to a fixed blue if the theme's primaryPathColor somehow
+		// isn't canvas-parseable (see parseRgbString()'s own docstring for
+		// when that can happen) - same fallback triple the prototype's own
+		// hardcoded BLUE used, so a heatmap always draws something rather
+		// than silently rendering as nothing.
+		const rgb = parseRgbString(this.theme.primaryPathColor) ?? [37, 99, 235];
+		this.clusterHighlightRegion = { nodeIds: Array.from(nodes), color: rgb };
+		this.updateHeatmapRegions();
 	}
 
-	/** Clears whichever of an Isolated-clusters/Structural-deviation highlight is set (toggleClusterHighlight()/toggleDeviationHighlight()) - same "just null both reducers" mechanism as Find-path's clearPathReducers(), with the same caveat: an enabled Filter/Color & size group underneath doesn't reappear on its own, since closing/superseding a highlight has never restored one (see clearHighlight()'s own docstring). Both indices are cleared together, not just whichever one was actually set - only one is ever non-null at a time (each toggle*Highlight() method clears the other's index before setting its own), so this stays a single "reset to nothing highlighted" call regardless of which kind was active. Also clears the Isolated-clusters heatmap layer, unconditionally - a no-op when Structural deviation (which never sets it) was the one active. */
+	/** Clears whichever of an Isolated-clusters/Structural-deviation highlight is set (toggleClusterHighlight()/toggleDeviationHighlight()) - same "just null both reducers" mechanism as Find-path's clearPathReducers(), with the same caveat: an enabled Filter/Color & size group underneath doesn't reappear on its own, since closing/superseding a highlight has never restored one (see clearHighlight()'s own docstring). Both indices are cleared together, not just whichever one was actually set - only one is ever non-null at a time (each toggle*Highlight() method clears the other's index before setting its own), so this stays a single "reset to nothing highlighted" call regardless of which kind was active. Also clears clusterHighlightRegion - Semantic clustering's own semanticHeatmapRegions are untouched, so their heatmap (if any groups are enabled) keeps showing. */
 	private clearClusterHighlight(): void {
 		if (this.highlightedClusterIndex === null && this.highlightedDeviationIndex === null) return;
 		this.highlightedClusterIndex = null;
 		this.highlightedDeviationIndex = null;
-		this.heatmapLayer?.setNodes(null, [37, 99, 235]);
+		this.clusterHighlightRegion = null;
+		this.updateHeatmapRegions();
 		this.renderer?.setSetting('nodeReducer', null);
 		this.renderer?.setSetting('edgeReducer', null);
+	}
+
+	/** Composes clusterHighlightRegion (the Diagnostics toggle, at most one) with semanticHeatmapRegions (Semantic clustering's own, any number) into whatever this.heatmapLayer actually draws - the single call site both kinds of region change should go through, so neither ever clobbers the other. */
+	private updateHeatmapRegions(): void {
+		const regions = this.clusterHighlightRegion ? [this.clusterHighlightRegion, ...this.semanticHeatmapRegions] : this.semanticHeatmapRegions;
+		this.heatmapLayer?.setRegions(regions);
+	}
+
+	/**
+	 * One heatmap region per enabled Semantic clustering Color & size group
+	 * - `groupByNode` is the same "first enabled group each node was
+	 * ultimately assigned to" result paintVisualEncoding() already computes
+	 * for coloring (nodeGroups.ts's evaluateGroups()), reused here rather
+	 * than re-matching criteria from scratch, so a note in the overlap of
+	 * two semantic-cluster groups gets a heatmap glow that matches whichever
+	 * group's color actually painted it, not both. A group's own `color`
+	 * (already a resolved hex string - see NodeGroup.color, kept in sync
+	 * with its `semanticCluster` criterion's clusterId by
+	 * onCommunityColorSync()) is what parseRgbString() resolves here, so the
+	 * glow always matches that group's node fill color exactly.
+	 */
+	private computeSemanticHeatmapRegions(groupByNode: Map<string, NodeGroup>): HeatmapRegion[] {
+		const nodeIdsByGroupId = new Map<string, string[]>();
+		const groupById = new Map<string, NodeGroup>();
+		for (const [node, group] of groupByNode) {
+			if (!group.criteria.some((c) => c.type === 'semanticCluster')) continue;
+			groupById.set(group.id, group);
+			if (!nodeIdsByGroupId.has(group.id)) nodeIdsByGroupId.set(group.id, []);
+			nodeIdsByGroupId.get(group.id)!.push(node);
+		}
+		const regions: HeatmapRegion[] = [];
+		for (const [groupId, nodeIds] of nodeIdsByGroupId) {
+			const color = parseRgbString(groupById.get(groupId)!.color) ?? [37, 99, 235];
+			regions.push({ nodeIds, color });
+		}
+		return regions;
 	}
 
 	/**
@@ -2944,6 +2986,8 @@ export class GraphPane {
 		});
 
 		const groupByNode = evaluateGroups(this.buildCriteriaFacts(), this.plugin.settings.nodeGroups);
+		this.semanticHeatmapRegions = this.computeSemanticHeatmapRegions(groupByNode);
+		this.updateHeatmapRegions();
 
 		for (const [node, group] of groupByNode) {
 			if (group.sizeMultiplier === null) continue;
