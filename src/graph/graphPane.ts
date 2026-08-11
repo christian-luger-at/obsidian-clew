@@ -5042,19 +5042,31 @@ export class GraphPane {
 				item.setTitle(label).onClick(() => {
 					const criterion = this.blankCriterion(type);
 					ctx.criteria.push(criterion);
-					// Community-Färbung mit fester Palette (GitHub backlog
-					// item 5) - syncs a NodeGroup's own color to the newly-
-					// added criterion's community right away, same as it
-					// does whenever the community number is changed later
-					// (see renderCriterionEditRow()'s 'community' case). A
-					// no-op for Filter (filterCriteriaContext() leaves this
-					// hook unset - a FilterPreset has no color of its own).
-					// `semanticCluster` reuses the exact same hook/palette -
-					// nodeGroups.ts's communityColor() is just "id modulo the
-					// palette", equally meaningful for a semantic cluster's
-					// own rank as for a Louvain community's.
-					if (criterion.type === 'community') ctx.onCommunityColorSync?.(criterion.communityId);
-					else if (criterion.type === 'semanticCluster') ctx.onCommunityColorSync?.(criterion.clusterId);
+					// Deliberately NOT synced here (an earlier version did -
+					// see git history/DEVELOPMENT.md for the "Community-
+					// Färbung mit fester Palette" feature, GitHub backlog
+					// item 5) - user report: "Wenn ich [...] +add drücke und
+					// Community wähle, dann ist die Farbe rot", every single
+					// time, regardless of which community/cluster gets
+					// picked afterward. Root cause: blankCriterion() always
+					// starts a fresh community/semanticCluster criterion at
+					// communityId/clusterId 0 (the largest, ranked by size -
+					// see blankCriterion()'s own docstring for why 0 is a
+					// reasonable *matching* default), and syncing the
+					// group's color to that here meant every new group
+					// instantly turned communityColor(0) - DEFAULT_GROUP_
+					// COLORS[0], literally red - the moment the criterion
+					// type was picked, overwriting whatever color the group
+					// actually had (its own creation-time cycled default, or
+					// a color the user had already picked), before the user
+					// had chosen a specific community/cluster at all. The
+					// sync still happens (correctly, with the community/
+					// cluster actually picked) once a note is chosen in the
+					// note-picker below - see this method's own 'community'/
+					// 'semanticCluster' cases' onSelect handlers - so a
+					// group's color still ends up "Community-colored" the
+					// moment there's a real community/cluster to color it
+					// by, just not before then.
 					// Opens straight into its expanded controls rather than
 					// showing as an unconfigured chip first - it needs setting
 					// up right away, and there's nothing useful a collapsed

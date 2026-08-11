@@ -621,14 +621,41 @@ manual copy step. Then open `test-vault` in Obsidian and check:
     UI, 0 = the largest community internally - see
     `rankCommunitiesBySize()`) - picking a note's own community number
     should color that whole neighborhood, and *only* that one. Add the
-    criterion via "+ Add" → "Community" and confirm the group's color
-    picker immediately jumps to `communityColor(0)`'s fixed palette entry
-    (`nodeGroups.ts`'s `DEFAULT_GROUP_COLORS[0]`, red) without touching the
-    color picker yourself; change the number field - the color should
-    update to match the new community's own palette entry live, every
-    time, not just once. This is "Community-Färbung mit fester Palette" -
-    entirely through the existing chip system (`CriteriaEditorContext.
-    onCommunityColorSync`), no separate coloring UI.
+    criterion via "+ Add" → "Community" - the group's own color (whatever
+    it already was, its own creation-time cycled default or a color you'd
+    picked yourself) should stay exactly as-is at this point, NOT jump to
+    red (see the bugfix note right below - an earlier version did jump to
+    red here); pick a note in the "Pick a note in it…" text field - the
+    color should update *then*, to `communityColor(rank)`'s fixed palette
+    entry for whichever community that note is actually in; pick a
+    *different* note afterward - the color should update again to match.
+    This is "Community-Färbung mit fester Palette" - entirely through the
+    existing chip system (`CriteriaEditorContext.onCommunityColorSync`), no
+    separate coloring UI.
+
+    User report: "Wenn bei Semantic Cluster und Community die Colors/Sizes
+    bestimmt werden, dann wird bei der Auswahl über das Dropdown immer auf
+    Farbe 'rot' gestellt" - narrowed down via follow-up (the "Dropdown" was
+    the "+ Add" criterion-type menu, not the note-picker): "Wenn ich +add
+    drücke und Community wähle, dann ist die Farbe rot", regardless of
+    which community/cluster got picked afterward. Root cause
+    (`openAddCriterionMenu()`): the color-sync call that's correct at
+    *pick* time (`onSelect` in `renderCriterionEditRow()`'s `'community'`/
+    `'semanticCluster'` cases, syncing to whichever rank the just-picked
+    note actually resolved to) was *also* being called at *add* time, right
+    after `blankCriterion()` created a fresh criterion still at its default
+    `communityId`/`clusterId: 0` - so every newly-added community/semantic-
+    cluster criterion immediately overwrote the group's color with
+    `communityColor(0)` (`DEFAULT_GROUP_COLORS[0]`, literally red),
+    clobbering whatever color the group already had before the user had
+    picked any specific community/cluster at all - user-reported as
+    "zufällig(?)" (seemingly random) since a freshly-created group's own
+    cycled default color got silently replaced the instant the criterion
+    type was chosen. Fixed by removing that add-time sync call outright -
+    the pick-time sync (already correct) is the only place a
+    community/semantic-cluster criterion should ever touch the group's
+    color, since it's the only place that actually knows which
+    community/cluster the user means.
   - **Only pay for what's active**: with no enabled group/filter using any
     of the four, none of `computeBetweenness()`/`computePageRank()`/
     `findConnectedComponents()`/`detectCommunities()` should run at all
