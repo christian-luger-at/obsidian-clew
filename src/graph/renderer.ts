@@ -206,12 +206,39 @@ const LABEL_SIZE_MIN = 6;
  * needed, since GraphPane always creates a fresh Sigma (and so a fresh
  * camera) per createRenderer() call and never keeps the old one around
  * after renderer.kill() (see GraphPane's setFiles()/onClose()).
+ *
+ * The `renderer.getSetting('labelSize') === next` guard below is load-
+ * bearing, not a micro-optimization - without it this recurses infinitely
+ * and crashes with "Maximum call stack size exceeded" (user-reported,
+ * "Wechsel von Radial auf Force => Fehler in der Console. Graph
+ * funktioniert dann nicht mehr", confirmed via a non-minified debug build
+ * to trace the actual call chain rather than guessing from a minified
+ * one). Root cause: sigma's own `setSetting()` unconditionally calls
+ * `handleSettingsUpdate()`, which re-derives the camera's state via
+ * `camera.setState(camera.validateState(camera.getState()))` regardless of
+ * which setting actually changed (sigma's own source, not something this
+ * plugin controls) - and `Camera.setState()` emits its own `updated` event
+ * whenever the result isn't exactly `===` the previous state. During
+ * setForceLayout()'s repeating 150ms `resetCameraAndRefresh()` interval
+ * (which keeps the camera tracking ForceAtlas2 live while it settles - see
+ * that function's own docstring), the ratio genuinely keeps changing
+ * frame to frame, so this `update()` calling `setSetting('labelSize', …)`
+ * on every single `updated` event kept re-triggering sigma's own re-derive
+ * -> re-emit cycle for as long as the ratio kept moving, deep enough to
+ * overflow the stack. Skipping the `setSetting()` call whenever the
+ * computed value hasn't actually changed breaks that specific ping-pong at
+ * its source, without changing the feature's own behavior at all (label
+ * size still recomputes every real zoom change, exactly as before) -
+ * `renderer.setSetting()`'s job was always "write `next`", and if `next`
+ * already *is* the stored value there is nothing left for it to do.
  */
 function watchZoomForLabelSize(renderer: Sigma): void {
 	const camera = renderer.getCamera();
 	const update = (): void => {
 		const scaled = LABEL_SIZE_BASE / camera.ratio;
-		renderer.setSetting('labelSize', Math.min(LABEL_SIZE_BASE, Math.max(LABEL_SIZE_MIN, scaled)));
+		const next = Math.min(LABEL_SIZE_BASE, Math.max(LABEL_SIZE_MIN, scaled));
+		if (renderer.getSetting('labelSize') === next) return;
+		renderer.setSetting('labelSize', next);
 	};
 	camera.on('updated', update);
 	update();

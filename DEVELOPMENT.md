@@ -1279,6 +1279,36 @@ manual copy step. Then open `test-vault` in Obsidian and check:
   2) so more labels are visible to shrink in the first place - existing
   vaults keep whatever value they'd already saved; this only changes what a
   fresh install (or "Reset to defaults") starts at.
+  **Regression (fixed later)**: this feature's `watchZoomForLabelSize()`
+  originally called `renderer.setSetting('labelSize', …)` unconditionally
+  on every camera `updated` event, with no "did the value actually change"
+  guard. sigma's own `setSetting()` unconditionally re-derives the
+  camera's state afterward (`handleSettingsUpdate()` calls
+  `camera.setState(camera.validateState(camera.getState()))` regardless of
+  which setting changed, sigma's own source, not something this plugin
+  controls), and `Camera.setState()` re-emits `updated` whenever the
+  result isn't `===` the previous state - during setForceLayout()'s
+  repeating 150ms `resetCameraAndRefresh()` interval (which keeps the
+  camera tracking ForceAtlas2 live while it settles), the ratio genuinely
+  keeps changing frame to frame, so this kept re-triggering sigma's own
+  re-derive → re-emit cycle deep enough to overflow the stack - "Uncaught
+  RangeError: Maximum call stack size exceeded", user-reported as
+  "Wechsel von Radial auf Force => Fehler in der Console. Graph
+  funktioniert dann nicht mehr", graph left unusable until the pane was
+  reopened. Root-caused via a non-minified debug build (`sourcemap:
+  'inline'`, `minify: false` - the production build's minified stack trace
+  alone wasn't enough to tell sigma-internal frames from this plugin's
+  own) to get a readable call chain rather than guessing from one.
+  **Not** caused by the edges-after-panning feature below, despite an
+  earlier (wrong) hypothesis blaming that one first - disabling it
+  entirely and reproducing again confirmed the crash was unrelated. Fixed
+  by skipping the `setSetting()` call whenever the computed label size
+  hasn't actually changed - breaks the ping-pong at its source without
+  changing the feature's own behavior at all. Switch Radial → Force (and
+  every other layout pair) a few times in a row, including while
+  ForceAtlas2 is still visibly settling - no console error, graph stays
+  responsive, labels still resize correctly on zoom exactly as described
+  above.
 - **Edges stay visible after panning** (`renderer.ts`'s
   `watchMoveForEdgeVisibility()`) - user report: "Nach dem Verschieben des
   Graphen werden oft nur die Punkte ohne Kanten dargestellt." sigma's own
@@ -1295,23 +1325,13 @@ manual copy step. Then open `test-vault` in Obsidian and check:
   within roughly a third of a second of the coast actually stopping, not
   stay hidden. Scroll-wheel zoom in/out repeatedly, then stop - same check.
   If you have a trackpad, a two-finger pan/pinch on the canvas - same
-  check. **Regression (fixed in the same round)**: an earlier version of
-  this keyed the debounce off the camera's own `updated` event, reasoning
-  every camera change fires it regardless of cause - true, but too broad:
-  `updated` also fires for setForceLayout()'s own repeating 150ms
-  `resetCameraAndRefresh()` interval (which keeps the camera tracking
-  ForceAtlas2 as it settles), and debouncing a `refresh()` off that same
-  high-frequency stream crashed switching Radial → Force with "Uncaught
-  RangeError: Maximum call stack size exceeded" - user-reported, graph left
-  unusable until the pane was reopened. Fixed by keying off the mouse
-  captor's own gesture events (`mouseup`/`mouseleave`/`wheel`) instead -
-  these never fire for a programmatic camera reset, only genuine user
-  interaction, so this can no longer interact with that interval at all.
-  Switch Radial → Force (and every other layout pair) a few times in a
-  row, including while ForceAtlas2 is still visibly settling - no console
-  error, graph stays responsive. Switching layouts and dragging a node in
-  Force layout should otherwise work exactly as before this feature
-  existed.
+  check. Deliberately keyed off the mouse captor's own gesture events
+  (`mouseup`/`mouseleave`/`wheel`), not the camera's `updated` event -
+  `updated` also fires for every programmatic camera change (including
+  setForceLayout()'s own settle-tracking interval, see the "Dynamic label
+  size on zoom" entry above for the real bug that combination caused), and
+  the mouse-captor events never fire for one of those, only genuine user
+  interaction.
 - **Focus/Diagnostics icons mark themselves active while open** (user
   feedback: neither lit up at all, unlike Filter/Color & size/Appearance/
   Views): click "Focus…" - the crosshair icon should get the accent
