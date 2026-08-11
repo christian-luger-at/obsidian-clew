@@ -36,8 +36,19 @@ function coverSvg() {
 }
 writeFileSync(join(ROOT, 'attachments', 'cover.svg'), coverSvg());
 
+// Backlog item 15, "Attachments als Knoten" - a second, distinct SVG from
+// cover.svg above (that one stays dedicated to the existing "With Cover"
+// frontmatter-cover feature, a different mechanism entirely - see
+// vaultGraph.ts's own `cover` frontmatter handling vs. addAttachmentNodes()'s
+// embed handling) - embedded (`![[...]]`) rather than set as `cover:`, so it
+// exercises the embed-node path specifically.
+function diagramSvg() {
+	return `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"><rect width="64" height="64" fill="hsl(200,70%,55%)"/></svg>\n`;
+}
+writeFileSync(join(ROOT, 'attachments', 'diagram.svg'), diagramSvg());
+
 /**
- * @typedef {{ name: string, links?: string[], frontmatter?: Record<string, string | number>, ageDays?: number, folder?: string }} Note
+ * @typedef {{ name: string, links?: string[], frontmatter?: Record<string, string | number>, ageDays?: number, folder?: string, tags?: string[], embeds?: string[] }} Note
  * @type {Note[]}
  */
 const notes = [
@@ -55,9 +66,22 @@ const notes = [
 	// one real entry to show in this vault (see DEVELOPMENT.md's "Manual QA
 	// vault" section).
 	{ name: 'Hub', links: ['Topic A', 'Topic B', 'Topic C', 'With Cover', 'Nonexistent Note'] },
-	{ name: 'Topic A', links: ['Hub', 'Topic A - Detail 1', 'Topic A - Detail 2'], frontmatter: { status: 'active', priority: 3 } },
-	{ name: 'Topic A - Detail 1', links: ['Topic A'], frontmatter: { status: 'active', priority: 2 } },
-	{ name: 'Topic A - Detail 2', links: ['Topic A', 'Bridge Note'], frontmatter: { status: 'active', priority: 5 } },
+	// Backlog item 11, "Tags als Knoten": Topic A's own family shares
+	// #project (all three), Topic A - Detail 2 also carries #urgent (its own
+	// distinct tag, so its tag node has degree 1 unlike #project's degree 3)
+	// - with "Tags as nodes" on, this should read as a visible #project hub
+	// linking Topic A/its two Details, deliberately never linking to Topic
+	// B/C (they carry no tags at all) despite those already being linked via
+	// Hub - the whole point of this feature is a *second*, independent kind
+	// of structure (by tag, not by link) becoming visible in the same graph.
+	{ name: 'Topic A', links: ['Hub', 'Topic A - Detail 1', 'Topic A - Detail 2'], frontmatter: { status: 'active', priority: 3 }, tags: ['#project'] },
+	{ name: 'Topic A - Detail 1', links: ['Topic A'], frontmatter: { status: 'active', priority: 2 }, tags: ['#project'] },
+	{
+		name: 'Topic A - Detail 2',
+		links: ['Topic A', 'Bridge Note'],
+		frontmatter: { status: 'active', priority: 5 },
+		tags: ['#project', '#urgent'],
+	},
 	{ name: 'Topic B', links: ['Hub', 'Topic B - Detail 1'], frontmatter: { status: 'draft', priority: 1 } },
 	{ name: 'Topic B - Detail 1', links: ['Topic B', 'Bridge Note'], frontmatter: { status: 'draft', priority: 1 } },
 	// A second, distinct broken link (Hub's "Nonexistent Note" above is the
@@ -69,7 +93,7 @@ const notes = [
 	// findPaths (k=5) should surface this as an alternative to the
 	// Hub-routed path, and it should rank ahead of the naive route once
 	// hub-avoidance cost is applied.
-	{ name: 'Bridge Note', links: ['Topic A - Detail 2', 'Topic B - Detail 1'] },
+	{ name: 'Bridge Note', links: ['Topic A - Detail 2', 'Topic B - Detail 1'], embeds: ['attachments/diagram.svg'] },
 
 	// No links at all - graph shows it with degree 0, path finding from/to
 	// it should still work fine (it just has no neighbors), and it should
@@ -132,6 +156,8 @@ for (const note of notes) {
 	const body = [
 		note.frontmatter ? `---\n${Object.entries(note.frontmatter).map(([k, v]) => `${k}: ${v}`).join('\n')}\n---\n\n` : '',
 		`# ${note.name}\n\n`,
+		note.tags?.length ? `${note.tags.join(' ')}\n\n` : '',
+		note.embeds?.length ? `${note.embeds.map((e) => `![[${e}]]`).join(' ')}\n\n` : '',
 		note.links?.length ? `## Links\n\n${note.links.map((l) => `[[${l}]]`).join(' ')}\n` : '',
 	].join('');
 
@@ -161,4 +187,6 @@ console.log('  - "Visual encoding...": color by "status" groups Topic A/its deta
 console.log('  - Diagnostics: "Isolated" under Orphans, "Hub -> Nonexistent Note" and "Topic C -> Draft Idea" under Broken links, one "2 notes" row under Isolated clusters ("Show in graph" should highlight Island X/Island Y)');
 console.log('  - Diagnostics: "Structural deviation" should show one "8 notes across 5 folders (most in Notes: 3/8)" row for the "Scattered *" notes - "Show in graph" highlights all 8, spread across Notes/Areas/Work/Areas/Personal/Archive/Inbox; no other row (Old/Medium Age/Topic A/B/C clusters are each all in one folder already)');
 console.log('  - Color & size / Filter: a "Structure" (structuralDeviation) criterion set to "Scattered across folders" should match all 8 "Scattered *" notes and nothing else');
-console.log('  - Ghost nodes: "Nonexistent Note" and "Draft Idea" should render in the graph itself as grayed-out nodes (same size as a real note), not just in the Diagnostics list - click does nothing, hovering Hub/Topic C highlights them as neighbors like any other link');
+console.log('  - Ghost nodes: with Appearance -> "Non-existent links" on, "Nonexistent Note" and "Draft Idea" should render in the graph itself as grayed-out nodes (same size as a real note), not just in the Diagnostics list - click does nothing, hovering Hub/Topic C highlights them as neighbors like any other link. Off by default - confirm they do NOT appear until that toggle is switched on.');
+console.log('  - Tag nodes (Appearance -> "Tags"): once on, "#project" should appear as its own node linking Topic A/Topic A - Detail 1/Topic A - Detail 2, and "#urgent" linking only Topic A - Detail 2 - neither should link to Topic B/C (no tags there). Off by default.');
+console.log('  - Attachment nodes (Appearance -> "Attachments"): once on, "diagram.svg" should appear as its own leaf node linked from Bridge Note (distinct from "With Cover"\'s cover-image note, a different mechanism). Off by default.');

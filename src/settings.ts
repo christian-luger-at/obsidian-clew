@@ -25,6 +25,42 @@ export interface PinnedPosition {
  * (loadData()/saveData()) regardless of which UI edits it.
  */
 export interface ClewAppearanceSettings {
+	/**
+	 * Backlog item 11, "Tags als Knoten" - shows every tag as its own node,
+	 * with an edge to each note that carries it, so thematic structure
+	 * across the vault is directly visible instead of only reachable via a
+	 * tag search. Off by default - a tag-heavy vault could add a lot of
+	 * extra nodes/edges, and this changes the graph's actual *structure*
+	 * (not just a style choice), so it stays opt-in like the two settings
+	 * below it. Rebuilding the graph (not just repainting it) is required
+	 * when this changes - see GraphPane's own handling.
+	 */
+	showTagNodes: boolean;
+	/**
+	 * Backlog item 15, "Attachments als Knoten" - shows every embedded
+	 * attachment (image, PDF, ...) as its own leaf node on the note that
+	 * embeds it. "Vollständigkeit der Darstellung, kein direkter
+	 * Struktur-Nutzen" (completeness, not a structural insight) - off by
+	 * default, same "opt-in, changes graph structure" reasoning as
+	 * showTagNodes above. Fully independent of it - either can be on
+	 * without the other.
+	 */
+	showAttachmentNodes: boolean;
+	/**
+	 * Backlog item 16, "Nicht-existente Links" - shows a placeholder
+	 * ("ghost") node for every link to a note that doesn't exist yet
+	 * (vaultGraph.ts's addGhostNodes()), so a broken link is visible in the
+	 * graph itself, not just the Diagnostics panel's own "Broken links"
+	 * list. This feature already existed unconditionally (no way to turn it
+	 * off at all) before this setting - user feedback asked for it to
+	 * become its own independent toggle, off by default, same as the two
+	 * above. `buildVaultGraph()`'s own default for this one specific
+	 * option stays `true` (not `false`) - see its own docstring for why:
+	 * this setting only changes what a *fresh* install/"Reset to defaults"
+	 * starts at, not the underlying function's behavior for any other
+	 * caller that doesn't pass it explicitly.
+	 */
+	showGhostNodes: boolean;
 	/** Plain-note node size at degree 0 (vaultGraph.ts's sizeNodesByDegree). */
 	nodeBaseSize: number;
 	/** Cover-image node size at degree 0 - kept separately tunable since NodeImageProgram needs a minimum footprint to stay recognizable. */
@@ -132,6 +168,9 @@ export interface ClewAppearanceSettings {
 }
 
 export const DEFAULT_APPEARANCE_SETTINGS: ClewAppearanceSettings = {
+	showTagNodes: false,
+	showAttachmentNodes: false,
+	showGhostNodes: false,
 	nodeBaseSize: 2.5,
 	nodeImageBaseSize: 4.5,
 	nodeDegreeGrowth: 0.6,

@@ -16,6 +16,7 @@ function facts(overrides: Partial<NoteFilterFacts> = {}): NoteFilterFacts {
 		isolatedComponent: null,
 		communityId: null,
 		semanticClusterId: null,
+		nodeKind: null,
 		mtime: Date.now(),
 		degree: 0,
 		exists: true,

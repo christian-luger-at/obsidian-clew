@@ -41,6 +41,7 @@ import {
 	needsStructuralDeviation,
 	NodeGroup,
 	NodeGroupFacts,
+	NodeKind,
 	StalenessBucket,
 	StringOperator,
 	StructuralCohesionBucket,
@@ -182,6 +183,7 @@ const CRITERION_TYPE_LABELS: Record<GroupCriterionType, string> = {
 	staleDays: 'Last edited',
 	minLinks: 'Links',
 	existence: 'Existence',
+	nodeKind: 'Node type',
 };
 
 /**
@@ -218,6 +220,8 @@ const CRITERION_DESCRIPTIONS: Record<GroupCriterionType, string> = {
 	semanticCluster:
 		"Notes are grouped by what they're actually about (their title and body text), regardless of whether anything links them - unlike Community, above, which only ever groups notes that are already linked, directly or through others. The first time you add this, Clew reads every note's content and computes it locally (nothing leaves your device); after that it's cached and only redone for notes you've changed.",
 	existence: "Whether this is a real note, or a 'ghost' node - a link to a note that doesn't exist yet.",
+	nodeKind:
+		"Matches a tag node or an attachment node specifically, not a note - only useful once 'Tags as nodes'/'Attachments as nodes' is turned on in Appearance, at the very top of the panel.",
 };
 
 /**
@@ -312,12 +316,20 @@ function debounce(fn: () => void, delayMs: number): () => void {
 interface AppearanceSliderSpec {
 	// Excludes edgeColorOverride/nodeColorOverride (non-numeric string |
 	// null settings, their own color-picker UI instead of a slider) and
-	// showEdgeDirection/dissuadeHubs/linLogMode (booleans, their own toggle
-	// UI instead) - see renderAppearancePanel()'s "Nodes"/"Edges"/"Physics"
+	// showEdgeDirection/dissuadeHubs/linLogMode/showTagNodes/
+	// showAttachmentNodes/showGhostNodes (booleans, their own toggle UI
+	// instead) - see renderAppearancePanel()'s "Nodes"/"Edges"/"Physics"
 	// sections.
 	key: Exclude<
 		keyof ClewAppearanceSettings,
-		'edgeColorOverride' | 'nodeColorOverride' | 'showEdgeDirection' | 'dissuadeHubs' | 'linLogMode'
+		| 'edgeColorOverride'
+		| 'nodeColorOverride'
+		| 'showEdgeDirection'
+		| 'dissuadeHubs'
+		| 'linLogMode'
+		| 'showTagNodes'
+		| 'showAttachmentNodes'
+		| 'showGhostNodes'
 	>;
 	name: string;
 	desc: string;
@@ -1096,6 +1108,9 @@ export class GraphPane {
 		this.graph = buildVaultGraph(this.app, files, {
 			directed: false,
 			pinnedPositions: this.plugin.settings.pinnedPositions,
+			showTagNodes: this.plugin.settings.appearance.showTagNodes,
+			showAttachmentNodes: this.plugin.settings.appearance.showAttachmentNodes,
+			showGhostNodes: this.plugin.settings.appearance.showGhostNodes,
 		});
 		this.paintVisualEncoding();
 		const appearance = this.plugin.settings.appearance;
@@ -1726,6 +1741,49 @@ export class GraphPane {
 		setIcon(closeButton, 'x');
 		setTooltip(closeButton, 'Close');
 		closeButton.addEventListener('click', () => this.toggleAppearancePanel());
+
+		// Backlog items 11/15/16 ("Tags als Knoten"/"Attachments als
+		// Knoten"/"Nicht-existente Links") - three independent switches,
+		// each changing the graph's actual *structure* (new node/edge
+		// kinds appearing or disappearing), not just a style choice - shown
+		// first, above "Nodes"/"Edges", per that spec ("ganz oben
+		// sichtbar"). All three default off (see settings.ts's
+		// DEFAULT_APPEARANCE_SETTINGS) and are fully independent of each
+		// other. Toggling any of them calls setFiles() with the current
+		// file set to force a real rebuild (buildVaultGraph() runs again
+		// with the new option) - a plain repaint (applyNodeSizeSettings())
+		// can't add or remove nodes/edges, only restyle existing ones.
+		new Setting(this.appearancePanelEl).setName('Show as nodes').setHeading();
+		new Setting(this.appearancePanelEl)
+			.setName('Tags')
+			.setDesc('Every tag becomes its own node, linked to each note that carries it.')
+			.addToggle((toggle) =>
+				toggle.setValue(this.plugin.settings.appearance.showTagNodes).onChange((value) => {
+					this.plugin.settings.appearance.showTagNodes = value;
+					void this.plugin.saveSettings();
+					this.setFiles(this.files);
+				}),
+			);
+		new Setting(this.appearancePanelEl)
+			.setName('Attachments')
+			.setDesc('Every embedded image/PDF becomes its own leaf node on the note that embeds it.')
+			.addToggle((toggle) =>
+				toggle.setValue(this.plugin.settings.appearance.showAttachmentNodes).onChange((value) => {
+					this.plugin.settings.appearance.showAttachmentNodes = value;
+					void this.plugin.saveSettings();
+					this.setFiles(this.files);
+				}),
+			);
+		new Setting(this.appearancePanelEl)
+			.setName('Non-existent links')
+			.setDesc("A placeholder node for every link to a note that doesn't exist yet.")
+			.addToggle((toggle) =>
+				toggle.setValue(this.plugin.settings.appearance.showGhostNodes).onChange((value) => {
+					this.plugin.settings.appearance.showGhostNodes = value;
+					void this.plugin.saveSettings();
+					this.setFiles(this.files);
+				}),
+			);
 
 		// Grouped by topic (Nodes, then Edges) rather than by control type
 		// (a shared "Colors" section plus a separately-headed "Node size"
@@ -2867,8 +2925,18 @@ export class GraphPane {
 			// criterion (nodeGroups.ts), same as any other node -
 			// buildCriteriaFacts() emits an `exists: false` fact for every
 			// ghost node specifically so that criterion has something to
-			// match against.
-			const defaultColor = attr.kind === 'ghost' ? this.theme.ghostNodeColor : attr.type === 'image' ? this.theme.imageNodeColor : this.resolvedNodeColor();
+			// match against. Tag nodes (backlog item 11) get their own
+			// tagNodeColor the same way; attachment nodes (backlog item 15)
+			// share imageNodeColor with cover-image notes - both are
+			// overridable the same way, via the new `nodeKind` criterion.
+			const defaultColor =
+				attr.kind === 'ghost'
+					? this.theme.ghostNodeColor
+					: attr.kind === 'tag'
+						? this.theme.tagNodeColor
+						: attr.kind === 'attachment' || attr.type === 'image'
+							? this.theme.imageNodeColor
+							: this.resolvedNodeColor();
 			const resolvedColor = groupByNode.get(node)?.color ?? defaultColor;
 			graph.setNodeAttribute(node, 'color', resolvedColor);
 			// The ring (and the gap just inside it) renderer.ts's "bordered"
@@ -2996,13 +3064,23 @@ export class GraphPane {
 				isolatedComponent: isolatedComponentByNode?.get(file.path) ?? null,
 				communityId: communityRankByNode?.get(file.path) ?? null,
 				semanticClusterId: this.semanticClusterByPath?.get(file.path) ?? null,
+				nodeKind: null,
 				mtime: this.mtimeByPath.get(file.path) ?? file.stat.mtime,
 				degree: this.graph?.degree(file.path) ?? 0,
 				exists: true,
 			});
 		}
+		// Ghost/tag/attachment nodes (vaultGraph.ts's `kind: 'ghost'`/`'tag'`/
+		// `'attachment'`, only present at all once the matching Appearance
+		// toggle is on) all get the same minimal, mostly-empty facts shape -
+		// `exists: false` so they're excluded from every criterion except
+		// `existence`/`nodeKind` (see matchesCriterionValue()'s own guard),
+		// `nodeKind` set only for tag/attachment so the `nodeKind` criterion
+		// has something to match against (see NodeGroupFacts.nodeKind's own
+		// docstring for why ghost stays `null` there - it already has its
+		// own dedicated `existence` mechanism).
 		this.graph?.forEachNode((node, attr) => {
-			if (attr.kind !== 'ghost') return;
+			if (attr.kind !== 'ghost' && attr.kind !== 'tag' && attr.kind !== 'attachment') return;
 			result.set(node, {
 				label: (attr.label as string | undefined) ?? node,
 				folder: '',
@@ -3016,6 +3094,7 @@ export class GraphPane {
 				isolatedComponent: null,
 				communityId: null,
 				semanticClusterId: null,
+				nodeKind: attr.kind === 'tag' || attr.kind === 'attachment' ? (attr.kind as NodeKind) : null,
 				mtime: 0,
 				degree: this.graph?.degree(node) ?? 0,
 				exists: false,
@@ -3699,12 +3778,17 @@ export class GraphPane {
 		if (!this.renderer) return;
 		this.renderer.on('clickNode', (payload) => {
 			if (this.dragMoved) return;
-			// A ghost node (vaultGraph.ts's `kind: 'ghost'`) has no file
-			// behind it - openNote() would already silently no-op on one
-			// (getAbstractFileByPath() finds nothing), but skipping it here
-			// explicitly documents that "no click-to-open" is deliberate,
-			// not an accidental side effect of a lookup miss.
-			if (this.graph?.getNodeAttribute(payload.node, 'kind') === 'ghost') return;
+			// A ghost or tag node (vaultGraph.ts's `kind: 'ghost'`/`'tag'`)
+			// has no file behind it - openNote() would already silently
+			// no-op on one (getAbstractFileByPath() finds nothing), but
+			// skipping it here explicitly documents that "no click-to-open"
+			// is deliberate, not an accidental side effect of a lookup miss.
+			// An attachment node (`kind: 'attachment'`) is deliberately NOT
+			// included here - it's a real file at its own real vault path
+			// (see vaultGraph.ts's addAttachmentNodes()), so openNote()
+			// already opens/previews it correctly, same as any note.
+			const kind = this.graph?.getNodeAttribute(payload.node, 'kind') as string | undefined;
+			if (kind === 'ghost' || kind === 'tag') return;
 			void this.openNote(payload.node);
 		});
 	}
@@ -4700,6 +4784,11 @@ export class GraphPane {
 			// value.
 			case 'existence':
 				return { type, exists: false };
+			// 'tag' - the more commonly toggled-on of the two (backlog item
+			// 11 came before item 15) and the more likely reason someone
+			// reaches for this criterion at all.
+			case 'nodeKind':
+				return { type, kind: 'tag' };
 		}
 	}
 
@@ -4789,6 +4878,7 @@ export class GraphPane {
 		addOption('semanticCluster', 'Semantic cluster');
 		addOption('minLinks', 'Minimum number of links');
 		addOption('existence', 'Existence (real vs. missing note)');
+		addOption('nodeKind', 'Node type (tag/attachment)');
 		menu.showAtMouseEvent(evt);
 	}
 
@@ -5294,6 +5384,19 @@ export class GraphPane {
 					.setValue(criterion.exists ? 'existing' : 'missing')
 					.onChange((value) => {
 						criterion.exists = value === 'existing';
+						applyLive();
+					});
+				break;
+			case 'nodeKind':
+				// No negate word here either - same reasoning as `existence`
+				// just above (its own sibling "opt-in node kind" criterion),
+				// the dropdown already offers the equivalent choice.
+				new DropdownComponent(controlsEl)
+					.addOption('tag', 'Tag node')
+					.addOption('attachment', 'Attachment node')
+					.setValue(criterion.kind)
+					.onChange((value) => {
+						criterion.kind = value as NodeKind;
 						applyLive();
 					});
 				break;

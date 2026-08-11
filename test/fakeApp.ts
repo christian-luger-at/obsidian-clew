@@ -7,6 +7,10 @@ export interface FakeNote {
 	links?: string[];
 	frontmatter?: Record<string, unknown>;
 	mtime?: number;
+	/** Inline tags (`#project`, already `#`-prefixed) - see obsidian-mock.ts's getAllTags(). Backlog item 11, "Tags als Knoten". */
+	tags?: string[];
+	/** Embed targets (`![[image.png]]`), as vault paths matching another entry in the same `notes` array passed to createFakeApp() - resolved via getFirstLinkpathDest(). Backlog item 15, "Attachments als Knoten". */
+	embeds?: string[];
 }
 
 export interface FakeAppHandle {
@@ -51,8 +55,19 @@ export function createFakeApp(notes: FakeNote[]): FakeAppHandle {
 			unresolvedLinks,
 			getFileCache: (file: MockTFile) => {
 				const note = notesByPath.get(file.path);
-				return note?.frontmatter ? { frontmatter: note.frontmatter } : null;
+				if (!note) return null;
+				if (!note.frontmatter && !note.tags && !note.embeds) return null;
+				return {
+					frontmatter: note.frontmatter,
+					tags: note.tags?.map((tag) => ({ tag })),
+					embeds: note.embeds?.map((link) => ({ link })),
+				};
 			},
+			// Real Obsidian resolves a possibly-relative/shorthand embed
+			// target against `sourcePath`; the fake vault only ever uses
+			// exact vault paths in its own fixtures, so a direct lookup is
+			// enough here.
+			getFirstLinkpathDest: (linkpath: string) => filesByPath.get(linkpath) ?? null,
 		},
 		vault: {
 			getAbstractFileByPath: (path: string) => filesByPath.get(path) ?? null,

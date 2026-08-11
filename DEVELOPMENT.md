@@ -426,10 +426,21 @@ manual copy step. Then open `test-vault` in Obsidian and check:
     off - the panel should show a single explanatory line instead of an
     empty shell.
 - **Ghost nodes** (feature-list item "Ghost-Nodes für nicht-existente
-  Notizen", `vaultGraph.ts`'s `addGhostNodes()`): `Hub`'s and `Topic C`'s
-  broken links (see "Broken links" above) should each render as their own
-  node directly in the graph, not just in the Diagnostics list - **same
-  size** as a real note with the same link count (`sizeNodesByDegree()`
+  Notizen", backlog item 16 "Nicht-existente Links", `vaultGraph.ts`'s
+  `addGhostNodes()`): this feature is now behind its own Appearance toggle
+  ("Show as nodes" → "Non-existent links", right at the top of the panel,
+  above "Nodes"/"Edges" - `false` by default) - it used to run
+  unconditionally with no way to turn it off at all. **First confirm the
+  off state**: on a fresh vault/settings, open the graph - neither
+  `Nonexistent Note` nor `Draft Idea` (`Hub`'s/`Topic C`'s broken links)
+  should appear as nodes at all (they still show in the Diagnostics panel's
+  "Broken links" list either way - that list doesn't depend on this
+  toggle). Turn the toggle on - the graph should visibly rebuild (a fresh
+  ForceAtlas2 settle, not just a repaint) and both should now appear. Turn
+  it back off - they should disappear again. With it on: `Hub`'s and
+  `Topic C`'s broken links should each render as their own node directly in
+  the graph, not just in the Diagnostics list - **same size** as a real
+  note with the same link count (`sizeNodesByDegree()`
   applies the exact same degree-based formula to both; an earlier version
   fixed ghost nodes at a smaller flat size instead, user feedback: "stimmt
   nicht, soll gleich gross wie normale Knoten sein"), distinguished only by
@@ -495,6 +506,38 @@ manual copy step. Then open `test-vault` in Obsidian and check:
     be renamed, recolored, have its criteria changed, or be deleted. The
     only way to remove one at all is the Settings-tab toggles (checked
     above).
+- **Tag nodes** (backlog item 11, "Tags als Knoten", `vaultGraph.ts`'s
+  `addTagNodes()`): Appearance → "Show as nodes" → "Tags" (`false` by
+  default, independent of the other two switches here). Off: no tag nodes
+  in the graph at all. On: `#project` should appear as its own node with
+  edges to `Topic A`/`Topic A - Detail 1`/`Topic A - Detail 2` (all three
+  carry it) and **not** to `Topic B`/`Topic C` (no tags there, even though
+  they're already linked to `Topic A` via `Hub`) - the point of this
+  feature is a *second*, independent kind of structure becoming visible,
+  not a restatement of the link graph. `#urgent` should appear as its own
+  separate node linking only `Topic A - Detail 2`. Click a tag node - does
+  nothing (no file behind it, same as a ghost node). Hovering `Topic A -
+  Detail 2` should highlight both its tag neighbors like any other link.
+  **`nodeKind` criterion** ("+ add" → "Node type (tag/attachment)", set to
+  "Tag node"): should match `#project`/`#urgent` and nothing else - not
+  even a `Nonexistent Note` ghost node, despite both having `exists: false`
+  internally (`nodeGroups.ts`'s `matchesCriterionValue()` guard exempts
+  `nodeKind` the same way it exempts `existence`, but the two criteria
+  target genuinely different facts). Toggling "Tags" off again should make
+  the tag nodes disappear and, if a `nodeKind: 'tag'` filter/group was
+  enabled, leave it matching nothing (not erroring).
+- **Attachment nodes** (backlog item 15, "Attachments als Knoten",
+  `vaultGraph.ts`'s `addAttachmentNodes()`): Appearance → "Show as nodes" →
+  "Attachments" (`false` by default). On: `diagram.svg` should appear as
+  its own leaf node with one edge to `Bridge Note` (the note that embeds
+  it via `![[attachments/diagram.svg]]`) - distinct from `With Cover`'s
+  existing cover-image mechanism (frontmatter `cover:`, a different code
+  path entirely, unaffected by this toggle either way - `With Cover` should
+  keep rendering its cover image regardless of whether "Attachments" is on
+  or off). Unlike a tag/ghost node, clicking `diagram.svg` **should** open
+  it (a real file at a real vault path - Obsidian previews an image/PDF the
+  same as it would from clicking it in the file explorer). `nodeKind`
+  criterion set to "Attachment node" should match only `diagram.svg`.
 - **Cluster freshness** (an "Activity" criterion on a node group - see
   "Color & size" below and `nodeGroups.ts`): create a group with a single
   Activity criterion, reading "Notes in [an inactive area of the vault]" -

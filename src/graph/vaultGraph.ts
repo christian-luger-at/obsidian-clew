@@ -1,4 +1,4 @@
-import { App, TFile } from 'obsidian';
+import { App, getAllTags, TFile } from 'obsidian';
 import Graph from 'graphology';
 
 export interface PinnedPosition {
@@ -22,6 +22,23 @@ export interface BuildVaultGraphOptions {
 	 * free.
 	 */
 	pinnedPositions?: Record<string, PinnedPosition>;
+	/** Backlog item 11, "Tags als Knoten" - see addTagNodes()'s own docstring. Off by default - a new, purely additive option, no backward-compat concern the way showGhostNodes below has. */
+	showTagNodes?: boolean;
+	/** Backlog item 15, "Attachments als Knoten" - see addAttachmentNodes()'s own docstring. Off by default, same reasoning as showTagNodes. */
+	showAttachmentNodes?: boolean;
+	/**
+	 * Backlog item 16, "Nicht-existente Links" - gates addGhostNodes()
+	 * below, which used to run unconditionally (no way to turn it off at
+	 * all). Defaults to `true` here, not `false` - deliberately different
+	 * from showTagNodes/showAttachmentNodes above, to keep this function's
+	 * own behavior unchanged for any caller that doesn't pass this
+	 * explicitly (this module's own test suite, the browser spike harness,
+	 * ...). The *user-facing* default (off) lives one layer up, in
+	 * settings.ts's DEFAULT_APPEARANCE_SETTINGS - GraphPane always passes
+	 * this option explicitly from that setting, so real plugin usage does
+	 * default to off despite this function's own parameter default being on.
+	 */
+	showGhostNodes?: boolean;
 }
 
 /**
@@ -44,7 +61,13 @@ export interface BuildVaultGraphOptions {
  * set here since it's structural, not a style choice.
  */
 export function buildVaultGraph(app: App, files: TFile[], options: BuildVaultGraphOptions = {}): Graph {
-	const { directed = false, pinnedPositions = {} } = options;
+	const {
+		directed = false,
+		pinnedPositions = {},
+		showTagNodes = false,
+		showAttachmentNodes = false,
+		showGhostNodes = true,
+	} = options;
 	const graph = new Graph({ type: directed ? 'directed' : 'undirected' });
 	const nodePaths = new Set(files.map((file) => file.path));
 
@@ -88,7 +111,9 @@ export function buildVaultGraph(app: App, files: TFile[], options: BuildVaultGra
 		}
 	}
 
-	addGhostNodes(app, graph, nodePaths);
+	if (showGhostNodes) addGhostNodes(app, graph, nodePaths);
+	if (showTagNodes) addTagNodes(app, graph, files);
+	if (showAttachmentNodes) addAttachmentNodes(app, graph, files);
 
 	stampPathCosts(graph);
 	sizeNodesByDegree(graph);
@@ -146,6 +171,89 @@ function addGhostNodes(app: App, graph: Graph, nodePaths: Set<string>): void {
 			// (sourcePath, targetText) combination exactly once, so this
 			// edge can never already exist when we get here.
 			graph.addEdge(sourcePath, ghostId);
+		}
+	}
+}
+
+/**
+ * Backlog item 11, "Tags als Knoten": one node per distinct tag present
+ * across `files` (not per mention - two notes sharing a tag should read as
+ * "these are both about this", the same "collapse to one shared node"
+ * reasoning addGhostNodes() above already uses for missing links), with an
+ * edge to every note that carries it. `kind: 'tag'` is the marker every
+ * other module checks for - same role as addGhostNodes()'s `kind: 'ghost'`
+ * (graphPane.ts's coloring/click-handling, diagnostics.ts's orphan/
+ * component exclusion, nodeGroups.ts's `nodeKind` criterion).
+ *
+ * getAllTags() (Obsidian's own helper) covers both frontmatter `tags:` and
+ * inline `#tags`, and already includes the leading `#` - used as-is for
+ * both the node id and its label, so "#project" reads as a tag at a glance
+ * rather than a bare word that happens to also be a note title. The `tag:`
+ * id prefix (mirroring `ghost:`) rules out a collision with any real note
+ * path, which never starts with that scheme prefix.
+ */
+function addTagNodes(app: App, graph: Graph, files: TFile[]): void {
+	const tagIdByTag = new Map<string, string>();
+	for (const file of files) {
+		const cache = app.metadataCache.getFileCache(file);
+		const tags = cache ? getAllTags(cache) : null;
+		if (!tags) continue;
+		// A Set, not the raw array - getAllTags() can list the same tag
+		// twice for one note (once from frontmatter's `tags:` list, once
+		// from an inline `#tag` mention), and each (file, tag) pair should
+		// only ever become one edge.
+		for (const tag of new Set(tags)) {
+			let tagId = tagIdByTag.get(tag);
+			if (!tagId) {
+				tagId = `tag:${tag}`;
+				tagIdByTag.set(tag, tagId);
+				const position = deterministicPosition(tagId);
+				graph.addNode(tagId, { label: tag, x: position.x, y: position.y, kind: 'tag' });
+			}
+			if (!graph.hasEdge(file.path, tagId)) graph.addEdge(file.path, tagId);
+		}
+	}
+}
+
+/**
+ * Backlog item 15, "Attachments als Knoten": one leaf node per attachment
+ * (image, PDF, ...) embedded in a note (`![[...]]`/`![...]()`), with an
+ * edge from the embedding note. Unlike addTagNodes()/addGhostNodes() above,
+ * an attachment node uses its own real vault path as its id (no `tag:`/
+ * `ghost:` prefix needed - an attachment genuinely is a real file, just not
+ * one of the markdown notes in `files`, so no collision with a note path is
+ * possible), and carries its own real `mtime` (read once here, not looked
+ * up again later - see graphPane.ts's buildCriteriaFacts()) so it can be
+ * matched by the same `staleDays` criterion a real note can. `kind:
+ * 'attachment'` mainly exists to exclude it from Diagnostics' orphan/
+ * component counting and to give it its own default color (theme.ts's
+ * imageNodeColor, the same one Obsidian's own core graph uses for its
+ * `--graph-node-attachment`) - everything else (click-to-open, sizing by
+ * degree) treats it exactly like a real note, since it is one.
+ *
+ * Only non-markdown embed targets count - an embedded *note*
+ * (`![[Other Note]]`) isn't an "attachment" in this feature's sense, and is
+ * already its own node/edge via the regular resolvedLinks pass above
+ * anyway (Obsidian resolves an embed the same way as a normal link).
+ */
+function addAttachmentNodes(app: App, graph: Graph, files: TFile[]): void {
+	for (const file of files) {
+		const embeds = app.metadataCache.getFileCache(file)?.embeds;
+		if (!embeds) continue;
+		for (const embed of embeds) {
+			const target = app.metadataCache.getFirstLinkpathDest(embed.link, file.path);
+			if (!target || target.extension === 'md') continue;
+			if (!graph.hasNode(target.path)) {
+				const position = deterministicPosition(target.path);
+				graph.addNode(target.path, {
+					label: target.basename,
+					x: position.x,
+					y: position.y,
+					kind: 'attachment',
+					mtime: target.stat.mtime,
+				});
+			}
+			if (!graph.hasEdge(file.path, target.path)) graph.addEdge(file.path, target.path);
 		}
 	}
 }

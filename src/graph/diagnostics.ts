@@ -12,6 +12,22 @@ import { basename } from './pathfinding';
  */
 
 /**
+ * A node this module's own structural checks should treat as "not a real
+ * note" - vaultGraph.ts's ghost nodes (`kind: 'ghost'`), and, once backlog
+ * items 11/15 ("Tags als Knoten"/"Attachments als Knoten") are turned on,
+ * its tag/attachment nodes too. All three are opt-in graph decorations, not
+ * notes - an orphan/isolated-cluster check counting a heavily-used tag as
+ * a normal note, or treating two notes that both happen to embed the same
+ * image as "connected" through it, would be exactly the same "illusory
+ * bridge" problem ghost nodes were already excluded for (see
+ * findConnectedComponents()'s own docstring), just via a different kind of
+ * non-note node.
+ */
+function isNonNoteKind(kind: unknown): boolean {
+	return kind === 'ghost' || kind === 'tag' || kind === 'attachment';
+}
+
+/**
  * A note with no links to (or from) another *real* note - not quite plain
  * `graph.degree(node) === 0`, since a note whose only link is to a
  * nonexistent note (vaultGraph.ts's ghost nodes, `kind: 'ghost'`) still has
@@ -25,10 +41,10 @@ import { basename } from './pathfinding';
 export function findOrphans(graph: Graph): string[] {
 	const orphans: string[] = [];
 	graph.forEachNode((node, attr) => {
-		if (attr.kind === 'ghost') return;
+		if (isNonNoteKind(attr.kind)) return;
 		let hasRealNeighbor = false;
 		graph.forEachNeighbor(node, (_neighbor, neighborAttr) => {
-			if (neighborAttr.kind !== 'ghost') hasRealNeighbor = true;
+			if (!isNonNoteKind(neighborAttr.kind)) hasRealNeighbor = true;
 		});
 		if (!hasRealNeighbor) orphans.push(node);
 	});
@@ -84,7 +100,7 @@ export function findConnectedComponents(graph: Graph): string[][] {
 	const components: string[][] = [];
 
 	graph.forEachNode((start, startAttr) => {
-		if (startAttr.kind === 'ghost' || seen.has(start)) return;
+		if (isNonNoteKind(startAttr.kind) || seen.has(start)) return;
 		const component: string[] = [];
 		const queue = [start];
 		seen.add(start);
@@ -92,7 +108,7 @@ export function findConnectedComponents(graph: Graph): string[][] {
 			const node = queue.shift()!;
 			component.push(node);
 			graph.forEachNeighbor(node, (neighbor, neighborAttr) => {
-				if (neighborAttr.kind === 'ghost' || seen.has(neighbor)) return;
+				if (isNonNoteKind(neighborAttr.kind) || seen.has(neighbor)) return;
 				seen.add(neighbor);
 				queue.push(neighbor);
 			});

@@ -55,3 +55,25 @@ export function normalizePath(path: string): string {
 		.replace(/^\//, '')
 		.replace(/\/$/, '');
 }
+
+/**
+ * Minimal stand-in for Obsidian's real getAllTags() - just enough for
+ * vaultGraph.ts's addTagNodes() under test: inline tags (`cache.tags`, a
+ * `{tag: string}[]`) plus frontmatter `tags`/`tag` (string or string[],
+ * `#`-prefixed if not already). Real getAllTags() also covers a few more
+ * frontmatter edge cases (comma-separated strings, etc.) not needed here -
+ * test/fakeApp.ts's FakeNote.tags is always a plain string array already.
+ */
+export function getAllTags(cache: { tags?: { tag: string }[]; frontmatter?: Record<string, unknown> } | null): string[] | null {
+	if (!cache) return null;
+	const result = new Set<string>();
+	for (const entry of cache.tags ?? []) result.add(entry.tag);
+	const fmTags = cache.frontmatter?.tags ?? cache.frontmatter?.tag;
+	if (fmTags) {
+		for (const value of Array.isArray(fmTags) ? fmTags : [fmTags]) {
+			if (typeof value !== 'string') continue;
+			result.add(value.startsWith('#') ? value : `#${value}`);
+		}
+	}
+	return [...result];
+}

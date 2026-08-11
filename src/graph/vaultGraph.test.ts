@@ -334,5 +334,111 @@ describe('buildVaultGraph', () => {
 
 			expect(graph.order).toBe(1);
 		});
+
+		it('is off by default when the option is passed explicitly, unlike this function\'s own bare default', () => {
+			// buildVaultGraph()'s own default (no options passed at all) stays
+			// `true` for backward compatibility (see BuildVaultGraphOptions'
+			// own docstring) - GraphPane always passes this explicitly from
+			// settings.ts's DEFAULT_APPEARANCE_SETTINGS, whose default is
+			// `false`. This test represents that real call shape.
+			const { app, files } = createFakeApp([{ path: 'A.md', links: ['Missing Note'] }]);
+
+			const graph = buildVaultGraph(app, files, { showGhostNodes: false });
+
+			expect(graph.hasNode('ghost:Missing Note')).toBe(false);
+			expect(graph.order).toBe(1);
+		});
+	});
+
+	describe('tag nodes (backlog item 11, "Tags als Knoten")', () => {
+		it('adds a tag node for each distinct tag, only when showTagNodes is on', () => {
+			const { app, files } = createFakeApp([{ path: 'A.md', tags: ['#project'] }]);
+
+			const withoutToggle = buildVaultGraph(app, files);
+			expect(withoutToggle.hasNode('tag:#project')).toBe(false);
+
+			const withToggle = buildVaultGraph(app, files, { showTagNodes: true });
+			expect(withToggle.hasNode('tag:#project')).toBe(true);
+			expect(withToggle.getNodeAttribute('tag:#project', 'kind')).toBe('tag');
+			expect(withToggle.getNodeAttribute('tag:#project', 'label')).toBe('#project');
+			expect(withToggle.hasEdge('A.md', 'tag:#project')).toBe(true);
+		});
+
+		it('collapses two notes sharing a tag into one shared tag node', () => {
+			const { app, files } = createFakeApp([
+				{ path: 'A.md', tags: ['#project'] },
+				{ path: 'B.md', tags: ['#project'] },
+			]);
+
+			const graph = buildVaultGraph(app, files, { showTagNodes: true });
+
+			expect(graph.order).toBe(3); // A.md, B.md, one tag node
+			expect(graph.degree('tag:#project')).toBe(2);
+		});
+
+		it('adds one node per distinct tag when a note has several', () => {
+			const { app, files } = createFakeApp([{ path: 'A.md', tags: ['#project', '#urgent'] }]);
+
+			const graph = buildVaultGraph(app, files, { showTagNodes: true });
+
+			expect(graph.hasNode('tag:#project')).toBe(true);
+			expect(graph.hasNode('tag:#urgent')).toBe(true);
+			expect(graph.degree('A.md')).toBe(2);
+		});
+
+		it('does not add any tag node for a note with no tags', () => {
+			const { app, files } = createFakeApp([{ path: 'A.md' }]);
+
+			const graph = buildVaultGraph(app, files, { showTagNodes: true });
+
+			expect(graph.order).toBe(1);
+		});
+	});
+
+	describe('attachment nodes (backlog item 15, "Attachments als Knoten")', () => {
+		it('adds a node for an embedded non-markdown file, only when showAttachmentNodes is on', () => {
+			const { app, files } = createFakeApp([
+				{ path: 'A.md', embeds: ['image.png'] },
+				{ path: 'image.png' },
+			]);
+			const notes = files.filter((file) => file.path === 'A.md');
+
+			const withoutToggle = buildVaultGraph(app, notes);
+			expect(withoutToggle.hasNode('image.png')).toBe(false);
+
+			const withToggle = buildVaultGraph(app, notes, { showAttachmentNodes: true });
+			expect(withToggle.hasNode('image.png')).toBe(true);
+			expect(withToggle.getNodeAttribute('image.png', 'kind')).toBe('attachment');
+			expect(withToggle.getNodeAttribute('image.png', 'label')).toBe('image');
+			expect(withToggle.hasEdge('A.md', 'image.png')).toBe(true);
+		});
+
+		it('does not add a node for an embedded note - that already gets one via resolvedLinks', () => {
+			const { app, files } = createFakeApp([
+				{ path: 'A.md', embeds: ['B.md'] },
+				{ path: 'B.md' },
+			]);
+
+			const graph = buildVaultGraph(app, files, { showAttachmentNodes: true });
+
+			// Both are real notes in `files` already - no extra node beyond
+			// the two, and no `kind: 'attachment'` on B.md.
+			expect(graph.order).toBe(2);
+			expect(graph.getNodeAttribute('B.md', 'kind')).toBeUndefined();
+		});
+
+		it('collapses the same attachment embedded by two notes into one shared node', () => {
+			const { app, files } = createFakeApp([
+				{ path: 'A.md', embeds: ['image.png'] },
+				{ path: 'B.md', embeds: ['image.png'] },
+				{ path: 'image.png' },
+			]);
+			const notes = files.filter((file) => file.path !== 'image.png');
+
+			const graph = buildVaultGraph(app, notes, { showAttachmentNodes: true });
+
+			expect(graph.order).toBe(3); // A.md, B.md, one attachment node
+			expect(graph.degree('image.png')).toBe(2);
+		});
 	});
 });

@@ -30,6 +30,7 @@ function facts(overrides: Partial<NodeGroupFacts> = {}): NodeGroupFacts {
 		isolatedComponent: null,
 		communityId: null,
 		semanticClusterId: null,
+		nodeKind: null,
 		mtime: 0,
 		degree: 0,
 		exists: true,
@@ -271,6 +272,37 @@ describe('matchesGroup', () => {
 		});
 	});
 
+	describe('nodeKind criterion (backlog items 11/15, tag/attachment nodes)', () => {
+		it('matches only tag nodes when kind is tag', () => {
+			const g = group({ criteria: [{ type: 'nodeKind', kind: 'tag' }] });
+			expect(matchesGroup(facts({ exists: false, nodeKind: 'tag' }), g)).toBe(true);
+			expect(matchesGroup(facts({ exists: false, nodeKind: 'attachment' }), g)).toBe(false);
+			expect(matchesGroup(facts({ exists: true, nodeKind: null }), g)).toBe(false);
+		});
+
+		it('matches only attachment nodes when kind is attachment', () => {
+			const g = group({ criteria: [{ type: 'nodeKind', kind: 'attachment' }] });
+			expect(matchesGroup(facts({ exists: false, nodeKind: 'attachment' }), g)).toBe(true);
+			expect(matchesGroup(facts({ exists: false, nodeKind: 'tag' }), g)).toBe(false);
+		});
+
+		it('respects negate', () => {
+			const g = group({ criteria: [{ type: 'nodeKind', kind: 'tag', negate: true }] });
+			expect(matchesGroup(facts({ exists: false, nodeKind: 'tag' }), g)).toBe(false);
+			expect(matchesGroup(facts({ exists: false, nodeKind: 'attachment' }), g)).toBe(true);
+		});
+
+		it('is not gated by the exists-false guard the way other criteria are - a tag node has exists: false but is still reachable', () => {
+			// Unlike staleDays/minLinks above, nodeKind is deliberately exempt
+			// from the "exists: false never matches" guard (same exemption
+			// existence already gets) - a tag/attachment node's exists is
+			// false precisely so *other* criteria don't accidentally match
+			// it, not to hide it from nodeKind itself.
+			const g = group({ criteria: [{ type: 'nodeKind', kind: 'tag' }] });
+			expect(matchesGroup(facts({ exists: false, nodeKind: 'tag', mtime: 0, degree: 99 }), g)).toBe(true);
+		});
+	});
+
 	describe('negate', () => {
 		it('inverts a folder criterion (exclude instead of include)', () => {
 			const g = group({ criteria: [{ type: 'folder', folder: 'Archive', negate: true }] });
@@ -493,6 +525,13 @@ describe('describeCriterion', () => {
 	it('describes an existence criterion by its exists value', () => {
 		expect(describeCriterion({ type: 'existence', exists: true })).toBe('Existing notes');
 		expect(describeCriterion({ type: 'existence', exists: false })).toBe('Nonexistent notes');
+	});
+
+	it('describes a nodeKind criterion by its kind, respecting negate', () => {
+		expect(describeCriterion({ type: 'nodeKind', kind: 'tag' })).toBe('A tag node');
+		expect(describeCriterion({ type: 'nodeKind', kind: 'tag', negate: true })).toBe('Not a tag node');
+		expect(describeCriterion({ type: 'nodeKind', kind: 'attachment' })).toBe('An attachment node');
+		expect(describeCriterion({ type: 'nodeKind', kind: 'attachment', negate: true })).toBe('Not an attachment node');
 	});
 
 	it('flips each type’s own wording when negated, instead of a generic "Not " prefix', () => {

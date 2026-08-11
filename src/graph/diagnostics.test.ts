@@ -41,6 +41,20 @@ describe('diagnostics', () => {
 
 			expect(findOrphans(g)).not.toContain('ghost:Missing Note');
 		});
+
+		it('treats tag/attachment nodes the same way as ghost nodes - not real neighbors, never orphans themselves (backlog items 11/15)', () => {
+			const g = new Graph({ type: 'undirected' });
+			g.addNode('A.md');
+			g.addNode('tag:#project', { kind: 'tag' });
+			g.addNode('image.png', { kind: 'attachment' });
+			g.addEdge('A.md', 'tag:#project');
+			g.addEdge('A.md', 'image.png');
+
+			const orphans = findOrphans(g);
+			expect(orphans).toContain('A.md'); // only tag/attachment neighbors, no real note - still an orphan
+			expect(orphans).not.toContain('tag:#project');
+			expect(orphans).not.toContain('image.png');
+		});
 	});
 
 	describe('findBrokenLinks', () => {
@@ -113,6 +127,20 @@ describe('diagnostics', () => {
 			const components = findConnectedComponents(g);
 
 			expect(components.flat()).not.toContain('ghost:Missing Note');
+		});
+
+		it('does not let a shared tag/attachment node bridge two otherwise-unrelated notes either (backlog items 11/15)', () => {
+			const g = new Graph({ type: 'undirected' });
+			g.addNode('A');
+			g.addNode('B');
+			g.addNode('tag:#project', { kind: 'tag' });
+			g.addEdge('A', 'tag:#project');
+			g.addEdge('B', 'tag:#project');
+
+			const components = findConnectedComponents(g).map((c) => c.slice().sort());
+
+			expect(components).toEqual([['A'], ['B']]);
+			expect(components.flat()).not.toContain('tag:#project');
 		});
 	});
 
