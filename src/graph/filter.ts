@@ -46,31 +46,47 @@ export interface FilterPreset extends CriteriaOwner {
 }
 
 /**
- * Two ready-made filters built on the `existence` criterion (nodeGroups.ts)
- * - user feedback: rather than expecting everyone to discover "+ new
- * filter" → "Existence" on their own, ship the two most obviously useful
- * combinations out of the box. Fixed `id`s (not user-editable) so
- * settings.ts's `showDefaultFilters` toggle (main.ts's syncDefaultPresets())
- * can reliably find and add/remove exactly these two, regardless of
- * whether the user has since renamed or recolored them. `enabled: false` -
- * shipping "Show non-existing notes" pre-enabled would hide every real
- * note in every vault the moment someone updates the plugin; the point of
- * this toggle is to make them *available* in the Filter panel, not to
- * silently change what's currently on screen. Same reasoning as
- * DEFAULT_NODE_GROUPS in nodeGroups.ts.
+ * Four ready-made filters, one per `nodeKind` value (nodeGroups.ts) - user
+ * feedback: rather than expecting everyone to discover "+ new filter" →
+ * "Node type" on their own, ship the most obviously useful combinations out
+ * of the box. "Show non-existing notes" (the old `existence`-based filter)
+ * is gone along with the `existence` criterion itself - "Non-existent
+ * links" below is its direct replacement, same behavior, new mechanism.
+ * "Show existing notes" is kept, just re-expressed via `nodeKind: 'note'`
+ * instead of `existence: true` - same match, no user-visible change. Fixed
+ * `id`s (not user-editable) so settings.ts's `showDefaultFilters` toggle
+ * (main.ts's syncDefaultPresets()) can reliably find and add/remove exactly
+ * these four, regardless of whether the user has since renamed them.
+ * `enabled: false` on all four - shipping "Show non-existing notes"
+ * pre-enabled would hide every real note in every vault the moment someone
+ * updates the plugin; the point of this toggle is to make them *available*
+ * in the Filter panel, not to silently change what's currently on screen.
+ * Same reasoning as DEFAULT_NODE_GROUPS in nodeGroups.ts.
  */
 export const DEFAULT_FILTER_PRESETS: FilterPreset[] = [
 	{
 		id: 'default-filter-show-existing',
 		name: 'Show existing notes',
 		enabled: false,
-		criteria: [{ type: 'existence', exists: true }],
+		criteria: [{ type: 'nodeKind', kind: 'note' }],
 	},
 	{
-		id: 'default-filter-show-nonexisting',
-		name: 'Show non-existing notes',
+		id: 'default-filter-nonexistent-links',
+		name: 'Non-existent links',
 		enabled: false,
-		criteria: [{ type: 'existence', exists: false }],
+		criteria: [{ type: 'nodeKind', kind: 'nonexistent' }],
+	},
+	{
+		id: 'default-filter-attachments',
+		name: 'Attachments',
+		enabled: false,
+		criteria: [{ type: 'nodeKind', kind: 'attachment' }],
+	},
+	{
+		id: 'default-filter-tags',
+		name: 'Tags',
+		enabled: false,
+		criteria: [{ type: 'nodeKind', kind: 'tag' }],
 	},
 ];
 

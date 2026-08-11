@@ -182,7 +182,6 @@ const CRITERION_TYPE_LABELS: Record<GroupCriterionType, string> = {
 	// A plain category name instead, same role as folder/filename/tag/text.
 	staleDays: 'Last edited',
 	minLinks: 'Links',
-	existence: 'Existence',
 	nodeKind: 'Node type',
 };
 
@@ -219,9 +218,8 @@ const CRITERION_DESCRIPTIONS: Record<GroupCriterionType, string> = {
 		'Notes are grouped into tightly-linked neighborhoods automatically, the same grouping Activity/Structure use. Pick any note that belongs to the neighborhood you want - every other note in it matches too.',
 	semanticCluster:
 		"Notes are grouped by what they're actually about (their title and body text), regardless of whether anything links them - unlike Community, above, which only ever groups notes that are already linked, directly or through others. The first time you add this, Clew reads every note's content and computes it locally (nothing leaves your device); after that it's cached and only redone for notes you've changed.",
-	existence: "Whether this is a real note, or a 'ghost' node - a link to a note that doesn't exist yet.",
 	nodeKind:
-		"Matches a tag node or an attachment node specifically, not a note - only useful once 'Tags as nodes'/'Attachments as nodes' is turned on in Appearance, at the very top of the panel.",
+		"Matches one specific kind of node: a normal note, a tag node, an attachment node, or a 'nonexistent link' (a link to a note that doesn't exist yet). Tag/attachment nodes only appear once 'Tags as nodes'/'Attachments as nodes' is turned on in Appearance, at the very top of the panel.",
 };
 
 /**
@@ -2921,14 +2919,14 @@ export class GraphPane {
 			// a hover/highlight, not a permanently visible default - a ghost
 			// node painted with it all but disappeared into the canvas,
 			// user-reported "der Knoten wird aber nicht angezeigt"). A
-			// Color & size group can still override it via the "existence"
+			// Color & size group can still override it via the "nodeKind"
 			// criterion (nodeGroups.ts), same as any other node -
 			// buildCriteriaFacts() emits an `exists: false` fact for every
 			// ghost node specifically so that criterion has something to
 			// match against. Tag nodes (backlog item 11) get their own
 			// tagNodeColor the same way; attachment nodes (backlog item 15)
 			// share imageNodeColor with cover-image notes - both are
-			// overridable the same way, via the new `nodeKind` criterion.
+			// overridable the same way, via the same `nodeKind` criterion.
 			const defaultColor =
 				attr.kind === 'ghost'
 					? this.theme.ghostNodeColor
@@ -3024,16 +3022,16 @@ export class GraphPane {
 	 * whichever of the three are actually active, rather than running
 	 * Louvain up to three times over the same graph in one call.
 	 *
-	 * Also emits one fact entry per ghost node (vaultGraph.ts's `kind:
-	 * 'ghost'`, see addGhostNodes()) - `exists: false` and otherwise mostly
-	 * empty (no folder/tags/frontmatter/content, since a ghost node isn't a
-	 * real file to read any of that from), backing the `existence`
-	 * criterion. An earlier version left ghost nodes out of this map
-	 * entirely, on the theory that "no facts" already meant "never matches
-	 * a filter/group" - true for every *other* criterion, but it also
-	 * meant nothing could deliberately target a ghost node either; explicit
-	 * `exists: false` facts are what makes that possible without changing
-	 * how any existing criterion behaves.
+	 * Also emits one fact entry per ghost/tag/attachment node (vaultGraph.ts's
+	 * `kind: 'ghost'`/`'tag'`/`'attachment'`) - `exists: false` and otherwise
+	 * mostly empty (no folder/tags/frontmatter/content, since none of the
+	 * three is a real file to read any of that from), backing the `nodeKind`
+	 * criterion. An earlier version left these out of this map entirely, on
+	 * the theory that "no facts" already meant "never matches a filter/
+	 * group" - true for every *other* criterion, but it also meant nothing
+	 * could deliberately target one either; explicit `exists: false` facts
+	 * are what makes that possible without changing how any existing
+	 * criterion behaves.
 	 */
 	private buildCriteriaFacts(): Map<string, NodeGroupFacts> {
 		const owners = this.allCriteriaOwners();
@@ -3064,7 +3062,7 @@ export class GraphPane {
 				isolatedComponent: isolatedComponentByNode?.get(file.path) ?? null,
 				communityId: communityRankByNode?.get(file.path) ?? null,
 				semanticClusterId: this.semanticClusterByPath?.get(file.path) ?? null,
-				nodeKind: null,
+				nodeKind: 'note',
 				mtime: this.mtimeByPath.get(file.path) ?? file.stat.mtime,
 				degree: this.graph?.degree(file.path) ?? 0,
 				exists: true,
@@ -3074,13 +3072,13 @@ export class GraphPane {
 		// `'attachment'`, only present at all once the matching Appearance
 		// toggle is on) all get the same minimal, mostly-empty facts shape -
 		// `exists: false` so they're excluded from every criterion except
-		// `existence`/`nodeKind` (see matchesCriterionValue()'s own guard),
-		// `nodeKind` set only for tag/attachment so the `nodeKind` criterion
-		// has something to match against (see NodeGroupFacts.nodeKind's own
-		// docstring for why ghost stays `null` there - it already has its
-		// own dedicated `existence` mechanism).
+		// `nodeKind` (see matchesCriterionValue()'s own guard), `nodeKind`
+		// itself set to the matching non-note value so the `nodeKind`
+		// criterion has something to match against.
+		const NODE_KIND_BY_ATTR: Record<string, NodeKind> = { ghost: 'nonexistent', tag: 'tag', attachment: 'attachment' };
 		this.graph?.forEachNode((node, attr) => {
-			if (attr.kind !== 'ghost' && attr.kind !== 'tag' && attr.kind !== 'attachment') return;
+			const kind = attr.kind as string | undefined;
+			if (kind === undefined || !(kind in NODE_KIND_BY_ATTR)) return;
 			result.set(node, {
 				label: (attr.label as string | undefined) ?? node,
 				folder: '',
@@ -3094,7 +3092,7 @@ export class GraphPane {
 				isolatedComponent: null,
 				communityId: null,
 				semanticClusterId: null,
-				nodeKind: attr.kind === 'tag' || attr.kind === 'attachment' ? (attr.kind as NodeKind) : null,
+				nodeKind: NODE_KIND_BY_ATTR[kind]!,
 				mtime: 0,
 				degree: this.graph?.degree(node) ?? 0,
 				exists: false,
@@ -4734,8 +4732,8 @@ export class GraphPane {
 			case 'clusterFreshness':
 				return { type, bucket: 'stagnant' };
 			// 'scattered' - the useful starting point is almost always "show
-			// me the misfiled ones", same reasoning as `existence` below
-			// defaulting to missing notes.
+			// me the misfiled ones", same reasoning as `isolatedComponent`
+			// below defaulting to the unusual case.
 			case 'structuralDeviation':
 				return { type, bucket: 'scattered' };
 			// 'high' - the useful starting point for both is almost always
@@ -4743,10 +4741,10 @@ export class GraphPane {
 			case 'betweenness':
 			case 'pageRank':
 				return { type, bucket: 'high' };
-			// Same reasoning as `existence`/`structuralDeviation` above -
-			// the unusual case (cut off from the main body) is the more
-			// useful starting point than "in the main body", which is
-			// already every note's default state with no criterion at all.
+			// Same reasoning as `structuralDeviation` above - the unusual
+			// case (cut off from the main body) is the more useful starting
+			// point than "in the main body", which is already every note's
+			// default state with no criterion at all.
 			case 'isolatedComponent':
 				return { type, isolated: true };
 			// 0 - the largest community present, ranked by size (see
@@ -4777,18 +4775,14 @@ export class GraphPane {
 				return { type, days: 30 };
 			case 'minLinks':
 				return { type, count: 1 };
-			// Defaults to targeting ghost nodes (exists: false), not real
-			// notes - "existing notes" is already every note's default state
-			// with no criterion at all, so the useful starting point for
-			// someone reaching for this criterion is almost always the other
-			// value.
-			case 'existence':
-				return { type, exists: false };
-			// 'tag' - the more commonly toggled-on of the two (backlog item
-			// 11 came before item 15) and the more likely reason someone
-			// reaches for this criterion at all.
+			// Defaults to targeting nonexistent-link (ghost) nodes, not
+			// normal notes - "normal note" is already every note's default
+			// state with no criterion at all, so the useful starting point
+			// for someone reaching for this criterion is almost always one
+			// of the other three values, and `nonexistent` was this
+			// criterion's original (pre-merge) reason for existing at all.
 			case 'nodeKind':
-				return { type, kind: 'tag' };
+				return { type, kind: 'nonexistent' };
 		}
 	}
 
@@ -4877,8 +4871,7 @@ export class GraphPane {
 		addOption('community', 'Community');
 		addOption('semanticCluster', 'Semantic cluster');
 		addOption('minLinks', 'Minimum number of links');
-		addOption('existence', 'Existence (real vs. missing note)');
-		addOption('nodeKind', 'Node type (tag/attachment)');
+		addOption('nodeKind', 'Node type (note/tag/attachment/nonexistent link)');
 		menu.showAtMouseEvent(evt);
 	}
 
@@ -4953,9 +4946,9 @@ export class GraphPane {
 		}
 
 		// A default group's criteria are fixed (they're what makes it that
-		// specific ready-made group, e.g. `existence: false` for "Non-existing
-		// notes") - no criteria list, no "+ add", nothing left to edit here
-		// once color/size are covered above.
+		// specific ready-made group, e.g. `nodeKind: 'nonexistent'` for
+		// "Non-existent links") - no criteria list, no "+ add", nothing left
+		// to edit here once color/size are covered above.
 		if (isDefault) return;
 
 		// No "Criteria" heading/description any more (removed on feedback,
@@ -5220,7 +5213,7 @@ export class GraphPane {
 					});
 				break;
 			case 'isolatedComponent':
-				// No negate word (like existence above) - the dropdown
+				// No negate word (like nodeKind below) - the dropdown
 				// already offers an equivalent either/or choice.
 				new DropdownComponent(controlsEl)
 					.addOption('main', "In the vault's main body")
@@ -5374,26 +5367,15 @@ export class GraphPane {
 				// zum Teil doppelt dargestellt").
 				break;
 			}
-			case 'existence':
-				// No negate word (like clusterFreshness/property above) - the
-				// dropdown already offers an equivalent either/or choice, see
-				// ExistenceCriterion's own docstring in nodeGroups.ts.
-				new DropdownComponent(controlsEl)
-					.addOption('existing', 'Existing notes')
-					.addOption('missing', 'Notes linked but not created yet')
-					.setValue(criterion.exists ? 'existing' : 'missing')
-					.onChange((value) => {
-						criterion.exists = value === 'existing';
-						applyLive();
-					});
-				break;
 			case 'nodeKind':
-				// No negate word here either - same reasoning as `existence`
-				// just above (its own sibling "opt-in node kind" criterion),
-				// the dropdown already offers the equivalent choice.
+				// No negate word (like clusterFreshness/property above) - the
+				// dropdown already offers an equivalent four-way choice, see
+				// NodeKind's own docstring in nodeGroups.ts.
 				new DropdownComponent(controlsEl)
+					.addOption('note', 'Normal note')
 					.addOption('tag', 'Tag node')
 					.addOption('attachment', 'Attachment node')
+					.addOption('nonexistent', 'Nonexistent link')
 					.setValue(criterion.kind)
 					.onChange((value) => {
 						criterion.kind = value as NodeKind;

@@ -30,7 +30,7 @@ function facts(overrides: Partial<NodeGroupFacts> = {}): NodeGroupFacts {
 		isolatedComponent: null,
 		communityId: null,
 		semanticClusterId: null,
-		nodeKind: null,
+		nodeKind: 'note',
 		mtime: 0,
 		degree: 0,
 		exists: true,
@@ -246,38 +246,24 @@ describe('matchesGroup', () => {
 		});
 	});
 
-	describe('existence criterion', () => {
-		it('matches only real notes when exists is true', () => {
-			const g = group({ criteria: [{ type: 'existence', exists: true }] });
-			expect(matchesGroup(facts({ exists: true }), g)).toBe(true);
-			expect(matchesGroup(facts({ exists: false }), g)).toBe(false);
+	describe('nodeKind criterion (four values: note/tag/attachment/nonexistent)', () => {
+		it('matches only real notes when kind is note', () => {
+			const g = group({ criteria: [{ type: 'nodeKind', kind: 'note' }] });
+			expect(matchesGroup(facts({ exists: true, nodeKind: 'note' }), g)).toBe(true);
+			expect(matchesGroup(facts({ exists: false, nodeKind: 'nonexistent' }), g)).toBe(false);
 		});
 
-		it('matches only ghost nodes when exists is false', () => {
-			const g = group({ criteria: [{ type: 'existence', exists: false }] });
-			expect(matchesGroup(facts({ exists: false }), g)).toBe(true);
-			expect(matchesGroup(facts({ exists: true }), g)).toBe(false);
+		it('matches only ghost nodes when kind is nonexistent', () => {
+			const g = group({ criteria: [{ type: 'nodeKind', kind: 'nonexistent' }] });
+			expect(matchesGroup(facts({ exists: false, nodeKind: 'nonexistent' }), g)).toBe(true);
+			expect(matchesGroup(facts({ exists: true, nodeKind: 'note' }), g)).toBe(false);
 		});
 
-		it('never lets a ghost node match a non-existence criterion, even when its default facts would coincidentally satisfy it', () => {
-			// A ghost node's mtime defaults to 0 ("infinitely stale") and its
-			// degree is its real edge count - both could otherwise
-			// accidentally satisfy staleDays/minLinks criteria never meant to
-			// consider it at all.
-			const staleGroup = group({ criteria: [{ type: 'staleDays', days: 1 }] });
-			expect(matchesGroup(facts({ exists: false, mtime: 0 }), staleGroup)).toBe(false);
-
-			const linksGroup = group({ criteria: [{ type: 'minLinks', count: 1 }] });
-			expect(matchesGroup(facts({ exists: false, degree: 5 }), linksGroup)).toBe(false);
-		});
-	});
-
-	describe('nodeKind criterion (backlog items 11/15, tag/attachment nodes)', () => {
 		it('matches only tag nodes when kind is tag', () => {
 			const g = group({ criteria: [{ type: 'nodeKind', kind: 'tag' }] });
 			expect(matchesGroup(facts({ exists: false, nodeKind: 'tag' }), g)).toBe(true);
 			expect(matchesGroup(facts({ exists: false, nodeKind: 'attachment' }), g)).toBe(false);
-			expect(matchesGroup(facts({ exists: true, nodeKind: null }), g)).toBe(false);
+			expect(matchesGroup(facts({ exists: true, nodeKind: 'note' }), g)).toBe(false);
 		});
 
 		it('matches only attachment nodes when kind is attachment', () => {
@@ -293,13 +279,24 @@ describe('matchesGroup', () => {
 		});
 
 		it('is not gated by the exists-false guard the way other criteria are - a tag node has exists: false but is still reachable', () => {
-			// Unlike staleDays/minLinks above, nodeKind is deliberately exempt
-			// from the "exists: false never matches" guard (same exemption
-			// existence already gets) - a tag/attachment node's exists is
-			// false precisely so *other* criteria don't accidentally match
-			// it, not to hide it from nodeKind itself.
+			// Unlike staleDays/minLinks below, nodeKind is deliberately exempt
+			// from the "exists: false never matches" guard - a tag/attachment/
+			// ghost node's exists is false precisely so *other* criteria don't
+			// accidentally match it, not to hide it from nodeKind itself.
 			const g = group({ criteria: [{ type: 'nodeKind', kind: 'tag' }] });
 			expect(matchesGroup(facts({ exists: false, nodeKind: 'tag', mtime: 0, degree: 99 }), g)).toBe(true);
+		});
+
+		it('never lets a ghost node match a non-nodeKind criterion, even when its default facts would coincidentally satisfy it', () => {
+			// A ghost node's mtime defaults to 0 ("infinitely stale") and its
+			// degree is its real edge count - both could otherwise
+			// accidentally satisfy staleDays/minLinks criteria never meant to
+			// consider it at all.
+			const staleGroup = group({ criteria: [{ type: 'staleDays', days: 1 }] });
+			expect(matchesGroup(facts({ exists: false, nodeKind: 'nonexistent', mtime: 0 }), staleGroup)).toBe(false);
+
+			const linksGroup = group({ criteria: [{ type: 'minLinks', count: 1 }] });
+			expect(matchesGroup(facts({ exists: false, nodeKind: 'nonexistent', degree: 5 }), linksGroup)).toBe(false);
 		});
 	});
 
@@ -417,7 +414,7 @@ describe('needsIsolatedComponent', () => {
 		expect(needsIsolatedComponent([group({ enabled: false, criteria: [{ type: 'isolatedComponent', isolated: true }] })])).toBe(
 			false,
 		);
-		expect(needsIsolatedComponent([group({ criteria: [{ type: 'existence', exists: true }] })])).toBe(false);
+		expect(needsIsolatedComponent([group({ criteria: [{ type: 'nodeKind', kind: 'note' }] })])).toBe(false);
 	});
 });
 
@@ -522,16 +519,15 @@ describe('describeCriterion', () => {
 		expect(describeCriterion({ type: 'minLinks', count: 3 })).toBe('At least 3 links');
 	});
 
-	it('describes an existence criterion by its exists value', () => {
-		expect(describeCriterion({ type: 'existence', exists: true })).toBe('Existing notes');
-		expect(describeCriterion({ type: 'existence', exists: false })).toBe('Nonexistent notes');
-	});
-
 	it('describes a nodeKind criterion by its kind, respecting negate', () => {
+		expect(describeCriterion({ type: 'nodeKind', kind: 'note' })).toBe('A normal note');
+		expect(describeCriterion({ type: 'nodeKind', kind: 'note', negate: true })).toBe('Not a normal note');
 		expect(describeCriterion({ type: 'nodeKind', kind: 'tag' })).toBe('A tag node');
 		expect(describeCriterion({ type: 'nodeKind', kind: 'tag', negate: true })).toBe('Not a tag node');
 		expect(describeCriterion({ type: 'nodeKind', kind: 'attachment' })).toBe('An attachment node');
 		expect(describeCriterion({ type: 'nodeKind', kind: 'attachment', negate: true })).toBe('Not an attachment node');
+		expect(describeCriterion({ type: 'nodeKind', kind: 'nonexistent' })).toBe('A nonexistent link');
+		expect(describeCriterion({ type: 'nodeKind', kind: 'nonexistent', negate: true })).toBe('Not a nonexistent link');
 	});
 
 	it('flips each type’s own wording when negated, instead of a generic "Not " prefix', () => {

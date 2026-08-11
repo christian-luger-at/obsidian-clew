@@ -455,52 +455,57 @@ manual copy step. Then open `test-vault` in Obsidian and check:
   - Clicking a ghost node does nothing (no note to open).
   - Hovering `Hub` or `Topic C` highlights its ghost neighbor the same way
     it highlights a real linked note.
-  - Enabling a Filter, or a Color & size group, with **no** `Existence`
+  - Enabling a Filter, or a Color & size group, with **no** `Node type`
     criterion should make both ghost nodes disappear (Filter) or leave them
     their default gray (Color & size) along with everything else that
     doesn't match - `matchesCriterionValue()`'s own guard (nodeGroups.ts)
-    makes every criterion *except* `Existence` a hard non-match for a ghost
+    makes every criterion *except* `Node type` a hard non-match for a ghost
     node, even one whose default facts (mtime 0, its real degree, ...)
     would otherwise coincidentally satisfy it (a `staleDays`/`minLinks`
     criterion, for example).
   - Neither ghost node should appear in the Diagnostics panel's Orphans
     count, and the "Isolated clusters" count should reflect real notes
     only (a cluster containing a ghost node should not be inflated by it).
-  - **Existence criterion** ("+ add" menu → "Existence (real vs. missing
-    note)", available in both Filter and Color & size - same shared
-    criterion system, see `nodeGroups.ts`'s `CriteriaOwner`): set to "Notes
-    linked but not created yet" in a Filter - only `Nonexistent Note` and
+  - **Node type criterion** ("+ add" menu → "Node type (note/tag/
+    attachment/nonexistent link)", available in both Filter and Color &
+    size - same shared criterion system, see `nodeGroups.ts`'s
+    `CriteriaOwner`): a single unified four-way criterion, replacing the
+    earlier separate `Existence` (real vs. ghost) and `Node type` (tag vs.
+    attachment) criteria - user feedback: "Node type muss 4 Werte haben
+    [...] Das Auswahlkriterium 'Existence' ist dann nicht mehr notwendig".
+    Set to "Nonexistent link" in a Filter - only `Nonexistent Note` and
     `Draft Idea` should remain visible, everything else (including `Hub`/
-    `Topic C` themselves) hidden. Set to "Existing notes" instead - the
-    inverse. In Color & size, a group with this criterion set to "Notes
-    linked but not created yet" plus a chosen color/size multiplier should
-    repaint both ghost nodes with that color/size instead of the default
-    gray/small - same mechanism as any other group, just targeting ghost
-    nodes specifically.
-  - **Default filters/color group** (`filter.ts`'s `DEFAULT_FILTER_PRESETS`,
+    `Topic C` themselves) hidden. Set to "Normal note" instead - the
+    inverse. In Color & size, a group with this criterion set to
+    "Nonexistent link" plus a chosen color/size multiplier should repaint
+    both ghost nodes with that color/size instead of the default gray/
+    small - same mechanism as any other group, just targeting ghost nodes
+    specifically.
+  - **Default filters/color groups** (`filter.ts`'s `DEFAULT_FILTER_PRESETS`,
     `nodeGroups.ts`'s `DEFAULT_NODE_GROUPS` - fixed `id`s, added/removed by
     `main.ts`'s `syncDefaultPresets()`): on a fresh install (or the QA
     vault's own `data.json`, if any, deleted), the Filter panel should
-    already list "Show existing notes" and "Show non-existing notes"
-    (unchecked), and Color & size should already list "Non-existing notes"
-    in orange (also unchecked) - all three ready to enable, not needing
-    "+ add" → "Existence" from scratch. In Settings → Community plugins →
-    Clew, turn "Default filters" off - both filter rows should disappear
-    from the Filter panel the next time it's opened (even mid-session, no
-    reload needed - `syncDefaultPresets()` runs immediately on toggle).
-    Turn it back on - they reappear, freshly reset (any rename/recolor you
-    made is gone - toggling off is what removes them, not a private
-    "hidden but remembered" state). Same check for "Default color group"
-    against the orange group. Enabling one of the default filters (e.g.
-    "Show non-existing notes") should behave exactly like a user-built
-    Existence filter - because it is one.
+    already list "Show existing notes", "Non-existent links", "Attachments",
+    and "Tags" (all unchecked), and Color & size should already list
+    "Non-existent links" (orange), "Attachments" (blue), and "Tags" (violet)
+    (also unchecked) - all seven ready to enable, not needing "+ add" →
+    "Node type" from scratch. In Settings → Community plugins → Clew, turn
+    "Default filters" off - all four filter rows should disappear from the
+    Filter panel the next time it's opened (even mid-session, no reload
+    needed - `syncDefaultPresets()` runs immediately on toggle). Turn it
+    back on - they reappear, freshly reset (any rename you made is gone -
+    toggling off is what removes them, not a private "hidden but
+    remembered" state). Same check for "Default color groups" against the
+    three colored groups. Enabling "Non-existent links" should behave
+    exactly like a user-built `nodeKind: 'nonexistent'` filter - because it
+    is one.
   - **Not deletable or editable from the panel** (user feedback: "diese
     Einträge dürfen vom Benutzer nicht gelöscht werden [...] und auch
-    nicht editierbar"): all three default rows should show **neither** a
+    nicht editierbar"): every default row should show **neither** a
     pencil (edit) **nor** a trash icon in both the Filter and Color & size
     panel, unlike every user-created filter/group -
     `isDefaultFilterId()`/`isDefaultGroupId()` in `graphPane.ts` skip
-    rendering both specifically for these three fixed `id`s. The row's own
+    rendering both specifically for these fixed `id`s. The row's own
     enabled checkbox is untouched, still there and still live - a default
     filter/group can be turned on/off exactly like any other, it just can't
     be renamed, recolored, have its criteria changed, or be deleted. The
@@ -518,12 +523,12 @@ manual copy step. Then open `test-vault` in Obsidian and check:
   separate node linking only `Topic A - Detail 2`. Click a tag node - does
   nothing (no file behind it, same as a ghost node). Hovering `Topic A -
   Detail 2` should highlight both its tag neighbors like any other link.
-  **`nodeKind` criterion** ("+ add" → "Node type (tag/attachment)", set to
-  "Tag node"): should match `#project`/`#urgent` and nothing else - not
-  even a `Nonexistent Note` ghost node, despite both having `exists: false`
+  **`Node type` criterion** ("+ add" → "Node type", set to "Tag node"):
+  should match `#project`/`#urgent` and nothing else - not even a
+  `Nonexistent Note` ghost node, despite both having `exists: false`
   internally (`nodeGroups.ts`'s `matchesCriterionValue()` guard exempts
-  `nodeKind` the same way it exempts `existence`, but the two criteria
-  target genuinely different facts). Toggling "Tags" off again should make
+  `nodeKind` from the exists-check entirely, but each of its four values
+  still only matches its own kind). Toggling "Tags" off again should make
   the tag nodes disappear and, if a `nodeKind: 'tag'` filter/group was
   enabled, leave it matching nothing (not erroring).
 - **Attachment nodes** (backlog item 15, "Attachments als Knoten",

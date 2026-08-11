@@ -40,8 +40,7 @@ export type GroupCriterionType =
 	| 'tag'
 	| 'property'
 	| 'staleDays'
-	| 'minLinks'
-	| 'existence';
+	| 'minLinks';
 
 /** How a `property` criterion compares the frontmatter value to `value` - user feedback: raw substring-only matching couldn't express "status is exactly done" vs. "status is not done" vs. "has no status set at all". */
 export type StringOperator = 'contains' | 'equals' | 'notEquals' | 'isEmpty' | 'isNotEmpty';
@@ -114,37 +113,27 @@ export interface MinLinksCriterion {
 }
 
 /**
- * Whether the node is a real note (`true`) or a ghost node - a link to a
- * note that doesn't exist yet, vaultGraph.ts's `kind: 'ghost'`, one per
- * distinct missing target (`false`). A plain two-way choice, like
- * `clusterFreshness`'s bucket, not a boolean toggle + negate - see
- * GroupCriterion's own `negate` docstring for why `property`/
- * `clusterFreshness` (and now this) skip `negate` in favor of an explicit
- * either/or choice that already reads as a complete sentence on its own.
- * Ghost nodes are otherwise invisible to every other criterion (they carry
- * no folder/tags/frontmatter/content - see GraphPane's buildCriteriaFacts()
- * for how their facts are built) - this is the one criterion that can
- * single them out on purpose, e.g. to color/size them differently in a
- * Color & size group, or to build a filter that shows only the missing
- * notes (or hides them entirely).
+ * Every node on the graph is exactly one of these four kinds - a real note,
+ * a tag node (vaultGraph.ts's `kind: 'tag'`, backlog item 11, "Tags als
+ * Knoten"), an attachment node (`kind: 'attachment'`, backlog item 15,
+ * "Attachments als Knoten"), or a "nonexistent" ghost node (`kind: 'ghost'`,
+ * a link to a note that doesn't exist yet). One unified criterion for all
+ * four, replacing the earlier separate `existence` (real vs. ghost) and
+ * `nodeKind` (tag vs. attachment) criteria - user feedback: "Node type muss
+ * 4 Werte haben: Non existent link, Attachment, Tag, und normaler Knoten
+ * [...] Das Auswahlkriterium 'Existence' ist dann nicht mehr notwendig". A
+ * plain four-way choice, like `clusterFreshness`'s bucket, not a boolean
+ * toggle + negate - see GroupCriterion's own `negate` docstring for why
+ * `property`/`clusterFreshness` (and now this) skip `negate` in favor of an
+ * explicit choice that already reads as a complete sentence on its own.
+ * Tag/attachment/ghost nodes are otherwise invisible to every other
+ * criterion (they carry no folder/tags/frontmatter/content - see
+ * GraphPane's buildCriteriaFacts() for how their facts are built) - this is
+ * the one criterion that can single any of the four out on purpose, e.g. to
+ * color/size ghost nodes differently in a Color & size group, or to build a
+ * filter that shows only tag nodes.
  */
-export interface ExistenceCriterion {
-	type: 'existence';
-	exists: boolean;
-}
-
-/**
- * A tag node (vaultGraph.ts's `kind: 'tag'`, backlog item 11, "Tags als
- * Knoten") or an attachment node (`kind: 'attachment'`, backlog item 15,
- * "Attachments als Knoten") - both features say "kann zusätzlich im
- * Filter/Color definiert werden", so this is what actually lets a group/
- * filter target them specifically, the same way `existence` targets ghost
- * nodes specifically. A plain note never has a `nodeKind` (see
- * NodeGroupFacts.nodeKind's own docstring), so there's no third "note"
- * option to pick here - this criterion only ever exists to single out one
- * of the two *other* kinds.
- */
-export type NodeKind = 'tag' | 'attachment';
+export type NodeKind = 'note' | 'tag' | 'attachment' | 'nonexistent';
 
 export interface NodeKindCriterion {
 	type: 'nodeKind';
@@ -210,9 +199,9 @@ export interface PageRankCriterion {
  * findConnectedComponents()) is the vault's single largest one, or one of
  * the smaller ones cut off from it - the same distinction the Diagnostics
  * panel's "Isolated clusters" section already surfaces as a list, now
- * usable to color/size/filter by directly. A plain two-way choice, like
- * `existence` - a note is either in the main body or it isn't, there's no
- * partial/graded version of this the way betweenness/PageRank have one.
+ * usable to color/size/filter by directly. A plain two-way choice - a note
+ * is either in the main body or it isn't, there's no partial/graded version
+ * of this the way betweenness/PageRank have one.
  */
 export interface IsolatedComponentCriterion {
 	type: 'isolatedComponent';
@@ -297,11 +286,12 @@ export interface SemanticClusterCriterion {
  * renderCriterionEditRow() instead makes the negated/non-negated *wording
  * itself* (see describeCriterion()) the clickable control - no separate
  * toggle/checkbox/dropdown element at all for most types. `property`,
- * `clusterFreshness`, `structuralDeviation`, `betweenness`, `pageRank`, and
- * `isolatedComponent` don't use `negate` (no UI ever sets it for them) -
- * each already offers an equivalent choice via its own operator/bucket
- * (`isolatedComponent`'s `isolated` boolean is exactly that kind of
- * choice, same as `existence`'s `exists`). `community` *does* use it
+ * `clusterFreshness`, `structuralDeviation`, `betweenness`, `pageRank`,
+ * `isolatedComponent`, and `nodeKind` don't use `negate` (no UI ever sets
+ * it for them) - each already offers an equivalent choice via its own
+ * operator/bucket/dropdown (`isolatedComponent`'s `isolated` boolean and
+ * `nodeKind`'s four-way dropdown are exactly that kind of choice).
+ * `community` *does* use it
  * ("Community 2 is/is not") - unlike the bucket types, there's no
  * opposite-community dropdown option that would say the same thing.
  * Optional (not required on every literal) so criteria saved before this
@@ -323,7 +313,6 @@ export type GroupCriterion = (
 	| PropertyCriterion
 	| StaleDaysCriterion
 	| MinLinksCriterion
-	| ExistenceCriterion
 	| NodeKindCriterion
 ) & { negate?: boolean };
 
@@ -390,10 +379,20 @@ export interface NodeGroupFacts {
 	mtime: number;
 	/** Link count (graph.degree()) - backs the `minLinks` criterion, same source as filter.ts's NoteFilterFacts.degree. */
 	degree: number;
-	/** `false` for a ghost node (vaultGraph.ts's `kind: 'ghost'`), `true` for a real note - backs the `existence` criterion. Also `false` for a tag/attachment node (see `nodeKind` below) - none of the three are a real note, and giving a tag node in particular a real-looking `exists: true` would let e.g. `staleDays` accidentally match every one of them forever (a tag has no `mtime` of its own to be anything other than the fallback `0`, which every "at least N days old" criterion would treat as infinitely stale) - same reasoning `matchesCriterionValue()`'s own exists-gate already applies to ghost nodes, just extended to cover these two as well. */
+	/**
+	 * `true` only for a real note - `false` for a ghost/tag/attachment node
+	 * (vaultGraph.ts's `kind: 'ghost'`/`'tag'`/`'attachment'`). Purely an
+	 * internal gate now (see `matchesCriterionValue()`'s guard) - a tag node
+	 * in particular has no `mtime` of its own to be anything other than the
+	 * fallback `0`, which every "at least N days old" criterion would
+	 * otherwise treat as infinitely stale, and its real edge count could
+	 * otherwise accidentally satisfy `minLinks`. `nodeKind` below is what a
+	 * filter/group actually matches on - this field only exists to keep
+	 * every *other* criterion from misreading a non-note's empty facts.
+	 */
 	exists: boolean;
-	/** `'tag'`/`'attachment'` for a tag/attachment node (vaultGraph.ts's `kind: 'tag'`/`'attachment'`, backlog items 11/15) - `null` for a real note *and* for a ghost node (ghost has its own dedicated `exists`/`existence` mechanism already; it doesn't also need a `nodeKind`). Backs the `nodeKind` criterion - see its own docstring for why this is a separate mechanism from `existence` rather than folded into it. */
-	nodeKind: NodeKind | null;
+	/** Which of the four kinds this node is (`'note'` for a real note, `'tag'`/`'attachment'`/`'nonexistent'` for vaultGraph.ts's `kind: 'tag'`/`'attachment'`/`'ghost'`) - backs the `nodeKind` criterion, see its own docstring. Always set, never null. */
+	nodeKind: NodeKind;
 }
 
 // Same 10 colors visualEncoding.ts used to auto-assign by category -
@@ -428,25 +427,45 @@ export function communityColor(communityId: number): string {
 }
 
 /**
- * One ready-made group, orange, built on the `existence` criterion - user
- * feedback: ship the obvious "make missing notes visually pop" combination
- * out of the box rather than expecting everyone to build it themselves via
- * "+ Add" → "Existence". Fixed `id` (not user-editable) so settings.ts's
- * `showDefaultColorGroups` toggle (main.ts's syncDefaultPresets()) can
- * reliably find and add/remove exactly this one. `enabled: false` - same
- * reasoning as filter.ts's DEFAULT_FILTER_PRESETS: the toggle makes it
- * *available* in the Color & size panel, it doesn't silently recolor
- * anyone's graph the moment they update the plugin. `#f97316` is this
- * file's own DEFAULT_GROUP_COLORS[1] (orange) above, not a new one-off hex.
+ * Three ready-made groups, one per non-note `nodeKind` value, all built on
+ * the unified `nodeKind` criterion - user feedback: "Erstelle Standard-
+ * Color&Size-Definitionen für Non existent link, Attachment, Tag" (and
+ * "Lösche den Standard-Color&Size 'Non-existent Notes'", the earlier single
+ * `existence`-based group this replaces). Fixed `id`s (not user-editable)
+ * so settings.ts's `showDefaultColorGroups` toggle (main.ts's
+ * syncDefaultPresets()) can reliably find and add/remove exactly these
+ * three. `enabled: false` on all three - same reasoning as filter.ts's
+ * DEFAULT_FILTER_PRESETS: the toggle makes them *available* in the Color &
+ * size panel, it doesn't silently recolor anyone's graph the moment they
+ * update the plugin. Colors are this file's own DEFAULT_GROUP_COLORS
+ * entries, not new one-off hexes - orange (`[1]`) carried over unchanged
+ * from the group this replaces, blue (`[5]`) and violet (`[6]`, matching
+ * theme.ts's own default `tagNodeColor`) for the two new ones.
  */
 export const DEFAULT_NODE_GROUPS: NodeGroup[] = [
 	{
-		id: 'default-group-show-nonexisting',
-		name: 'Non-existing notes',
-		color: '#f97316',
+		id: 'default-group-nonexistent-links',
+		name: 'Non-existent links',
+		color: DEFAULT_GROUP_COLORS[1]!,
 		sizeMultiplier: null,
 		enabled: false,
-		criteria: [{ type: 'existence', exists: false }],
+		criteria: [{ type: 'nodeKind', kind: 'nonexistent' }],
+	},
+	{
+		id: 'default-group-attachments',
+		name: 'Attachments',
+		color: DEFAULT_GROUP_COLORS[5]!,
+		sizeMultiplier: null,
+		enabled: false,
+		criteria: [{ type: 'nodeKind', kind: 'attachment' }],
+	},
+	{
+		id: 'default-group-tags',
+		name: 'Tags',
+		color: DEFAULT_GROUP_COLORS[6]!,
+		sizeMultiplier: null,
+		enabled: false,
+		criteria: [{ type: 'nodeKind', kind: 'tag' }],
 	},
 ];
 
@@ -483,10 +502,9 @@ function matchesCriterionValue(facts: NodeGroupFacts, criterion: GroupCriterion)
 	// would let it accidentally satisfy criteria never meant to consider it
 	// at all (a `staleDays` criterion reading mtime: 0 as "extremely old",
 	// a `minLinks` criterion matching its real edge count, ...). Only
-	// `existence`/`nodeKind` are allowed to see a non-existent node for
-	// what it is - every other criterion type treats one as a hard
-	// non-match, full stop.
-	if (criterion.type !== 'existence' && criterion.type !== 'nodeKind' && !facts.exists) return false;
+	// `nodeKind` is allowed to see a non-note node for what it is - every
+	// other criterion type treats one as a hard non-match, full stop.
+	if (criterion.type !== 'nodeKind' && !facts.exists) return false;
 	switch (criterion.type) {
 		case 'clusterFreshness':
 			if (facts.clusterStaleness === null) return false;
@@ -540,8 +558,6 @@ function matchesCriterionValue(facts: NodeGroupFacts, criterion: GroupCriterion)
 		}
 		case 'minLinks':
 			return facts.degree >= criterion.count;
-		case 'existence':
-			return facts.exists === criterion.exists;
 		case 'nodeKind':
 			return facts.nodeKind === criterion.kind;
 	}
@@ -579,7 +595,6 @@ function isCriterionUnconfigured(criterion: GroupCriterion): boolean {
 		case 'semanticCluster':
 		case 'staleDays':
 		case 'minLinks':
-		case 'existence':
 		case 'nodeKind':
 			return false;
 	}
@@ -737,9 +752,16 @@ export function describeCriterion(criterion: GroupCriterion): string {
 			return `${negate ? 'Less than' : 'At least'} ${criterion.days} days ago`;
 		case 'minLinks':
 			return `${negate ? 'Fewer than' : 'At least'} ${criterion.count} links`;
-		case 'existence':
-			return criterion.exists ? 'Existing notes' : 'Nonexistent notes';
-		case 'nodeKind':
-			return criterion.kind === 'tag' ? `${negate ? 'Not a' : 'A'} tag node` : `${negate ? 'Not an' : 'An'} attachment node`;
+		case 'nodeKind': {
+			const NODE_KIND_NOUN: Record<NodeKind, string> = {
+				note: 'normal note',
+				tag: 'tag node',
+				attachment: 'attachment node',
+				nonexistent: 'nonexistent link',
+			};
+			const noun = NODE_KIND_NOUN[criterion.kind];
+			const article = /^[aeiou]/i.test(noun) ? 'an' : 'a';
+			return negate ? `Not ${article} ${noun}` : `${article[0]!.toUpperCase()}${article.slice(1)} ${noun}`;
+		}
 	}
 }
