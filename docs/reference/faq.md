@@ -2,7 +2,11 @@
 
 ## Does Clew change my notes?
 
-No. Filters, Color & size groups, appearance settings, and pinned positions are all Clew's own saved state for the vault - separate from your note content, and never written into your notes' frontmatter or body.
+No. Filters, Color & size groups, saved views, appearance settings, and pinned positions are all Clew's own saved state for the vault - separate from your note content, and never written into your notes' frontmatter or body.
+
+## Does Semantic clustering send my notes anywhere?
+
+No. The first time you add a Semantic cluster criterion, Clew downloads a small (~20MB) text-embedding model once, then runs it entirely on your own device to turn each note's title and content into a numeric vector - nothing about your notes is ever sent to a server. See [Filter's "Understanding Semantic clustering"](../guide/filter#understanding-semantic-clustering) for how it works and why it can take a little while the first time.
 
 ## Nothing shows in the graph
 

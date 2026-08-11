@@ -21,7 +21,7 @@ The graph builds itself from your vault immediately - every note is a node, ever
 
 ## The toolbar
 
-A vertical icon rail sits in the top-right corner of the graph:
+A row of icons sits in the top-left corner of the graph, with any open panel dropping down directly beneath it:
 
 | Icon | Opens |
 | --- | --- |
@@ -29,14 +29,15 @@ A vertical icon rail sits in the top-right corner of the graph:
 | Reset view | Re-fits the camera to the whole graph |
 | Filter | The [Filter](./filter) panel |
 | Color & size | The [Color & size](./color-and-size) panel |
-| Find path | Finds a route through the link graph between two notes |
+| Find path | The [Find path](./find-path) panel - the route through the link graph between two notes |
 | Focus | The [Focus](./focus) panel - one note and its neighborhood, everything else hidden |
 | Timeline | The [Timeline](./timeline) panel |
 | Appearance | The [Appearance](./appearance) panel |
 | Diagnostics | The [Diagnostics](./diagnostics) panel - orphans, broken links, isolated clusters, scattered communities |
+| Views | The [Saved views](./saved-views) panel - save and reapply a whole setup in one click |
 
 Only one panel is ever open at a time - opening one closes whichever other one was open.
 
 ## Everything else is optional
 
-The rest of this guide covers each panel in turn, but none of it is required - the graph is fully usable the moment you open it. Filters and groups you set up are saved per vault and keep applying the next time you open Obsidian.
+The rest of this guide covers each panel in turn, but none of it is required - the graph is fully usable the moment you open it. Filters, groups, and saved views you set up are saved per vault and keep applying the next time you open Obsidian.

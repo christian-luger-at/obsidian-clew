@@ -7,8 +7,10 @@
  * thematically coherent graph deliberately separate from gen-test-vault.mjs,
  * whose small hand-crafted content DEVELOPMENT.md's QA checklist depends on
  * by exact note name; see that script's own docstring for why), plus a
- * couple of pre-configured filters/groups so those panels aren't shown
- * empty, launches Obsidian against it with remote debugging enabled, opens
+ * couple of pre-configured filters/groups (including a real Community
+ * group, so the Color & size panel and the graph overview both show its
+ * cluster-heatmap glow) so those panels aren't shown empty, launches
+ * Obsidian against it with remote debugging enabled, opens
  * the Clew graph view, captures each panel in light and dark themes, and
  * records a short scripted tour as an animated GIF - all into
  * docs/public/screens/.
@@ -79,6 +81,28 @@ function buildVault() {
 			{ id: 'f2', name: 'Ancient world', enabled: false, criteria: [{ type: 'property', key: 'period', operator: 'equals', value: 'Ancient' }] },
 		],
 		nodeGroups: [
+			// First in priority order (not last) - deliberately, so its
+			// matches aren't already claimed by the period-based groups
+			// below it (see nodeGroups.ts's "first enabled group wins"
+			// docstring). communityId: 0 (the largest detected community,
+			// re-ranked fresh every time - see CommunityCriterion's own
+			// docstring) rather than a specific hand-picked number: which
+			// note ends up in which community depends on this vault's exact
+			// link structure, which this script has no way to predict
+			// ahead of running Louvain over it - 0 always resolves to
+			// *some* real community, whichever one happens to be biggest.
+			// sampleLabel stays null (no note picked) - describeCriterion()
+			// falls back to the plain "Community 1" wording, same as a
+			// real first-time user would see before ever using the
+			// note-picker themselves.
+			{
+				id: 'g0',
+				name: 'Community 1',
+				color: '#8b5cf6',
+				sizeMultiplier: null,
+				enabled: true,
+				criteria: [{ type: 'community', communityId: 0, sampleLabel: null }],
+			},
 			{
 				id: 'g1',
 				name: 'Ancient',
