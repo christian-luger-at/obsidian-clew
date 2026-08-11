@@ -10,6 +10,12 @@ export default defineConfig(
 		'spike',
 		'spike-vault',
 		'test-vault',
+		// A ChatGPT-authored, throwaway HTML/JS prototype (group-highlight
+		// treatments, later ported into heatmapLayer.ts) - not part of the
+		// plugin bundle, not covered by tsconfig.json's project service,
+		// same "reference material, not shipped code" reasoning as spike/
+		// spike-vault above.
+		'test-shadow',
 		'.screenshot-vault',
 		'scripts',
 		'docs',
