@@ -1,6 +1,6 @@
 {
 	"name": "obsidian-clew",
-	"version": "1.3.0",
+	"version": "1.4.0",
 	"description": "Understand how your vault actually connects - hub, bridge, and stale-cluster analytics plus smart filters, not just a prettier graph.",
 	"main": "main.js",
 	"type": "module",
