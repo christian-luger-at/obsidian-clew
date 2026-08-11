@@ -23,7 +23,6 @@ import { HeatmapLayer, HeatmapRegion, createHeatmapLayer } from './heatmapLayer'
 import { DEFAULT_FILTER_PRESETS, evaluateFilters, FilterCombineMode, FilterPreset, isAnyFilterEnabled, MAX_FILTER_PRESETS } from './filter';
 import {
 	CentralityBucket,
-	communityColor,
 	CriteriaOwner,
 	DEFAULT_GROUP_COLORS,
 	DEFAULT_NODE_GROUPS,
@@ -289,18 +288,6 @@ interface CriteriaEditorContext {
 	rerenderPanel(): void;
 	/** id of the `folder` criterion's `<datalist>` of suggestions - each panel renders its own (see renderColorAndSizePanel()/renderFilterPanel()) so two floating panels open at once never share a DOM id. */
 	folderDatalistId: string;
-	/**
-	 * "Community-Färbung mit fester Palette" (GitHub backlog item 5) -
-	 * called whenever a `community` criterion is added or its
-	 * `communityId` changes, so the owning object can sync its own display
-	 * color to nodeGroups.ts's communityColor(communityId). Only
-	 * groupCriteriaContext() (a NodeGroup has a `color` to sync) provides
-	 * this - filterCriteriaContext() leaves it absent, since a FilterPreset
-	 * has no color of its own. Still just a suggested/starting color, not a
-	 * lock - the group's own color picker stays live afterward, same as
-	 * any other group.
-	 */
-	onCommunityColorSync?(communityId: number): void;
 }
 
 /** Debounces the expensive part of an appearance slider's onChange (disk write + live re-render/re-layout) - a slider fires on every 'input' tick while dragging, and persisting + restarting ForceAtlas2 on every single tick would both spam disk writes and make the graph flicker instead of tuning smoothly. */
@@ -1622,9 +1609,11 @@ export class GraphPane {
 	 * highlightNodeSet()'s own docstring for why Structural deviation's
 	 * heatmap instead comes from its own per-community Diagnostics toggle).
 	 * A group's own `color` (already a resolved hex string - see
-	 * NodeGroup.color, kept in sync with its criterion's cluster/community id
-	 * by onCommunityColorSync()) is what parseRgbString() resolves here, so
-	 * the glow always matches that group's node fill color exactly.
+	 * NodeGroup.color, a plain user choice, not auto-derived from the
+	 * criterion's cluster/community id - see CommunityCriterion's own
+	 * docstring for why an earlier version that auto-synced it was removed)
+	 * is what parseRgbString() resolves here, so the glow always matches
+	 * that group's node fill color exactly.
 	 */
 	private computeClusterGroupHeatmapRegions(groupByNode: Map<string, NodeGroup>): HeatmapRegion[] {
 		const nodeIdsByGroupId = new Map<string, string[]>();
@@ -5019,9 +5008,6 @@ export class GraphPane {
 			},
 			rerenderPanel: () => this.renderColorAndSizePanel(),
 			folderDatalistId: 'clew-color-size-folders',
-			onCommunityColorSync: (communityId) => {
-				group.color = communityColor(communityId);
-			},
 		};
 	}
 
@@ -5042,31 +5028,6 @@ export class GraphPane {
 				item.setTitle(label).onClick(() => {
 					const criterion = this.blankCriterion(type);
 					ctx.criteria.push(criterion);
-					// Deliberately NOT synced here (an earlier version did -
-					// see git history/DEVELOPMENT.md for the "Community-
-					// Färbung mit fester Palette" feature, GitHub backlog
-					// item 5) - user report: "Wenn ich [...] +add drücke und
-					// Community wähle, dann ist die Farbe rot", every single
-					// time, regardless of which community/cluster gets
-					// picked afterward. Root cause: blankCriterion() always
-					// starts a fresh community/semanticCluster criterion at
-					// communityId/clusterId 0 (the largest, ranked by size -
-					// see blankCriterion()'s own docstring for why 0 is a
-					// reasonable *matching* default), and syncing the
-					// group's color to that here meant every new group
-					// instantly turned communityColor(0) - DEFAULT_GROUP_
-					// COLORS[0], literally red - the moment the criterion
-					// type was picked, overwriting whatever color the group
-					// actually had (its own creation-time cycled default, or
-					// a color the user had already picked), before the user
-					// had chosen a specific community/cluster at all. The
-					// sync still happens (correctly, with the community/
-					// cluster actually picked) once a note is chosen in the
-					// note-picker below - see this method's own 'community'/
-					// 'semanticCluster' cases' onSelect handlers - so a
-					// group's color still ends up "Community-colored" the
-					// moment there's a real community/cluster to color it
-					// by, just not before then.
 					// Opens straight into its expanded controls rather than
 					// showing as an unconfigured chip first - it needs setting
 					// up right away, and there's nothing useful a collapsed
@@ -5488,11 +5449,6 @@ export class GraphPane {
 					criterion.sampleLabel = file.basename;
 					suggest.setValue(file.basename);
 					suggest.close();
-					// Community-Färbung mit fester Palette - keeps the
-					// group's own color in sync with whichever community is
-					// currently picked, see CriteriaEditorContext.
-					// onCommunityColorSync's own docstring.
-					ctx.onCommunityColorSync?.(criterion.communityId);
 					rerender(); // the badge below depends on communityId/sampleLabel
 				});
 
@@ -5556,7 +5512,6 @@ export class GraphPane {
 					criterion.sampleLabel = file.basename;
 					suggest.setValue(file.basename);
 					suggest.close();
-					ctx.onCommunityColorSync?.(criterion.clusterId);
 					rerender(); // the badge below depends on clusterId/sampleLabel
 				});
 

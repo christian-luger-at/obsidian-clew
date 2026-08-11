@@ -1,7 +1,5 @@
 import { describe, it, expect } from 'vitest';
 import {
-	communityColor,
-	DEFAULT_GROUP_COLORS,
 	describeCriterion,
 	evaluateGroups,
 	matchesGroup,
@@ -423,22 +421,6 @@ describe('needsCommunity', () => {
 		expect(needsCommunity([group({ criteria: [{ type: 'community', communityId: 0 }] })])).toBe(true);
 		expect(needsCommunity([group({ enabled: false, criteria: [{ type: 'community', communityId: 0 }] })])).toBe(false);
 		expect(needsCommunity([group({ criteria: [{ type: 'clusterFreshness', bucket: 'stagnant' }] })])).toBe(false);
-	});
-});
-
-describe('communityColor', () => {
-	it('gives every community id a color from DEFAULT_GROUP_COLORS', () => {
-		expect(communityColor(0)).toBe(DEFAULT_GROUP_COLORS[0]);
-		expect(communityColor(1)).toBe(DEFAULT_GROUP_COLORS[1]);
-	});
-
-	it('cycles back to the start once there are more communities than colors', () => {
-		expect(communityColor(DEFAULT_GROUP_COLORS.length)).toBe(DEFAULT_GROUP_COLORS[0]);
-		expect(communityColor(DEFAULT_GROUP_COLORS.length + 1)).toBe(DEFAULT_GROUP_COLORS[1]);
-	});
-
-	it('is deterministic - the same id always gives the same color', () => {
-		expect(communityColor(3)).toBe(communityColor(3));
 	});
 });
 

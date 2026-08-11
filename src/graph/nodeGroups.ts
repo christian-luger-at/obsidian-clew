@@ -214,13 +214,15 @@ export interface IsolatedComponentCriterion {
  * present, 1 the next largest, and so on (raw Louvain community ids are
  * arbitrary and mean nothing on their own; ranking by size is what makes
  * "Community 1" a stable, meaningful label across re-runs of the same
- * graph). `communityColor()` below gives each community id a color from a
- * fixed palette - GraphPane syncs a Color & size group's own `color` to it
- * automatically whenever this criterion's `communityId` is picked/changed
- * (see graphPane.ts's CriteriaEditorContext.onCommunityColorSync), so
- * "color by community" needs no separate coloring mechanism of its own -
- * it's just this criterion plus that one sync hook, still entirely inside
- * the existing group/criteria system (no new UI metaphor).
+ * graph). The owning Color & size group's `color` is a plain, independent
+ * user choice - picking/changing `communityId` here never touches it (an
+ * earlier version auto-synced the group's color to a fixed palette entry
+ * per community id - "Community-Färbung mit fester Palette", GitHub
+ * backlog item 5 - removed after user feedback that it kept silently
+ * overwriting a color the user had already set, most visibly the instant
+ * a fresh criterion was added: every new one started at `communityId: 0`,
+ * so the group's color jumped to that palette's first entry - literally
+ * red - before any real community had even been picked).
  */
 export interface CommunityCriterion {
 	type: 'community';
@@ -411,20 +413,6 @@ export const DEFAULT_GROUP_COLORS = [
 	'#64748b',
 	'#84cc16',
 ];
-
-/**
- * "Community-Färbung mit fester Palette" (GitHub backlog item 5) - every
- * community id maps to the same color every time (cycling through
- * DEFAULT_GROUP_COLORS once there are more communities than colors, same
- * as any other 10+ category value would), so "Community 1 is red" stays
- * true across sessions instead of depending on creation order the way a
- * manually-picked group color would. See CommunityCriterion's own
- * docstring for where this gets applied (GraphPane's
- * onCommunityColorSync).
- */
-export function communityColor(communityId: number): string {
-	return DEFAULT_GROUP_COLORS[communityId % DEFAULT_GROUP_COLORS.length]!;
-}
 
 /**
  * Three ready-made groups, one per non-note `nodeKind` value, all built on
