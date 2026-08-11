@@ -2,7 +2,7 @@ import { App, ColorComponent, DropdownComponent, ExtraButtonComponent, getAllTag
 import Graph from 'graphology';
 import type { Attributes } from 'graphology-types';
 import type Sigma from 'sigma';
-import { createRenderer, createNodeHoverDrawer, createArrowEdgePrograms } from './renderer';
+import { createRenderer, createNodeHoverDrawer, createEdgePrograms } from './renderer';
 import { runLayout, LayoutRun } from './layoutRunner';
 import { buildVaultGraph, resetToDeterministicPositions, sizeNodesByDegree } from './vaultGraph';
 import { runHierarchicalLayout, HIERARCHICAL_LAYOUT_NODE_LIMIT } from './hierarchicalLayout';
@@ -314,7 +314,7 @@ function debounce(fn: () => void, delayMs: number): () => void {
 interface AppearanceSliderSpec {
 	// Excludes edgeColorOverride/nodeColorOverride (non-numeric string |
 	// null settings, their own color-picker UI instead of a slider) and
-	// showEdgeDirection/dissuadeHubs/linLogMode/showTagNodes/
+	// showEdgeDirection/curvedEdges/dissuadeHubs/linLogMode/showTagNodes/
 	// showAttachmentNodes/showGhostNodes (booleans, their own toggle UI
 	// instead) - see renderAppearancePanel()'s "Nodes"/"Edges"/"Physics"
 	// sections.
@@ -323,6 +323,7 @@ interface AppearanceSliderSpec {
 		| 'edgeColorOverride'
 		| 'nodeColorOverride'
 		| 'showEdgeDirection'
+		| 'curvedEdges'
 		| 'dissuadeHubs'
 		| 'linLogMode'
 		| 'showTagNodes'
@@ -1120,7 +1121,7 @@ export class GraphPane {
 			labelDensity: appearance.labelDensity,
 			edgeArrowSize: appearance.edgeArrowSize,
 		});
-		this.applyEdgeDirection();
+		this.applyEdgeStyle();
 		this.setupNodeDragging();
 		this.setupNodeClick();
 		this.setupNodeHover();
@@ -1201,27 +1202,31 @@ export class GraphPane {
 	 * this needs to actually stick as the base attribute every other edge
 	 * reducer (hover, the filter, path highlight, cluster focus) spreads
 	 * `...attr` from and otherwise leaves alone), rather than installing a
-	 * permanent edgeReducer of its own. `undefined` (showEdgeDirection off,
-	 * or GitHub's own default) falls back to sigma's own `defaultEdgeType`
-	 * ('line') - see applyEdgeDefaults() in sigma's source.
+	 * permanent edgeReducer of its own. Combines showEdgeDirection and
+	 * curvedEdges into one of the five types renderer.ts's
+	 * createEdgePrograms() registers - `undefined` (both off, GitHub's own
+	 * default) falls back to sigma's own `defaultEdgeType` ('line') - see
+	 * applyEdgeDefaults() in sigma's source.
 	 */
-	private applyEdgeDirection(): void {
+	private applyEdgeStyle(): void {
 		if (!this.graph) return;
-		const { showEdgeDirection } = this.plugin.settings.appearance;
+		const { showEdgeDirection, curvedEdges } = this.plugin.settings.appearance;
 		this.graph.forEachEdge((edge, attr) => {
-			const type = showEdgeDirection ? (attr.mutual ? 'doubleArrow' : 'arrow') : undefined;
+			let type: string | undefined;
+			if (curvedEdges) type = showEdgeDirection ? (attr.mutual ? 'curvedDoubleArrow' : 'curvedArrow') : 'curved';
+			else type = showEdgeDirection ? (attr.mutual ? 'doubleArrow' : 'arrow') : undefined;
 			this.graph!.setEdgeAttribute(edge, 'type', type);
 		});
 		this.renderer?.refresh();
 	}
 
-	/** Rebuilds the 'arrow'/'doubleArrow' edge programs at the new size and re-registers them - see createArrowEdgePrograms()'s docstring for why sigma's own edgeProgramClasses diffing makes this a live update, not a renderer recreation. */
+	/** Rebuilds every edge program at the new arrow size and re-registers them - see createEdgePrograms()'s docstring for why sigma's own edgeProgramClasses diffing makes this a live update, not a renderer recreation. */
 	private applyEdgeArrowSize(): void {
 		if (!this.renderer) return;
 		const current = this.renderer.getSetting('edgeProgramClasses');
 		this.renderer.setSetting('edgeProgramClasses', {
 			...current,
-			...createArrowEdgePrograms(this.plugin.settings.appearance.edgeArrowSize),
+			...createEdgePrograms(this.plugin.settings.appearance.edgeArrowSize),
 		});
 		this.renderer.refresh();
 	}
@@ -1841,7 +1846,7 @@ export class GraphPane {
 				toggle.setValue(this.plugin.settings.appearance.showEdgeDirection).onChange((value) => {
 					this.plugin.settings.appearance.showEdgeDirection = value;
 					void this.plugin.saveSettings();
-					this.applyEdgeDirection();
+					this.applyEdgeStyle();
 					// Arrow size only makes sense - and is only shown - while
 					// this is on, so the panel needs a full re-render to
 					// show/hide that slider, not just a live-reapply.
@@ -1849,6 +1854,16 @@ export class GraphPane {
 				}),
 			);
 		if (this.plugin.settings.appearance.showEdgeDirection) this.renderAppearanceSlider(EDGE_ARROW_SIZE_SLIDER);
+		new Setting(this.appearancePanelEl)
+			.setName('Curved edges')
+			.setDesc('Bend edges into a gentle curve instead of a straight line. Combines with "Show edge direction" above.')
+			.addToggle((toggle) =>
+				toggle.setValue(this.plugin.settings.appearance.curvedEdges).onChange((value) => {
+					this.plugin.settings.appearance.curvedEdges = value;
+					void this.plugin.saveSettings();
+					this.applyEdgeStyle();
+				}),
+			);
 
 		// Physics's own bespoke section (not the generic APPEARANCE_SLIDER_
 		// GROUPS loop below, unlike its Labels/Radial/Circular/Hierarchical
@@ -1924,7 +1939,7 @@ export class GraphPane {
 					this.applyEdgeColorSetting();
 					this.applyNodeSizeSettings();
 					this.applyLabelSettings();
-					this.applyEdgeDirection();
+					this.applyEdgeStyle();
 					this.applyEdgeArrowSize();
 					this.reapplyActiveLayout();
 					this.renderAppearancePanel();

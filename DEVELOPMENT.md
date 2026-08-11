@@ -1360,6 +1360,29 @@ manual copy step. Then open `test-vault` in Obsidian and check:
   size on zoom" entry above for the real bug that combination caused), and
   the mouse-captor events never fire for one of those, only genuine user
   interaction.
+- **Curved edges** (Appearance → Edges → "Curved edges", `renderer.ts`'s
+  `createEdgePrograms()`) - user question: "Verschiedene Edge paths
+  möglich?", citing sigma v4's five built-in path types
+  (`pathLine`/`pathCurved`/`pathStep`/`pathStepCurved`/`pathCurvedS`).
+  Sigma v4 is still beta-only (`4.0.0-beta.0` at the time of checking, via
+  `npm view sigma versions`) - not something to depend on for a plugin
+  meant to run stably. `@sigma/edge-curve@3.1.0`, however, is a stable,
+  officially-published companion package compatible with the v3.0.3 this
+  plugin already depends on (same family as the already-used
+  `@sigma/node-border`/`@sigma/node-image`) - gives curved edges
+  specifically, not the other four v4 path shapes. Toggle it on - every
+  edge should render as a gentle, uniform curve instead of a straight
+  line (a single fixed curvature, `@sigma/edge-curve`'s own default -
+  Clew's graph never has true parallel/multi-edges between the same two
+  nodes for a per-edge curvature to matter, see `hasEdge()` guards
+  throughout `vaultGraph.ts`). Combines freely with "Show edge direction"
+  right above it - turn both on, an arrowhead should still point at the
+  linked note (or both ends, for a mutual link), just following the curve
+  instead of a straight line; the "Arrow head size" slider (only shown
+  while "Show edge direction" is on) should scale a curved arrowhead the
+  same way it already scales a straight one. Toggle "Curved edges" off
+  again with "Show edge direction" still on - back to straight arrows,
+  not a stuck-curved combination.
 - **Focus/Diagnostics icons mark themselves active while open** (user
   feedback: neither lit up at all, unlike Filter/Color & size/Appearance/
   Views): click "Focus…" - the crosshair icon should get the accent

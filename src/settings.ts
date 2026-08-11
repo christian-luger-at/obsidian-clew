@@ -163,8 +163,21 @@ export interface ClewAppearanceSettings {
 	 * arbitrary single direction.
 	 */
 	showEdgeDirection: boolean;
-	/** Scales sigma's own default arrowhead length/wideness (both, together - see renderer.ts's createArrowEdgePrograms()) - 1 = sigma's own default size. Only visible while showEdgeDirection is on. */
+	/** Scales sigma's own default arrowhead length/wideness (both, together - see renderer.ts's createEdgePrograms()) - 1 = sigma's own default size. Only visible while showEdgeDirection is on. */
 	edgeArrowSize: number;
+	/**
+	 * Draw edges as a fixed, gentle curve instead of a straight line - off
+	 * by default, same reasoning as showEdgeDirection above (a more visually
+	 * busy default most people don't want out of the box). Combines freely
+	 * with showEdgeDirection - a curved edge keeps its arrowhead(s), just
+	 * bent along the curve instead of straight (renderer.ts's
+	 * createEdgePrograms(), via the '@sigma/edge-curve' package's own
+	 * arrowHead option). Every curved edge bends by the same fixed amount
+	 * (that package's own default curvature) - not user-tunable, and not
+	 * per-edge, since Clew's graph never has true parallel/multi-edges
+	 * between the same two nodes for a per-edge curvature to matter.
+	 */
+	curvedEdges: boolean;
 }
 
 export const DEFAULT_APPEARANCE_SETTINGS: ClewAppearanceSettings = {
@@ -189,6 +202,7 @@ export const DEFAULT_APPEARANCE_SETTINGS: ClewAppearanceSettings = {
 	nodeColorOverride: null,
 	showEdgeDirection: false,
 	edgeArrowSize: 1,
+	curvedEdges: false,
 };
 
 /**
