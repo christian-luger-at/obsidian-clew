@@ -217,8 +217,8 @@ function watchZoomForLabelSize(renderer: Sigma): void {
 	update();
 }
 
-/** How long camera 'updated' events must stay quiet before watchMoveForEdgeVisibility() treats the camera as settled - see that function's own docstring. Comfortably longer than sigma's own drag-release refresh delay (0ms) and its default wheel-zoom tween (250ms) or drag inertia (~300ms by default), so it always fires strictly after whichever one is actually running finishes, not mid-tween. */
-const MOVE_SETTLE_MS = 350;
+/** How long the mouse captor must stay quiet before watchMoveForEdgeVisibility() treats the interaction as settled - see that function's own docstring. Comfortably longer than sigma's own drag-release refresh delay (0ms), its default drag-inertia coast (200ms), and its default wheel-zoom tween (250ms), so it always fires strictly after whichever one is actually running finishes, not mid-tween. */
+const MOVE_SETTLE_MS = 400;
 
 /**
  * Backstops sigma's own `hideEdgesOnMove` cleanup for the cases it doesn't
@@ -231,33 +231,45 @@ const MOVE_SETTLE_MS = 350;
  * `setTimeout(…, 0)` tick after release (sigma's own source comment cites
  * https://github.com/jacomyal/sigma.js/issues/1290). That one refresh fires
  * too early to help here: releasing the mouse while still moving kicks off
- * a drag-inertia `camera.animate()` coast (default ~300ms), so
+ * a drag-inertia `camera.animate()` coast (200ms by default), so
  * `camera.isAnimated()` is still true at that 0ms mark - the "fix" refresh
  * just repaints one more still-hidden-edges frame, and nothing schedules
  * another once the coast actually stops. Wheel-zoom (including a trackpad's
  * two-finger pan/pinch, which the browser also reports as `wheel` events)
  * has no equivalent post-move refresh at all.
  *
- * Every camera state change - drag, an inertia tick, a wheel-zoom tween
- * step, a layout switch's animatedReset - fires the camera's own `updated`
- * event regardless of which of the above paths caused it, so debouncing off
- * that (one `refresh()` once updates actually stop for MOVE_SETTLE_MS, reset
- * on every new one) always lands a real repaint against the now-idle camera
- * afterward, without needing to know which internal sigma code path was
- * responsible. Harmless extra work on the already-covered drag-release path
- * (one more `refresh()` a beat after sigma's own) - `refresh()` is cheap
- * relative to a user having just stopped interacting.
+ * Deliberately keyed off the mouse captor's own gesture events (`mouseup`/
+ * `mouseleave`/`wheel`), not the camera's `updated` event - an earlier
+ * version listened to `updated` instead, on the reasoning that every camera
+ * state change (drag, inertia, wheel tween, *and* a programmatic
+ * `animatedReset()`) fires it regardless of cause. That reasoning was
+ * correct but too broad in practice: `updated` also fires for every
+ * *programmatic* camera change, including GraphPane's own
+ * `resetCameraAndRefresh()` - which setForceLayout() already calls on a
+ * repeating 150ms interval for several seconds while ForceAtlas2 settles,
+ * specifically to keep the camera tracking the growing layout live (see
+ * its own docstring). Debouncing a `refresh()` off the same `updated`
+ * stream that mechanism was busy driving at high frequency caused a real
+ * crash switching Radial → Force ("Uncaught RangeError: Maximum call stack
+ * size exceeded") - user-reported. Scoped to the mouse captor's own
+ * gesture events instead: these only fire for genuine user interaction
+ * (an actual mouse drag/release or wheel tick), never for a layout switch's
+ * own camera resets, so this can no longer interact with
+ * `resetCameraAndRefresh()`'s already-established refresh cadence at all.
  */
 function watchMoveForEdgeVisibility(renderer: Sigma): void {
-	const camera = renderer.getCamera();
+	const mouseCaptor = renderer.getMouseCaptor();
 	let timeout: number | null = null;
-	camera.on('updated', () => {
+	const scheduleRefresh = (): void => {
 		if (timeout !== null) window.clearTimeout(timeout);
 		timeout = window.setTimeout(() => {
 			timeout = null;
 			renderer.refresh();
 		}, MOVE_SETTLE_MS);
-	});
+	};
+	mouseCaptor.on('mouseup', scheduleRefresh);
+	mouseCaptor.on('mouseleave', scheduleRefresh);
+	mouseCaptor.on('wheel', scheduleRefresh);
 }
 
 export function createRenderer(graph: Graph, container: HTMLElement, options: CreateRendererOptions = {}): Sigma {

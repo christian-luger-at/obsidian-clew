@@ -1295,10 +1295,23 @@ manual copy step. Then open `test-vault` in Obsidian and check:
   within roughly a third of a second of the coast actually stopping, not
   stay hidden. Scroll-wheel zoom in/out repeatedly, then stop - same check.
   If you have a trackpad, a two-finger pan/pinch on the canvas - same
-  check. Switching layouts (Layout dialog) and dragging a node in Force
-  layout should still both work exactly as before (this only adds one more
-  debounced `refresh()` after camera movement settles, it doesn't touch
-  either of those existing paths).
+  check. **Regression (fixed in the same round)**: an earlier version of
+  this keyed the debounce off the camera's own `updated` event, reasoning
+  every camera change fires it regardless of cause - true, but too broad:
+  `updated` also fires for setForceLayout()'s own repeating 150ms
+  `resetCameraAndRefresh()` interval (which keeps the camera tracking
+  ForceAtlas2 as it settles), and debouncing a `refresh()` off that same
+  high-frequency stream crashed switching Radial → Force with "Uncaught
+  RangeError: Maximum call stack size exceeded" - user-reported, graph left
+  unusable until the pane was reopened. Fixed by keying off the mouse
+  captor's own gesture events (`mouseup`/`mouseleave`/`wheel`) instead -
+  these never fire for a programmatic camera reset, only genuine user
+  interaction, so this can no longer interact with that interval at all.
+  Switch Radial → Force (and every other layout pair) a few times in a
+  row, including while ForceAtlas2 is still visibly settling - no console
+  error, graph stays responsive. Switching layouts and dragging a node in
+  Force layout should otherwise work exactly as before this feature
+  existed.
 - **Focus/Diagnostics icons mark themselves active while open** (user
   feedback: neither lit up at all, unlike Filter/Color & size/Appearance/
   Views): click "Focus…" - the crosshair icon should get the accent
