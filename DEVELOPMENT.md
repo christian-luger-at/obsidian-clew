@@ -1415,6 +1415,59 @@ manual copy step. Then open `test-vault` in Obsidian and check:
     path style only changes which WebGL program draws an edge's *shape*,
     every other edge-level attribute (color, highlight state, hidden) is
     untouched by it.
+- **Isolated-clusters heatmap overlay** (`heatmapLayer.ts`'s `HeatmapLayer`,
+  wired in `graphPane.ts`'s `highlightNodeSet()`) - user request, alongside a
+  ChatGPT-authored HTML prototype (`test-shadow/index.html`, its "heatmap"
+  variant) demonstrating several possible group-highlight treatments: "die
+  betroffenen Knoten [sollen] mit einer Dichtekarte / Heatmap ausgestattet
+  werden, um die visuelle Zusammengehörigkeit zu zeigen". Before this, Show
+  in graph on Diagnostics → Isolated clusters only recolored the cluster's
+  own nodes/edges (`primaryPathColor`) and dimmed everything else
+  (`highlightNodeSet()`, shared with Structural deviation's own Show in
+  graph) - readable member-by-member, but didn't visually read as *one
+  group*. Added a soft Gaussian density field behind the graph instead,
+  ported from the prototype's `field()`/heatmap-variant draw loop: a coarse
+  grid (4px step) samples the sum of `exp(-distance² / (2·74²))` from every
+  highlighted node's *viewport*-space position (`renderer.graphToViewport()`
+  - not graph-space, so the field stays correctly aligned as the camera
+  pans/zooms/rotates) and fills a soft square per sampled point, color from
+  the theme's `primaryPathColor` (`theme.ts`'s `parseRgbString()`, now
+  exported, resolves it to an `[r,g,b]` triple a 2D canvas `rgba()` fill
+  needs). Own `<canvas>` (`.clew-heatmap-layer` in styles.css), `prepend()`ed
+  into `graphContainerEl` so it sits behind every canvas Sigma itself
+  manages (background/edges/nodes/labels/hovers/mouse, all
+  `position: absolute; inset: 0`, none with an explicit z-index - DOM order
+  decides among ties, backed up by an explicit `z-index: 0` in CSS too),
+  `pointer-events: none` so it never steals clicks/drags meant for the graph
+  above it. Redrawn on the camera's `updated` event, Sigma's own
+  `afterRender` event, and a `ResizeObserver` on the container - same
+  "redraw on every input that could have moved something" trio the prototype
+  used. Recreated alongside `this.renderer` on every `setFiles()` (a fresh
+  Sigma instance needs its own camera/afterRender listeners; the old
+  layer's are torn down first via `destroy()`, same place `this.renderer`
+  itself gets killed) and torn down in `destroy()` (GraphPane's own
+  lifecycle end). Deliberately scoped to Isolated clusters only, not
+  Structural deviation (`highlightNodeSet()`'s new `options?.heatmap` flag,
+  only `toggleClusterHighlight()` passes `true`) - a scattered community's
+  entire point is that its notes sit far apart on the canvas, where a
+  density field would mostly just look like several disconnected smudges
+  instead of the "one cohesive blob" effect it's meant for; an isolated
+  cluster, by construction, is a tightly-linked pocket ForceAtlas2 already
+  tends to draw close together, exactly where the effect reads well. For
+  manual QA: open Diagnostics on a vault with at least one isolated cluster
+  (or fabricate one - a couple of notes linking only each other, cut off
+  from everything else), click "Show in graph" on it - a soft, blurred glow
+  should appear behind the cluster's nodes, roughly the theme's accent
+  color, in addition to the existing recolor/dim treatment; pan and zoom the
+  canvas while it's showing - the glow should track the nodes exactly, never
+  lag or drift; click "Show in graph" again (or on a different cluster row)
+  to toggle it off/switch - the glow should disappear/move cleanly, no stale
+  patch left behind; open Structural deviation instead and click its own
+  "Show in graph" - recolor/dim only, deliberately no heatmap glow, per the
+  scoping above; switch layouts (Force/Radial/Circular) and refresh the
+  vault (edit/create/delete a note) while a cluster's heatmap is showing -
+  no console error, the overlay clears or updates with the rebuilt graph
+  rather than pointing at stale/removed nodes.
 - **Focus/Diagnostics icons mark themselves active while open** (user
   feedback: neither lit up at all, unlike Filter/Color & size/Appearance/
   Views): click "Focus…" - the crosshair icon should get the accent

@@ -36,6 +36,17 @@
 	inset: 0;
 }
 
+/* Isolated-clusters density overlay (heatmapLayer.ts) - explicit z-index:0
+   backs up the DOM-order trick (prepend()) that puts this canvas behind
+   every canvas Sigma itself manages; pointer-events:none so it never
+   intercepts clicks/drags meant for the graph above it. */
+.clew-heatmap-layer {
+	position: absolute;
+	inset: 0;
+	z-index: 0;
+	pointer-events: none;
+}
+
 /* Centered over the canvas (see GraphPane's showEmptyState()) - a low
    z-index (below .clew-topbar's 10) since it only ever appears when the
    canvas itself has nothing drawn on it, so it never needs to compete

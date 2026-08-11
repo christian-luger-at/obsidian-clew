@@ -73,7 +73,7 @@ let colorProbeContext: CanvasRenderingContext2D | null = null;
  * named colors/anything CSS-valid, present or future, with no further
  * cases to special-case here.
  */
-function parseRgbString(value: string): [number, number, number] | null {
+export function parseRgbString(value: string): [number, number, number] | null {
 	if (!colorProbeContext) {
 		// Obsidian's global createEl() (not document.createElement()) - this
 		// canvas is a permanent, detached, module-level utility buffer,

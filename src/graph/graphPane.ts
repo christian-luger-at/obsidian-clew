@@ -18,7 +18,8 @@ import { RadialLayoutModal } from './radialLayoutModal';
 import { LayoutMode, LAYOUT_MODE_LABELS, LAYOUT_OPTIONS } from './layoutModal';
 import { ConfirmModal } from './confirmModal';
 import { communityHomogeneity, computeCommunityStats, detectCommunities, staleness } from './stagnation';
-import { readThemeColors, ThemeColors, blendToward } from './theme';
+import { readThemeColors, ThemeColors, blendToward, parseRgbString } from './theme';
+import { HeatmapLayer, createHeatmapLayer } from './heatmapLayer';
 import { DEFAULT_FILTER_PRESETS, evaluateFilters, FilterCombineMode, FilterPreset, isAnyFilterEnabled, MAX_FILTER_PRESETS } from './filter';
 import {
 	CentralityBucket,
@@ -725,6 +726,8 @@ export class GraphPane {
 	private diagnosticsClusterVisibleCount = DIAGNOSTICS_PAGE_SIZE;
 	private diagnosticsDeviationVisibleCount = DIAGNOSTICS_PAGE_SIZE;
 	private renderer: Sigma | null = null;
+	/** Density-field overlay for the Isolated-clusters highlight (toggleClusterHighlight()) - see heatmapLayer.ts's own docstring. Tied to this.renderer's lifecycle: (re)created alongside it in setFiles(), never reused across a renderer rebuild since it holds that renderer's camera/afterRender listeners. */
+	private heatmapLayer: HeatmapLayer | null = null;
 	private layout: LayoutRun | null = null;
 	private graph: Graph | null = null;
 	private files: TFile[] = [];
@@ -1088,6 +1091,8 @@ export class GraphPane {
 		// never-fully-explained "graph not rendered after plugin reload"
 		// report).
 		this.renderer = null;
+		this.heatmapLayer?.destroy();
+		this.heatmapLayer = null;
 		this.graphContainerEl.empty();
 		// Isn't rebuilt from the new file set automatically - a note deleted
 		// (or filtered out) mid-result would otherwise leave stale entries
@@ -1144,6 +1149,7 @@ export class GraphPane {
 			labelDensity: appearance.labelDensity,
 			edgeArrowSize: appearance.edgeArrowSize,
 		});
+		this.heatmapLayer = createHeatmapLayer(this.graphContainerEl, this.renderer);
 		this.applyEdgeStyle();
 		this.setupNodeDragging();
 		this.setupNodeClick();
@@ -1503,13 +1509,31 @@ export class GraphPane {
 		} else {
 			this.highlightedDeviationIndex = null;
 			this.highlightedClusterIndex = index;
-			this.highlightNodeSet(new Set(cluster));
+			this.highlightNodeSet(new Set(cluster), { heatmap: true });
 		}
 		this.renderDiagnosticsPanel();
 	}
 
-	/** Same dim treatment as applyHighlight() (Find-path), generalized from "nodes along one path" to "any given node set" - an isolated cluster (or, since GitHub issue #5, a scattered Structural-deviation community) has no meaningful path/edge direction to draw, just membership. */
-	private highlightNodeSet(nodes: Set<string>): void {
+	/**
+	 * Same dim treatment as applyHighlight() (Find-path), generalized from
+	 * "nodes along one path" to "any given node set" - an isolated cluster
+	 * (or, since GitHub issue #5, a scattered Structural-deviation
+	 * community) has no meaningful path/edge direction to draw, just
+	 * membership.
+	 *
+	 * `heatmap: true` additionally paints a soft density field behind the
+	 * set (heatmapLayer.ts) - user request: "die betroffenen Knoten [sollen]
+	 * mit einer Dichtekarte / Heatmap ausgestattet werden, um die visuelle
+	 * Zusammengehörigkeit zu zeigen", scoped to Isolated clusters only
+	 * (toggleClusterHighlight() above), not Structural deviation
+	 * (toggleDeviationHighlight() below still passes nothing, i.e. the
+	 * flat-recolor-only treatment this method always had) - a scattered
+	 * community's whole *point* is that its notes sit far apart on the
+	 * canvas, where a Gaussian density field would mostly just look like
+	 * several disconnected smudges rather than the "one cohesive blob"
+	 * effect it's meant for.
+	 */
+	private highlightNodeSet(nodes: Set<string>, options?: { heatmap?: boolean }): void {
 		if (!this.renderer || !this.graph) return;
 		const graph = this.graph;
 
@@ -1523,13 +1547,24 @@ export class GraphPane {
 			if (nodes.has(source) && nodes.has(target)) return { ...attr, color: this.theme.primaryPathColor, size: 3, zIndex: 2 };
 			return { ...attr, color: this.theme.dimEdgeColor };
 		});
+
+		if (options?.heatmap) {
+			// Falls back to a fixed blue if the theme's primaryPathColor
+			// somehow isn't canvas-parseable (see parseRgbString()'s own
+			// docstring for when that can happen) - same fallback triple the
+			// prototype's own hardcoded BLUE used, so a heatmap always draws
+			// something rather than silently rendering as nothing.
+			const rgb = parseRgbString(this.theme.primaryPathColor) ?? [37, 99, 235];
+			this.heatmapLayer?.setNodes(Array.from(nodes), rgb);
+		}
 	}
 
-	/** Clears whichever of an Isolated-clusters/Structural-deviation highlight is set (toggleClusterHighlight()/toggleDeviationHighlight()) - same "just null both reducers" mechanism as Find-path's clearPathReducers(), with the same caveat: an enabled Filter/Color & size group underneath doesn't reappear on its own, since closing/superseding a highlight has never restored one (see clearHighlight()'s own docstring). Both indices are cleared together, not just whichever one was actually set - only one is ever non-null at a time (each toggle*Highlight() method clears the other's index before setting its own), so this stays a single "reset to nothing highlighted" call regardless of which kind was active. */
+	/** Clears whichever of an Isolated-clusters/Structural-deviation highlight is set (toggleClusterHighlight()/toggleDeviationHighlight()) - same "just null both reducers" mechanism as Find-path's clearPathReducers(), with the same caveat: an enabled Filter/Color & size group underneath doesn't reappear on its own, since closing/superseding a highlight has never restored one (see clearHighlight()'s own docstring). Both indices are cleared together, not just whichever one was actually set - only one is ever non-null at a time (each toggle*Highlight() method clears the other's index before setting its own), so this stays a single "reset to nothing highlighted" call regardless of which kind was active. Also clears the Isolated-clusters heatmap layer, unconditionally - a no-op when Structural deviation (which never sets it) was the one active. */
 	private clearClusterHighlight(): void {
 		if (this.highlightedClusterIndex === null && this.highlightedDeviationIndex === null) return;
 		this.highlightedClusterIndex = null;
 		this.highlightedDeviationIndex = null;
+		this.heatmapLayer?.setNodes(null, [37, 99, 235]);
 		this.renderer?.setSetting('nodeReducer', null);
 		this.renderer?.setSetting('edgeReducer', null);
 	}
@@ -2355,6 +2390,7 @@ export class GraphPane {
 		this.stopTimelinePlayback();
 		this.stopTimelineFadeTicker();
 		this.layout?.stop();
+		this.heatmapLayer?.destroy();
 		this.renderer?.kill();
 		if (GraphPane.active === this) GraphPane.active = null;
 	}
