@@ -1360,29 +1360,61 @@ manual copy step. Then open `test-vault` in Obsidian and check:
   size on zoom" entry above for the real bug that combination caused), and
   the mouse-captor events never fire for one of those, only genuine user
   interaction.
-- **Curved edges** (Appearance → Edges → "Curved edges", `renderer.ts`'s
-  `createEdgePrograms()`) - user question: "Verschiedene Edge paths
-  möglich?", citing sigma v4's five built-in path types
-  (`pathLine`/`pathCurved`/`pathStep`/`pathStepCurved`/`pathCurvedS`).
-  Sigma v4 is still beta-only (`4.0.0-beta.0` at the time of checking, via
-  `npm view sigma versions`) - not something to depend on for a plugin
-  meant to run stably. `@sigma/edge-curve@3.1.0`, however, is a stable,
-  officially-published companion package compatible with the v3.0.3 this
-  plugin already depends on (same family as the already-used
-  `@sigma/node-border`/`@sigma/node-image`) - gives curved edges
-  specifically, not the other four v4 path shapes. Toggle it on - every
-  edge should render as a gentle, uniform curve instead of a straight
-  line (a single fixed curvature, `@sigma/edge-curve`'s own default -
-  Clew's graph never has true parallel/multi-edges between the same two
-  nodes for a per-edge curvature to matter, see `hasEdge()` guards
-  throughout `vaultGraph.ts`). Combines freely with "Show edge direction"
-  right above it - turn both on, an arrowhead should still point at the
-  linked note (or both ends, for a mutual link), just following the curve
-  instead of a straight line; the "Arrow head size" slider (only shown
-  while "Show edge direction" is on) should scale a curved arrowhead the
-  same way it already scales a straight one. Toggle "Curved edges" off
-  again with "Show edge direction" still on - back to straight arrows,
-  not a stuck-curved combination.
+- **Edge path style** (Appearance → Edges → "Edge path" dropdown,
+  `renderer.ts`'s `createEdgePrograms()`) - user question: "Verschiedene
+  Edge paths möglich?", citing sigma v4's five built-in path types
+  (`pathLine`/`pathCurved`/`pathStep`/`pathStepCurved`/`pathCurvedS`), then
+  "Berücksichtige alle" once shown the three-way straight/curved/S-curved
+  breakdown below. Sigma v4 (and this plugin's two other sigma-family
+  dependencies, `@sigma/node-border`/`@sigma/node-image`, used for
+  basically every node) is still alpha/beta-only (checked via `npm view
+  sigma versions`/`npm view @sigma/node-border versions` at the time:
+  sigma itself `4.0.0-beta.0`, the node packages only as far as
+  `4.0.0-alpha.3`) - not a foundation to build a shipped plugin's whole
+  node/edge rendering on. Settled on three of the five, after laying out
+  that risk explicitly and asking: **Straight line** (unchanged default),
+  **Curved** (`@sigma/edge-curve@3.1.0`, a stable, officially-published
+  companion package compatible with the v3.0.3 this plugin already
+  depends on - a single gentle bend, fixed curvature, `@sigma/edge-curve`'s
+  own default), and **S-curved** (`edgeCurvedSProgram.ts`, this plugin's
+  *own* hand-written WebGL edge program - no such package exists even for
+  sigma v4, whose own `pathCurvedS` is a genuine cubic Bézier with no
+  simple closed-form point-to-curve distance the way a quadratic Bézier
+  has; sidestepped by splitting each edge at its own geometric midpoint
+  and drawing *two* ordinary quadratic-Bézier halves bulging opposite
+  ways - reuses `@sigma/edge-curve`'s own, already-correct quadratic
+  distance math unmodified for both halves, see that file's own docstring
+  for the one visible tradeoff: a slight tangent kink at the midpoint, not
+  a true cubic's smooth S). The two step variants (`pathStep`/
+  `pathStepCurved`, right-angle routing) were explicitly left out - user
+  decision. Skipped Step/Step-curved entirely (not built at all - if this
+  scope changes, it needs its own new program the same way `curvedS` did,
+  right-angle routing is a different technique from either quadratic
+  Bézier half).
+  - Switch the dropdown through all three with "Show edge direction" off -
+    Straight: unchanged straight lines. Curved: every edge bends into one
+    gentle, uniform curve. S-curved: every edge visibly bends one way then
+    the other along its length (not just a single bulge) - the defining
+    difference from Curved.
+  - Turn "Show edge direction" on for each of the three - an arrowhead (or
+    two, for a mutual link) should still point at the linked note,
+    following whichever path shape is selected instead of always being a
+    straight-line arrow; the "Arrow size" slider (only shown while "Show
+    edge direction" is on) should scale the arrowhead the same way
+    regardless of which of the three is selected.
+  - Switch away from S-curved back to Straight or Curved - back to that
+    shape cleanly, not a stuck S-curve or a rendering error (S-curved is
+    genuinely new WebGL code, unlike Curved which reuses an existing,
+    already-proven package - this is the one path worth double-checking
+    doesn't leave anything visually broken behind when switched away
+    from).
+  - Hover/click a note, run Find-path, open the Diagnostics/Focus panels -
+    with each of the three edge path styles active, confirm none of those
+    (which all recolor/highlight specific edges via the shared edgeReducer
+    pipeline) look broken or misaligned regardless of path shape - the
+    path style only changes which WebGL program draws an edge's *shape*,
+    every other edge-level attribute (color, highlight state, hidden) is
+    untouched by it.
 - **Focus/Diagnostics icons mark themselves active while open** (user
   feedback: neither lit up at all, unlike Filter/Color & size/Appearance/
   Views): click "Focus…" - the crosshair icon should get the accent
