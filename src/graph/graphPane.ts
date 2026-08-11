@@ -317,8 +317,9 @@ interface AppearanceSliderSpec {
 	// null settings, their own color-picker UI instead of a slider),
 	// edgePathStyle (a 3-way dropdown, not a slider), and showEdgeDirection/
 	// dissuadeHubs/linLogMode/showTagNodes/showAttachmentNodes/
-	// showGhostNodes (booleans, their own toggle UI instead) - see
-	// renderAppearancePanel()'s "Nodes"/"Edges"/"Physics" sections.
+	// showGhostNodes/showClusterHeatmap (booleans, their own toggle UI
+	// instead) - see renderAppearancePanel()'s "Nodes"/"Edges"/"Physics"
+	// sections.
 	key: Exclude<
 		keyof ClewAppearanceSettings,
 		| 'edgeColorOverride'
@@ -330,6 +331,7 @@ interface AppearanceSliderSpec {
 		| 'showTagNodes'
 		| 'showAttachmentNodes'
 		| 'showGhostNodes'
+		| 'showClusterHeatmap'
 	>;
 	name: string;
 	desc: string;
@@ -1575,8 +1577,26 @@ export class GraphPane {
 		this.renderer?.setSetting('edgeReducer', null);
 	}
 
-	/** Composes clusterHighlightRegion (the Diagnostics toggle, at most one) with clusterGroupHeatmapRegions (Community/Semantic clustering's own, any number) into whatever this.heatmapLayer actually draws - the single call site both kinds of region change should go through, so neither ever clobbers the other. */
+	/**
+	 * Composes clusterHighlightRegion (the Diagnostics toggle, at most one)
+	 * with clusterGroupHeatmapRegions (Community/Semantic clustering's own,
+	 * any number) into whatever this.heatmapLayer actually draws - the
+	 * single call site both kinds of region change should go through, so
+	 * neither ever clobbers the other. Draws nothing at all while
+	 * ClewAppearanceSettings.showClusterHeatmap is off (user request: "Bau
+	 * ein Setting ein, so dass der Hintergrund deaktiviert werden kann") -
+	 * checked here, in the one shared call site, rather than in every
+	 * region-computing caller, so the setting can't be missed by a future
+	 * one. clusterHighlightRegion/clusterGroupHeatmapRegions themselves keep
+	 * being tracked even while off, so flipping the setting back on shows
+	 * whatever was already highlighted/enabled without needing to
+	 * re-trigger it.
+	 */
 	private updateHeatmapRegions(): void {
+		if (!this.plugin.settings.appearance.showClusterHeatmap) {
+			this.heatmapLayer?.setRegions([]);
+			return;
+		}
 		const regions = this.clusterHighlightRegion ? [this.clusterHighlightRegion, ...this.clusterGroupHeatmapRegions] : this.clusterGroupHeatmapRegions;
 		this.heatmapLayer?.setRegions(regions);
 	}
@@ -1977,6 +1997,18 @@ export class GraphPane {
 					this.applyEdgeStyle();
 				});
 			});
+		new Setting(this.appearancePanelEl)
+			.setName('Cluster heatmap')
+			.setDesc(
+				'Soft glow behind Isolated clusters/Structural deviation (Diagnostics → Show in graph) and enabled Community/Semantic clustering groups (Color & size).',
+			)
+			.addToggle((toggle) =>
+				toggle.setValue(this.plugin.settings.appearance.showClusterHeatmap).onChange((value) => {
+					this.plugin.settings.appearance.showClusterHeatmap = value;
+					void this.plugin.saveSettings();
+					this.updateHeatmapRegions();
+				}),
+			);
 
 		// Physics's own bespoke section (not the generic APPEARANCE_SLIDER_
 		// GROUPS loop below, unlike its Labels/Radial/Circular/Hierarchical
@@ -2054,6 +2086,7 @@ export class GraphPane {
 					this.applyLabelSettings();
 					this.applyEdgeStyle();
 					this.applyEdgeArrowSize();
+					this.updateHeatmapRegions();
 					this.reapplyActiveLayout();
 					this.renderAppearancePanel();
 				}),

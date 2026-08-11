@@ -1526,6 +1526,27 @@ manual copy step. Then open `test-vault` in Obsidian and check:
     (edit/create/delete a note) while any of these are showing - no console
     error, every overlay clears or updates with the rebuilt graph rather
     than pointing at stale/removed nodes.
+  - **"Cluster heatmap" toggle** (Appearance panel, `ClewAppearanceSettings.
+    showClusterHeatmap`, on by default) - user request: "Bau ein Setting
+    ein, so dass der Hintergrund deaktiviert werden kann". A single on/off
+    switch for the whole overlay, checked once inside
+    `updateHeatmapRegions()` (the one shared call site every region change
+    already goes through) rather than in each region-computing caller -
+    turning it off calls `heatmapLayer.setRegions([])` regardless of what
+    `clusterHighlightRegion`/`clusterGroupHeatmapRegions` currently hold,
+    without touching either of those fields, so turning it back on
+    immediately shows whatever was already highlighted/enabled rather than
+    needing to re-trigger it. Deliberately doesn't touch the *other* half of
+    the same highlights (Isolated clusters/Structural deviation's own
+    recolor/dim `nodeReducer`/`edgeReducer`, Community/Semantic clustering's
+    ordinary node coloring) - only the glow layer. For manual QA: with an
+    isolated cluster's "Show in graph" active and/or a community/semantic-
+    cluster group enabled (glows visible per the checks above), open
+    Appearance and turn "Cluster heatmap" off - every glow should disappear
+    immediately, while the recolor/dim and node coloring underneath stay
+    exactly as they were; turn it back on - the same glow(s) should
+    reappear without needing to re-click "Show in graph" or re-toggle any
+    group. "Reset to defaults" should turn it back on if it had been off.
 - **Focus/Diagnostics icons mark themselves active while open** (user
   feedback: neither lit up at all, unlike Filter/Color & size/Appearance/
   Views): click "Focus…" - the crosshair icon should get the accent
