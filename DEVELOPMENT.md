@@ -1415,6 +1415,138 @@ manual copy step. Then open `test-vault` in Obsidian and check:
     path style only changes which WebGL program draws an edge's *shape*,
     every other edge-level attribute (color, highlight state, hidden) is
     untouched by it.
+- **Heatmap overlay for cluster-style groupings** (`heatmapLayer.ts`'s
+  `HeatmapLayer`, wired in `graphPane.ts`) - user request, alongside a
+  ChatGPT-authored HTML prototype (`test-shadow/index.html`, its "heatmap"
+  variant) demonstrating several possible group-highlight treatments: "die
+  betroffenen Knoten [sollen] mit einer Dichtekarte / Heatmap ausgestattet
+  werden, um die visuelle Zusammengehörigkeit zu zeigen" - first built for
+  Diagnostics → Isolated clusters only, then extended twice more (same
+  request, worded "Mach das gleiche mit Semantisches Clustering, Structural
+  deviation", then "und für die Community-Funktion auch") to Structural
+  deviation's own Show-in-graph toggle and to Semantic clustering's *and*
+  Community's Color & size groups. Before this, Show in graph on Isolated
+  clusters/Structural deviation only recolored the group's own nodes/edges
+  (`primaryPathColor`) and dimmed everything else (`highlightNodeSet()`),
+  and Community/Semantic clustering only colored their matching nodes flat
+  via the ordinary Color & size pipeline - all four were readable
+  member-by-member, but didn't visually read as *one group*. Added a soft
+  Gaussian density field behind the graph instead, ported from the
+  prototype's `field()`/heatmap-variant draw loop: a coarse grid (4px step)
+  samples the sum of `exp(-distance² / (2·74²))` from every region's
+  member nodes' *viewport*-space position (`renderer.graphToViewport()` -
+  not graph-space, so the field stays correctly aligned as the camera
+  pans/zooms/rotates) and fills a soft square per sampled point.
+  `heatmapLayer.ts`'s `HeatmapRegion` generalizes this to any number of
+  independently-colored node sets at once (needed for Community/Semantic
+  clustering - several enabled groups, each its own cluster/community and
+  own color, can be visible simultaneously), each region drawn as its own
+  full grid pass with its own color rather than one shared multi-color
+  field.
+  - **Isolated clusters/Structural deviation** (`highlightNodeSet()`,
+    shared by both `toggleClusterHighlight()` and
+    `toggleDeviationHighlight()`): one region, `theme.primaryPathColor`
+    (`theme.ts`'s `parseRgbString()`, now exported, resolves it to an
+    `[r,g,b]` triple a 2D canvas `rgba()` fill needs), tracked in
+    `clusterHighlightRegion` - set on a Show-in-graph click, cleared by
+    `clearClusterHighlight()` (both toggles' shared "un-highlight" path).
+  - **Community/Semantic clustering** (`computeClusterGroupHeatmapRegions()`,
+    called from `paintVisualEncoding()`): one region per *enabled* Color &
+    size group whose criteria include `community` or `semanticCluster`,
+    reusing the same `groupByNode` map (`evaluateGroups()`)
+    `paintVisualEncoding()` already computes for ordinary node coloring - a
+    note in the overlap of two such groups gets a heatmap glow matching
+    whichever group's color actually painted it (first-enabled-group-wins,
+    same precedence as the coloring itself), not both. Each region's color
+    is that group's own `color` field, so the glow always matches the
+    group's node fill exactly. Continuous, not toggle-based (recomputed on
+    every repaint) - neither criterion has a Diagnostics "Show in graph"
+    list of its own; a group being enabled in the Color & size panel already
+    means the user asked to see it. Deliberately does NOT extend to
+    `structuralDeviation` groups (a different criterion from the one behind
+    Diagnostics → Structural deviation's own per-community list above,
+    despite the similar name) - its single boolean bucket lumps every
+    scattered community together regardless of which one, so a heatmap over
+    *that* would just be several unrelated smudges; `community` and
+    `semanticCluster` both pin one specific cluster/community id per group
+    instead, meaningfully colocated by construction.
+  - `updateHeatmapRegions()` composes `clusterHighlightRegion` (at most one,
+    the Diagnostics toggle) with `clusterGroupHeatmapRegions` (any number,
+    from Color & size) into whatever `this.heatmapLayer` actually draws -
+    the single call site both kinds of region change go through, so neither
+    clobbers the other (e.g. Show-in-graph'ing an isolated cluster while a
+    community/semantic-cluster group is also enabled shows both glows at
+    once, not just the most recently set one).
+  - Own `<canvas>` (`.clew-heatmap-layer` in styles.css), `prepend()`ed into
+    `graphContainerEl` so it sits behind every canvas Sigma itself manages
+    (background/edges/nodes/labels/hovers/mouse, all
+    `position: absolute; inset: 0`, none with an explicit z-index - DOM
+    order decides among ties, backed up by an explicit `z-index: 0` in CSS
+    too), `pointer-events: none` so it never steals clicks/drags meant for
+    the graph above it. Redrawn on the camera's `updated` event, Sigma's own
+    `afterRender` event, and a `ResizeObserver` on the container - same
+    "redraw on every input that could have moved something" trio the
+    prototype used. Recreated alongside `this.renderer` on every
+    `setFiles()` (a fresh Sigma instance needs its own camera/afterRender
+    listeners; the old layer's are torn down first via `destroy()`, same
+    place `this.renderer` itself gets killed - `paintVisualEncoding()` runs
+    *before* the new layer exists during `setFiles()`, so its
+    `updateHeatmapRegions()` call there is a no-op; `setFiles()` explicitly
+    calls it again right after creating the fresh layer to flush the
+    already-computed `clusterGroupHeatmapRegions`) and torn down in
+    `destroy()` (GraphPane's own lifecycle end).
+  - For manual QA: open Diagnostics on a vault with at least one isolated
+    cluster (or fabricate one - a couple of notes linking only each other,
+    cut off from everything else), click "Show in graph" on it - a soft,
+    blurred glow should appear behind the cluster's nodes, roughly the
+    theme's accent color, in addition to the existing recolor/dim treatment;
+    pan and zoom the canvas while it's showing - the glow should track the
+    nodes exactly, never lag or drift; click "Show in graph" again (or on a
+    different cluster row) to toggle it off/switch - the glow should
+    disappear/move cleanly, no stale patch left behind. Open Structural
+    deviation instead and click its own "Show in graph" - same glow
+    treatment now, not just recolor/dim. Open Color & size, add a group with
+    a `community` criterion, enable it - a glow should appear continuously
+    (no toggle needed) behind that community's nodes in the group's own
+    color; add a group with a `semanticCluster` criterion instead (wait for
+    embeddings to finish computing - Diagnostics/Color & size panel shows the
+    loading state) - same continuous glow treatment; enable both a
+    `community` and a `semanticCluster` group at once, plus a second of
+    either kind for a different cluster/community - every enabled group's
+    glow should be visible simultaneously, each its own color; disable one
+    group - only its glow disappears, the others stay. Add a group with a
+    `structuralDeviation` criterion and enable it - deliberately no
+    continuous glow for that one (see the scoping note above); its own
+    per-community glow only comes from Diagnostics → Structural deviation's
+    "Show in graph" list, unrelated to this Color & size group. With a
+    community/semantic-cluster group enabled, also Show-in-graph an isolated
+    cluster - both glows should show simultaneously, and clearing the
+    isolated-cluster highlight should leave the other glow(s) untouched.
+    Switch layouts (Force/Radial/Circular) and refresh the vault
+    (edit/create/delete a note) while any of these are showing - no console
+    error, every overlay clears or updates with the rebuilt graph rather
+    than pointing at stale/removed nodes.
+  - **"Cluster heatmap" toggle** (Appearance panel, `ClewAppearanceSettings.
+    showClusterHeatmap`, on by default) - user request: "Bau ein Setting
+    ein, so dass der Hintergrund deaktiviert werden kann". A single on/off
+    switch for the whole overlay, checked once inside
+    `updateHeatmapRegions()` (the one shared call site every region change
+    already goes through) rather than in each region-computing caller -
+    turning it off calls `heatmapLayer.setRegions([])` regardless of what
+    `clusterHighlightRegion`/`clusterGroupHeatmapRegions` currently hold,
+    without touching either of those fields, so turning it back on
+    immediately shows whatever was already highlighted/enabled rather than
+    needing to re-trigger it. Deliberately doesn't touch the *other* half of
+    the same highlights (Isolated clusters/Structural deviation's own
+    recolor/dim `nodeReducer`/`edgeReducer`, Community/Semantic clustering's
+    ordinary node coloring) - only the glow layer. For manual QA: with an
+    isolated cluster's "Show in graph" active and/or a community/semantic-
+    cluster group enabled (glows visible per the checks above), open
+    Appearance and turn "Cluster heatmap" off - every glow should disappear
+    immediately, while the recolor/dim and node coloring underneath stay
+    exactly as they were; turn it back on - the same glow(s) should
+    reappear without needing to re-click "Show in graph" or re-toggle any
+    group. "Reset to defaults" should turn it back on if it had been off.
 - **Focus/Diagnostics icons mark themselves active while open** (user
   feedback: neither lit up at all, unlike Filter/Color & size/Appearance/
   Views): click "Focus…" - the crosshair icon should get the accent

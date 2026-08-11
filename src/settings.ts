@@ -194,6 +194,21 @@ export interface ClewAppearanceSettings {
 	 * curvature to matter.
 	 */
 	edgePathStyle: EdgePathStyle;
+	/**
+	 * Whether the density-field glow behind Isolated clusters/Structural
+	 * deviation's Show-in-graph highlight and Community/Semantic clustering's
+	 * enabled Color & size groups is drawn at all (heatmapLayer.ts) - user
+	 * request: "Bau ein Setting ein, so dass der Hintergrund deaktiviert
+	 * werden kann", after those four features had all been given the glow in
+	 * earlier requests. On by default (the glow is the whole point of those
+	 * features asking for it in the first place) - this is an escape hatch
+	 * for whoever finds it visually busy or wants a plainer graph, not a
+	 * reversal of the earlier default. Turning it off doesn't touch the
+	 * *other* half of the same highlight (Isolated clusters/Structural
+	 * deviation's own recolor/dim, Community/Semantic clustering's ordinary
+	 * node coloring) - only the glow layer itself.
+	 */
+	showClusterHeatmap: boolean;
 }
 
 /** See ClewAppearanceSettings.edgePathStyle's own docstring. */
@@ -222,6 +237,7 @@ export const DEFAULT_APPEARANCE_SETTINGS: ClewAppearanceSettings = {
 	showEdgeDirection: false,
 	edgeArrowSize: 1,
 	edgePathStyle: 'line',
+	showClusterHeatmap: true,
 };
 
 /**
