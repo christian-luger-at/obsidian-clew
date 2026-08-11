@@ -485,20 +485,21 @@ manual copy step. Then open `test-vault` in Obsidian and check:
     `nodeGroups.ts`'s `DEFAULT_NODE_GROUPS` - fixed `id`s, added/removed by
     `main.ts`'s `syncDefaultPresets()`): on a fresh install (or the QA
     vault's own `data.json`, if any, deleted), the Filter panel should
-    already list "Show existing notes", "Non-existent links", "Attachments",
-    and "Tags" (all unchecked), and Color & size should already list
-    "Non-existent links" (orange), "Attachments" (blue), and "Tags" (violet)
-    (also unchecked) - all seven ready to enable, not needing "+ add" →
-    "Node type" from scratch. In Settings → Community plugins → Clew, turn
-    "Default filters" off - all four filter rows should disappear from the
-    Filter panel the next time it's opened (even mid-session, no reload
-    needed - `syncDefaultPresets()` runs immediately on toggle). Turn it
-    back on - they reappear, freshly reset (any rename you made is gone -
-    toggling off is what removes them, not a private "hidden but
-    remembered" state). Same check for "Default color groups" against the
-    three colored groups. Enabling "Non-existent links" should behave
-    exactly like a user-built `nodeKind: 'nonexistent'` filter - because it
-    is one.
+    already list "Non-existent links", "Attachments", and "Tags" (all
+    unchecked), and Color & size should already list the same three names
+    (orange/blue/violet, also unchecked) - all six ready to enable, not
+    needing "+ add" → "Node type" from scratch. (An earlier round also
+    shipped a "Show existing notes" default filter - user feedback: "Filter
+    'Show existing notes' löschen" - removed entirely, not replaced.) In
+    Settings → Community plugins → Clew, turn "Default filters" off - all
+    three filter rows should disappear from the Filter panel the next time
+    it's opened (even mid-session, no reload needed -
+    `syncDefaultPresets()` runs immediately on toggle). Turn it back on -
+    they reappear, freshly reset (any rename you made is gone - toggling
+    off is what removes them, not a private "hidden but remembered" state).
+    Same check for "Default color groups" against the three colored groups.
+    Enabling "Non-existent links" should behave exactly like a user-built
+    `nodeKind: 'nonexistent'` filter - because it is one.
   - **Not deletable or editable from the panel** (user feedback: "diese
     Einträge dürfen vom Benutzer nicht gelöscht werden [...] und auch
     nicht editierbar"): every default row should show **neither** a
@@ -523,6 +524,15 @@ manual copy step. Then open `test-vault` in Obsidian and check:
   separate node linking only `Topic A - Detail 2`. Click a tag node - does
   nothing (no file behind it, same as a ghost node). Hovering `Topic A -
   Detail 2` should highlight both its tag neighbors like any other link.
+  **Default color**: with no Color & size group enabled, `#project`/
+  `#urgent` should render in the plain node color (`resolvedNodeColor()`),
+  the same as any real note - not a special tag color. An earlier version
+  gave tag nodes their own always-on `theme.ts` color (reading Obsidian's
+  `--graph-node-tag`, which resolves to green in the default theme) - user
+  feedback: "Tags-Knoten werden immer grün dargestellt, obwohl kein
+  Color&Size gesetzt ist. Diese sollten in der normalen Knotenfarbe sein" -
+  removed; enable the "Tags" default color group (or build a `nodeKind:
+  'tag'` group yourself) to color them on purpose.
   **`Node type` criterion** ("+ add" → "Node type", set to "Tag node"):
   should match `#project`/`#urgent` and nothing else - not even a
   `Nonexistent Note` ghost node, despite both having `exists: false`

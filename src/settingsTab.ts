@@ -83,7 +83,7 @@ export class ClewSettingTab extends PluginSettingTab {
 
 		new Setting(containerEl)
 			.setName('Default filters')
-			.setDesc('"Show existing notes" / "Non-existent links" / "Attachments" / "Tags" in the Filter panel.')
+			.setDesc('"Non-existent links" / "Attachments" / "Tags" in the Filter panel.')
 			.addToggle((toggle) =>
 				toggle.setValue(this.plugin.settings.showDefaultFilters).onChange(async (value) => {
 					this.plugin.settings.showDefaultFilters = value;

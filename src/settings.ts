@@ -269,9 +269,9 @@ export interface ClewSettings {
 	/** See ClewDiagnosticsSettings's own docstring. */
 	diagnostics: ClewDiagnosticsSettings;
 	/**
-	 * Whether the four ready-made filters (filter.ts's
-	 * DEFAULT_FILTER_PRESETS - "Show existing notes"/"Non-existent links"/
-	 * "Attachments"/"Tags") are present in `filterPresets` at all -
+	 * Whether the three ready-made filters (filter.ts's
+	 * DEFAULT_FILTER_PRESETS - "Non-existent links"/"Attachments"/"Tags")
+	 * are present in `filterPresets` at all -
 	 * Obsidian's own Settings tab (settingsTab.ts), not the graph view's own
 	 * panels, same reasoning as `diagnostics` above (a one-time "what do I
 	 * even want available" choice). main.ts's syncDefaultPresets() adds/

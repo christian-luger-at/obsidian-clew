@@ -22,17 +22,6 @@ export interface ThemeColors {
 	 */
 	ghostNodeColor: string;
 	/**
-	 * A tag node's default color (vaultGraph.ts's `kind: 'tag'`, backlog
-	 * item 11) - reads Obsidian's own `--graph-node-tag` (its core Graph
-	 * View has had a "Tags" toggle with its own node color for a long time;
-	 * reusing that CSS var keeps Clew's tag nodes looking consistent with
-	 * what anyone who's used core Graph already recognizes as "this is a
-	 * tag"), through ensureContrast() the same way every other node color
-	 * here is - not blendToward(), same "needs to stay legible, not
-	 * temporarily de-emphasized" reasoning as ghostNodeColor above.
-	 */
-	tagNodeColor: string;
-	/**
 	 * The ring renderer.ts's "bordered" node program draws around a note
 	 * excluded from Find-path (GitHub backlog item 6 follow-up: "Kennzeichnen
 	 * die ausgeschlossenen Knoten") - a distinct, always-legible accent
@@ -380,7 +369,6 @@ export function readThemeColors(referenceEl: HTMLElement, edgeIntensity: number 
 		// not the "nearly the background" treatment dimNodeColor's
 		// temporary de-emphasis job calls for.
 		ghostNodeColor: ensureContrast(cssVar('--text-faint', '#6b7280'), backgroundColor),
-		tagNodeColor: ensureContrast(cssVar('--graph-node-tag', '#8b5cf6'), backgroundColor),
 		// --text-error - Obsidian's own "something's wrong here" red, reused
 		// (not a hardcoded hex) so this stays consistent with whatever a
 		// theme itself calls "flagged"/"error", the same reasoning every

@@ -2923,18 +2923,22 @@ export class GraphPane {
 			// criterion (nodeGroups.ts), same as any other node -
 			// buildCriteriaFacts() emits an `exists: false` fact for every
 			// ghost node specifically so that criterion has something to
-			// match against. Tag nodes (backlog item 11) get their own
-			// tagNodeColor the same way; attachment nodes (backlog item 15)
-			// share imageNodeColor with cover-image notes - both are
-			// overridable the same way, via the same `nodeKind` criterion.
+			// match against. Attachment nodes (backlog item 15) share
+			// imageNodeColor with cover-image notes, overridable the same
+			// way via the `nodeKind` criterion. Tag nodes (backlog item 11)
+			// deliberately do NOT get a special default color - user
+			// feedback: "Tags-Knoten werden immer grün dargestellt, obwohl
+			// kein Color&Size gesetzt ist. Diese sollten in der normalen
+			// Knotenfarbe sein" - an earlier version gave them their own
+			// theme.ts tagNodeColor, but the plain node color is the
+			// expected default; a `nodeKind: 'tag'` Color & size group is
+			// still the way to color them differently on purpose.
 			const defaultColor =
 				attr.kind === 'ghost'
 					? this.theme.ghostNodeColor
-					: attr.kind === 'tag'
-						? this.theme.tagNodeColor
-						: attr.kind === 'attachment' || attr.type === 'image'
-							? this.theme.imageNodeColor
-							: this.resolvedNodeColor();
+					: attr.kind === 'attachment' || attr.type === 'image'
+						? this.theme.imageNodeColor
+						: this.resolvedNodeColor();
 			const resolvedColor = groupByNode.get(node)?.color ?? defaultColor;
 			graph.setNodeAttribute(node, 'color', resolvedColor);
 			// The ring (and the gap just inside it) renderer.ts's "bordered"
