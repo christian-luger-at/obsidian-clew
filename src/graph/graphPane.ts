@@ -4534,10 +4534,29 @@ export class GraphPane {
 	 * than bundled (see embeddingModel.ts's own docstring) - are caught and
 	 * surfaced via semanticClusteringStatus instead of becoming an
 	 * unhandled rejection; refreshCriteriaContent() awaits this directly.
+	 *
+	 * User report: "Wenn ich einen Semantic Cluster als Filter oder Color
+	 * wähle, dann kann ich den Cluster nicht wählen. Es steht nur 'Computing
+	 * embeddings....'" - a real bug, not just a slow first load. The initial
+	 * `renderColorAndSizePanel()` call below (entering `'loading'`) painted
+	 * that message correctly, but nothing ever re-rendered either panel once
+	 * this method actually finished - `semanticClusteringStatus` flipped to
+	 * `'ready'`/`'error'` in memory, but the DOM stayed frozen on whatever
+	 * the loading-state render last produced, forever (the panel only
+	 * rebuilds on an explicit user action - add/edit/delete a criterion,
+	 * open/close the panel - none of which "an unrelated async task finished
+	 * in the background" is). refreshCriteriaContent() (this method's only
+	 * caller) called repaintNodeGroups()/applyFilter() afterward, neither of
+	 * which touches either panel's own DOM. Fixed by re-rendering whichever
+	 * of Color & size/Filter is currently open once this method's own
+	 * work concludes (both, not just one - a `semanticCluster` criterion can
+	 * live in either, and there's no cheap way to know which panel the
+	 * criterion that triggered this call actually belongs to from here).
 	 */
 	private async refreshSemanticClusters(): Promise<void> {
 		this.semanticClusteringStatus = 'loading';
 		if (this.colorAndSizePanelEl.isShown()) this.renderColorAndSizePanel();
+		if (this.filterPanelEl.isShown()) this.renderFilterPanel();
 		try {
 			const extractor = await loadEmbeddingModel();
 			const vectors = new Map<string, Float32Array>();
@@ -4558,6 +4577,9 @@ export class GraphPane {
 			console.error('Clew: failed to compute semantic embeddings', err);
 			this.semanticClusterByPath = null;
 			this.semanticClusteringStatus = 'error';
+		} finally {
+			if (this.colorAndSizePanelEl.isShown()) this.renderColorAndSizePanel();
+			if (this.filterPanelEl.isShown()) this.renderFilterPanel();
 		}
 	}
 
