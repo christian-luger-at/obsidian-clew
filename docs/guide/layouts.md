@@ -2,7 +2,7 @@
 
 Click the **Layout** toolbar icon to open the layout picker - a dialog explaining what each layout is for, not just a bare list of names.
 
-<figure class="shot">
+<figure class="shot shot-narrow">
   <img class="doc-shot light-only" src="/screens/layout-picker-light.png" alt="The layout picker dialog, light theme">
   <img class="doc-shot dark-only" src="/screens/layout-picker-dark.png" alt="The layout picker dialog, dark theme">
   <figcaption>The layout picker - click a row to switch to it.</figcaption>
