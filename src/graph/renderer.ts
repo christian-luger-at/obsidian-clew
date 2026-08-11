@@ -217,6 +217,49 @@ function watchZoomForLabelSize(renderer: Sigma): void {
 	update();
 }
 
+/** How long camera 'updated' events must stay quiet before watchMoveForEdgeVisibility() treats the camera as settled - see that function's own docstring. Comfortably longer than sigma's own drag-release refresh delay (0ms) and its default wheel-zoom tween (250ms) or drag inertia (~300ms by default), so it always fires strictly after whichever one is actually running finishes, not mid-tween. */
+const MOVE_SETTLE_MS = 350;
+
+/**
+ * Backstops sigma's own `hideEdgesOnMove` cleanup for the cases it doesn't
+ * cover - user report: "Nach dem Verschieben des Graphen werden oft nur die
+ * Punkte ohne Kanten dargestellt." (edges stay hidden after panning). Sigma
+ * hides edges while `camera.isAnimated() || mouseCaptor.isMoving ||
+ * mouseCaptor.draggedEvents || mouseCaptor.currentWheelDirection` is true,
+ * and only patches one specific path back to visible: MouseCaptor's own
+ * `mouseup` handler schedules exactly one `renderer.refresh()` a single
+ * `setTimeout(…, 0)` tick after release (sigma's own source comment cites
+ * https://github.com/jacomyal/sigma.js/issues/1290). That one refresh fires
+ * too early to help here: releasing the mouse while still moving kicks off
+ * a drag-inertia `camera.animate()` coast (default ~300ms), so
+ * `camera.isAnimated()` is still true at that 0ms mark - the "fix" refresh
+ * just repaints one more still-hidden-edges frame, and nothing schedules
+ * another once the coast actually stops. Wheel-zoom (including a trackpad's
+ * two-finger pan/pinch, which the browser also reports as `wheel` events)
+ * has no equivalent post-move refresh at all.
+ *
+ * Every camera state change - drag, an inertia tick, a wheel-zoom tween
+ * step, a layout switch's animatedReset - fires the camera's own `updated`
+ * event regardless of which of the above paths caused it, so debouncing off
+ * that (one `refresh()` once updates actually stop for MOVE_SETTLE_MS, reset
+ * on every new one) always lands a real repaint against the now-idle camera
+ * afterward, without needing to know which internal sigma code path was
+ * responsible. Harmless extra work on the already-covered drag-release path
+ * (one more `refresh()` a beat after sigma's own) - `refresh()` is cheap
+ * relative to a user having just stopped interacting.
+ */
+function watchMoveForEdgeVisibility(renderer: Sigma): void {
+	const camera = renderer.getCamera();
+	let timeout: number | null = null;
+	camera.on('updated', () => {
+		if (timeout !== null) window.clearTimeout(timeout);
+		timeout = window.setTimeout(() => {
+			timeout = null;
+			renderer.refresh();
+		}, MOVE_SETTLE_MS);
+	});
+}
+
 export function createRenderer(graph: Graph, container: HTMLElement, options: CreateRendererOptions = {}): Sigma {
 	const {
 		defaultEdgeColor = '#888888',
@@ -309,5 +352,6 @@ export function createRenderer(graph: Graph, container: HTMLElement, options: Cr
 	});
 
 	watchZoomForLabelSize(renderer);
+	watchMoveForEdgeVisibility(renderer);
 	return renderer;
 }

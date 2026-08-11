@@ -1279,6 +1279,26 @@ manual copy step. Then open `test-vault` in Obsidian and check:
   2) so more labels are visible to shrink in the first place - existing
   vaults keep whatever value they'd already saved; this only changes what a
   fresh install (or "Reset to defaults") starts at.
+- **Edges stay visible after panning** (`renderer.ts`'s
+  `watchMoveForEdgeVisibility()`) - user report: "Nach dem Verschieben des
+  Graphen werden oft nur die Punkte ohne Kanten dargestellt." sigma's own
+  `hideEdgesOnMove` hides edges while the camera is considered "moving" and
+  only patches visibility back for one specific path (a plain drag-release,
+  via a fixed 0ms-after-mouseup refresh) - drag *inertia* (releasing the
+  mouse while still moving kicks off a ~300ms coast that keeps
+  `camera.isAnimated()` true well past that 0ms mark) and wheel-zoom
+  (including a trackpad two-finger pan/pinch, which browsers report as
+  `wheel` events) have no equivalent fix at all, so a repaint can land
+  mid-coast/mid-tween and just show one more hidden-edges frame with
+  nothing scheduling another. Check: click-drag the canvas to pan, release
+  with some velocity (a real flick, not a slow stop) - edges should be back
+  within roughly a third of a second of the coast actually stopping, not
+  stay hidden. Scroll-wheel zoom in/out repeatedly, then stop - same check.
+  If you have a trackpad, a two-finger pan/pinch on the canvas - same
+  check. Switching layouts (Layout dialog) and dragging a node in Force
+  layout should still both work exactly as before (this only adds one more
+  debounced `refresh()` after camera movement settles, it doesn't touch
+  either of those existing paths).
 - **Focus/Diagnostics icons mark themselves active while open** (user
   feedback: neither lit up at all, unlike Filter/Color & size/Appearance/
   Views): click "Focus…" - the crosshair icon should get the accent
