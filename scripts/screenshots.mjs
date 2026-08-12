@@ -16,8 +16,9 @@
  * docs/public/screens/.
  *
  * Usage:
- *   node scripts/screenshots.mjs              # requires Obsidian to be closed
- *   node scripts/screenshots.mjs --quit       # quit a running Obsidian first
+ *   node scripts/screenshots.mjs                  # requires Obsidian to be closed
+ *   node scripts/screenshots.mjs --quit           # quit a running Obsidian first
+ *   node scripts/screenshots.mjs --showcase-only  # only the external showcase.gif (skips the stills + tour.gif)
  *
  * Obsidian's own config (obsidian.json) is backed up and restored, so your
  * normal vault setup is left exactly as it was. macOS only (launches
@@ -541,9 +542,88 @@ async function recordTour(page) {
 	log(`recorded tour.gif from ${frames.length} frames (${kb} KB)`);
 }
 
+/**
+ * Records a short (~6s) GIF built specifically for external showcasing
+ * (forum/Reddit posts), not the README - unlike recordTour() above, which
+ * demonstrates the everyday hover/layout/filter workflow, this one leads
+ * with the two things no other Obsidian graph plugin has: the vault's
+ * Community coloring (already active from data.json's g0 group, so it's
+ * on screen from frame one - no setup shown) and the Diagnostics panel's
+ * "Isolated clusters" highlight, triggered live so the resulting heatmap
+ * glow reads as something that just happened, not a static screenshot.
+ * Deliberately skips the Hierarchical-layout leg recordTour() has - a
+ * layout-transition frame lands mid-reflow with labels smeared across the
+ * canvas, fine buried in a 13s tour but jarring in a 6s clip meant to be
+ * judged in its first couple of seconds.
+ */
+async function recordShowcase(page) {
+	const dir = join(VAULT, '.frames-showcase');
+	rmSync(dir, { recursive: true, force: true });
+	mkdirSync(dir, { recursive: true });
+
+	await closeModals(page);
+	await openGraphWide(page);
+	await setTheme(page, 'light');
+	await sleep(3000); // let Force settle - and the community heatmap glow with it
+
+	const cdp = await page.context().newCDPSession(page);
+	await cdp.send('Emulation.setDeviceMetricsOverride', { width: 1200, height: 800, deviceScaleFactor: 2, mobile: false });
+	await sleep(500);
+
+	const frames = [];
+	cdp.on('Page.screencastFrame', async (f) => {
+		frames.push({ buf: Buffer.from(f.data, 'base64'), ts: Date.now() });
+		try { await cdp.send('Page.screencastFrameAck', { sessionId: f.sessionId }); } catch { /* stopped */ }
+	});
+	await cdp.send('Page.startScreencast', { format: 'jpeg', quality: 85, everyNthFrame: 1 });
+
+	// 1. Hold on the community-colored graph, glow already visible, so the
+	// clip opens on its strongest frame instead of building up to it.
+	await sleep(1800);
+
+	// 2. Open Diagnostics and trigger the Isolated clusters highlight - a
+	// second, distinct glow appears live over the (deliberately seeded, see
+	// gen-history-vault.mjs's "Forgotten Kingdom" trio) disconnected pocket.
+	await clickToolbarIcon(page, 'Diagnostics');
+	await page.waitForSelector('.clew-filter-panel:visible', { timeout: 5000 });
+	await sleep(600);
+	const highlightButton = page.locator('.clew-diagnostics-cluster-row button.clickable-icon').first();
+	await highlightButton.click();
+	await sleep(2200);
+	await closePanel(page, '.clew-filter-panel:visible');
+	await sleep(1200);
+
+	await cdp.send('Page.stopScreencast');
+	if (frames.length < 2) throw new Error('the screencast produced no frames');
+
+	const lines = [];
+	frames.forEach((f, i) => {
+		const name = `f${String(i).padStart(5, '0')}.jpg`;
+		writeFileSync(join(dir, name), f.buf);
+		const next = frames[i + 1];
+		const dur = next ? Math.min((next.ts - f.ts) / 1000, 2) : 0.8;
+		lines.push(`file '${name}'`, `duration ${Math.max(dur, 0.04).toFixed(3)}`);
+	});
+	lines.push(`file 'f${String(frames.length - 1).padStart(5, '0')}.jpg'`);
+	writeFileSync(join(dir, 'list.txt'), lines.join('\n'));
+
+	mkdirSync(OUT, { recursive: true });
+	const gif = join(OUT, 'showcase.gif');
+	execFileSync('ffmpeg', [
+		'-y', '-hide_banner', '-loglevel', 'error',
+		'-f', 'concat', '-safe', '0', '-i', join(dir, 'list.txt'),
+		'-vf', 'fps=12,scale=900:-1:flags=lanczos,split[a][b];[a]palettegen=max_colors=128[p];[b][p]paletteuse=dither=bayer:bayer_scale=3',
+		'-loop', '0', gif,
+	]);
+	rmSync(dir, { recursive: true, force: true });
+	const kb = Math.round(readFileSync(gif).length / 1024);
+	log(`recorded showcase.gif from ${frames.length} frames (${kb} KB)`);
+}
+
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
+const SHOWCASE_ONLY = process.argv.includes('--showcase-only');
 let child;
 try {
 	if (!existsSync(OBSIDIAN)) throw new Error(`Obsidian not found at ${OBSIDIAN}`);
@@ -577,8 +657,12 @@ try {
 	log('connected to the Obsidian window');
 
 	await ensurePlugin(page);
-	await capture(page);
-	await recordTour(page);
+	if (SHOWCASE_ONLY) {
+		await recordShowcase(page);
+	} else {
+		await capture(page);
+		await recordTour(page);
+	}
 	await browser.close();
 	console.log(`\nScreenshots written to ${OUT}`);
 } catch (err) {

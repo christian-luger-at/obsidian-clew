@@ -25,7 +25,8 @@
 		"docs:dev": "vitepress dev docs",
 		"docs:build": "vitepress build docs",
 		"docs:preview": "vitepress preview docs",
-		"docs:shots": "node scripts/screenshots.mjs"
+		"docs:shots": "node scripts/screenshots.mjs",
+		"docs:shots:showcase": "node scripts/screenshots.mjs --showcase-only --quit"
 	},
 	"keywords": [],
 	"license": "MIT",

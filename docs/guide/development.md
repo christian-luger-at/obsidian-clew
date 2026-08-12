@@ -19,6 +19,7 @@ Every screenshot under `docs/public/screens/` is generated, not hand-captured - 
 ```bash
 npm run docs:shots            # requires Obsidian to be closed
 npm run docs:shots -- --quit  # quit a running Obsidian first
+npm run docs:shots:showcase   # only the external showcase.gif (skips the stills + tour.gif)
 ```
 
 What it does, in order:
