@@ -2,6 +2,7 @@ import { Plugin, WorkspaceLeaf } from 'obsidian';
 import { DEFAULT_APPEARANCE_SETTINGS, DEFAULT_DIAGNOSTICS_SETTINGS, DEFAULT_TIMELINE_SETTINGS, ClewSettings } from './settings';
 import { CLEW_STANDALONE_GRAPH_VIEW, StandaloneGraphView } from './graph/standaloneGraphView';
 import { FIND_PATH_ENABLED, GraphPane } from './graph/graphPane';
+import { registerGraphEmbed } from './graph/graphEmbed';
 import { ClewSettingTab } from './settingsTab';
 import { DEFAULT_FILTER_PRESETS } from './graph/filter';
 import { DEFAULT_NODE_GROUPS } from './graph/nodeGroups';
@@ -15,6 +16,10 @@ export default class ClewPlugin extends Plugin {
 		this.addSettingTab(new ClewSettingTab(this.app, this));
 
 		this.registerView(CLEW_STANDALONE_GRAPH_VIEW, (leaf) => new StandaloneGraphView(leaf, this));
+
+		// GitHub issue #4, "Code-Fence Embed": ```clew-graph renders an
+		// inline ego-graph inside a note.
+		registerGraphEmbed(this);
 
 		this.addRibbonIcon('lucide-share-2', 'Open graph', () => {
 			void this.activateStandaloneGraphView();

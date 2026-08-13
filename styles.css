@@ -1,3 +1,40 @@
+/* Code-fence embed (GitHub issue #4, graphEmbed.ts) - a fixed-height frame
+   since .clew-graph-view below is height:100%, which collapses to nothing
+   inside a markdown-rendered note's auto-height container. Toolbar/every
+   dialog panel/legend/timeline bar are still built normally by GraphPane's
+   constructor for an embedded pane (see its own `embedded` field docstring
+   for why) - hidden here rather than never created, so "no toolbar clutter
+   for a small inline graph" is purely a CSS concern, not a second code path
+   through the rest of that file. */
+.clew-graph-embed-frame {
+	margin: 1em 0;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-m);
+}
+
+/* Two classes, not one - GraphPane's constructor also stamps this same
+   element with `.clew-graph-view` (height:100%, position:relative,
+   overflow:clip - see that rule below), which has equal specificity to a
+   bare `.clew-graph-embed-frame` and, being declared later in this file,
+   would otherwise win and collapse the embed to 0 height regardless of
+   the `height: 400px` above (verified directly - the first version of
+   this rule rendered every embed as an invisible 2px sliver). */
+.clew-graph-embed-frame.clew-graph-view {
+	height: 400px;
+}
+
+.clew-graph-embed .clew-topbar,
+.clew-graph-embed .clew-legend,
+.clew-graph-embed .clew-timeline-panel {
+	display: none;
+}
+
+.clew-graph-embed-error {
+	padding: 1em;
+	color: var(--text-error);
+	font-size: var(--font-ui-small);
+}
+
 .clew-graph-view {
 	position: relative;
 	width: 100%;

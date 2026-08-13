@@ -865,12 +865,33 @@ export class GraphPane {
 	private timelineAppearedAt = new Map<string, number>();
 	private timelineFadeIntervalId: number | null = null;
 
+	/**
+	 * GitHub issue #4 (code-fence embed): true for a pane created by
+	 * graphEmbed.ts's ```clew-graph processor, false for every other caller
+	 * (StandaloneGraphView). Gates two things - the toolbar/every dialog
+	 * panel/legend/timeline bar are still built exactly as normal below (a
+	 * conditional constructor would mean every one of the ~15 fields they
+	 * assign would need to become nullable, rippling through the rest of
+	 * this file for no real benefit), just hidden via the `.clew-graph-embed`
+	 * CSS class added below (styles.css) - "no toolbar clutter for a small
+	 * inline graph" per the issue's own scoping note, achieved without
+	 * touching any of their construction code. And it stops an embed from
+	 * ever claiming GraphPane.active (see that field's own docstring) -
+	 * clicking inside a small inline ego-graph shouldn't make it the target
+	 * of the main "Find path" command instead of whatever full graph view
+	 * the user actually has open.
+	 */
+	private readonly embedded: boolean;
+
 	constructor(
 		private readonly app: App,
 		private readonly containerEl: HTMLElement,
 		private readonly plugin: ClewPlugin,
+		options: { embedded?: boolean } = {},
 	) {
+		this.embedded = options.embedded ?? false;
 		this.containerEl.classList.add('clew-graph-view');
+		if (this.embedded) this.containerEl.classList.add('clew-graph-embed');
 		this.theme = readThemeColors(this.containerEl, this.plugin.settings.appearance.edgeIntensity);
 
 		// Sigma's kill() clears every child of the element it's given, so it
@@ -1060,7 +1081,7 @@ export class GraphPane {
 		this.timelinePanelEl.hide();
 
 		this.containerEl.addEventListener('click', () => {
-			GraphPane.active = this;
+			if (!this.embedded) GraphPane.active = this;
 		});
 	}
 
@@ -1165,7 +1186,7 @@ export class GraphPane {
 		this.applyNodeGroups();
 
 		this.renderLegend();
-		GraphPane.active = this;
+		if (!this.embedded) GraphPane.active = this;
 	}
 
 	/**
@@ -2905,8 +2926,13 @@ export class GraphPane {
 	 * reasoning as renderPathPanel() calling it on every render: a filter
 	 * edited *after* the panel was already open still needs clearing right
 	 * before Focus's own reducers go in, not just once at open time.
+	 *
+	 * Public (not just the Focus panel's own internal call) - graphEmbed.ts's
+	 * ```clew-graph processor (GitHub issue #4) calls this directly right
+	 * after setFiles() to pin an embedded pane to one note's ego-network,
+	 * with no Focus panel of its own to drive it through.
 	 */
-	private applyFocus(file: TFile, hops: number): void {
+	applyFocus(file: TFile, hops: number): void {
 		if (!this.graph) return;
 		const graph = this.graph;
 		this.closeOtherPanels('focus');
