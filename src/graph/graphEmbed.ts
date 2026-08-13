@@ -1,4 +1,4 @@
-import { App, MarkdownPostProcessorContext, MarkdownRenderChild, TFile } from 'obsidian';
+import { App, MarkdownPostProcessorContext, MarkdownRenderChild, setIcon, setTooltip, TFile } from 'obsidian';
 import { GraphPane } from './graphPane';
 import { parseEmbedConfig } from './embedConfig';
 import type ClewPlugin from '../main';
@@ -6,11 +6,17 @@ import type ClewPlugin from '../main';
 /**
  * GitHub issue #4, "Code-Fence Embed": a ```clew-graph code block renders
  * an inline ego-graph inside a note, centered on one note picked by name
- * (`node:`) out to a chosen number of hops (`hops:`, 1-3 - see
- * embedConfig.ts's parseEmbedConfig() for the exact syntax). First version
- * deliberately has no filter UI at all (see the issue's own "Abgrenzung")
- * - the embed is meant to read as a small, fixed illustration inside a
- * note, not a second interactive graph view.
+ * (`node:`) out to a chosen number of hops (`hops:`, 1-3), sized by
+ * `width:`/`height:` (falling back to full width / 16:9 - see
+ * embedConfig.ts's parseEmbedConfig() for the exact syntax of all four),
+ * with an optional manual `refresh:` button. First version deliberately has
+ * no filter UI at all (see the issue's own "Abgrenzung") and never carries
+ * over the user's real Filter/Color & size/pinned-node state (user
+ * feedback: "Es dürfen keine Filter, Colors oder gespeicherte Positionen
+ * übernommen werden" - see GraphPane's own `embedded` field docstring for
+ * how) - the embed is meant to read as a small, self-contained illustration
+ * inside a note, not a miniature of whatever the main graph view happens to
+ * be showing right now.
  *
  * Owns one embedded GraphPane's lifecycle - a MarkdownRenderChild (not a
  * plain function callback) specifically so onunload() gets called and can
@@ -53,9 +59,27 @@ class ClewGraphEmbed extends MarkdownRenderChild {
 		}
 
 		const frameEl = this.containerEl.createDiv({ cls: 'clew-graph-embed-frame' });
+		// Only touches whichever dimension the fence actually set - the
+		// other stays governed by styles.css's own default (full width,
+		// 16:9 via `aspect-ratio`, see .clew-graph-embed-frame's own
+		// comment for why a fixed default here would break that).
+		if (config.width) frameEl.style.width = config.width;
+		if (config.height) frameEl.style.height = config.height;
+
 		this.pane = new GraphPane(this.app, frameEl, this.plugin, { embedded: true });
-		this.pane.setFiles(this.app.vault.getMarkdownFiles());
-		this.pane.applyFocus(file, config.hops);
+		const pane = this.pane;
+		const render = (): void => {
+			pane.setFiles(this.app.vault.getMarkdownFiles());
+			pane.applyFocus(file, config.hops);
+		};
+		render();
+
+		if (config.showRefreshButton) {
+			const refreshButton = frameEl.createEl('button', { cls: ['clickable-icon', 'clew-graph-embed-refresh'] });
+			setIcon(refreshButton, 'refresh-cw');
+			setTooltip(refreshButton, 'Refresh');
+			refreshButton.addEventListener('click', render);
+		}
 
 		// Sigma doesn't track its own container's size (see
 		// GraphPane.handleResize()'s docstring) - the standalone view gets

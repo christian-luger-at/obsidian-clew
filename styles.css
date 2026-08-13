@@ -1,12 +1,23 @@
-/* Code-fence embed (GitHub issue #4, graphEmbed.ts) - a fixed-height frame
+/* Code-fence embed (GitHub issue #4, graphEmbed.ts) - a fixed-size frame
    since .clew-graph-view below is height:100%, which collapses to nothing
    inside a markdown-rendered note's auto-height container. Toolbar/every
    dialog panel/legend/timeline bar are still built normally by GraphPane's
    constructor for an embedded pane (see its own `embedded` field docstring
    for why) - hidden here rather than never created, so "no toolbar clutter
    for a small inline graph" is purely a CSS concern, not a second code path
-   through the rest of that file. */
+   through the rest of that file.
+
+   Default size, per the feature's own spec: full width, 16:9 - graphEmbed.ts
+   overrides width/height inline (higher specificity than any class rule, so
+   no !important needed here) only for whichever of `width:`/`height:` the
+   code fence actually set; `aspect-ratio` here only has an effect while
+   height is still auto (i.e. no explicit `height:` was given), exactly the
+   "16:9 unless height is set" behavior the spec asks for - a definite
+   inline height overrides it via the CSS box sizing rules, not by this
+   stylesheet fighting itself. */
 .clew-graph-embed-frame {
+	width: 100%;
+	aspect-ratio: 16 / 9;
 	margin: 1em 0;
 	border: 1px solid var(--background-modifier-border);
 	border-radius: var(--radius-m);
@@ -16,11 +27,15 @@
    element with `.clew-graph-view` (height:100%, position:relative,
    overflow:clip - see that rule below), which has equal specificity to a
    bare `.clew-graph-embed-frame` and, being declared later in this file,
-   would otherwise win and collapse the embed to 0 height regardless of
-   the `height: 400px` above (verified directly - the first version of
-   this rule rendered every embed as an invisible 2px sliver). */
+   would otherwise win and collapse the embed to 0 height regardless of the
+   `aspect-ratio` above (verified directly - the first version of this rule,
+   before it used two classes, rendered every embed as an invisible 2px
+   sliver). height:auto (not a fixed value) - the actual height comes from
+   aspect-ratio above, or from graphEmbed.ts's own inline style once a
+   `height:` parameter is set; a fixed value here would only re-create the
+   exact bug this rule exists to avoid, just for height instead of width. */
 .clew-graph-embed-frame.clew-graph-view {
-	height: 400px;
+	height: auto;
 }
 
 .clew-graph-embed .clew-topbar,
@@ -33,6 +48,21 @@
 	padding: 1em;
 	color: var(--text-error);
 	font-size: var(--font-ui-small);
+}
+
+/* GitHub issue #4 follow-up, "Refresh-Button anzeigen, wenn Parameter [...]
+   gesetzt ist" - a small floating icon button in the embed's own top-right
+   corner, independent of the (hidden) full toolbar every other embed
+   control lives in. */
+.clew-graph-embed-refresh {
+	position: absolute;
+	top: 8px;
+	right: 8px;
+	z-index: 1;
+	background-color: var(--background-primary);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-s);
+	box-shadow: var(--shadow-s);
 }
 
 .clew-graph-view {

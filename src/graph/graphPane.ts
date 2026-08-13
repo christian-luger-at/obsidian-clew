@@ -1085,6 +1085,32 @@ export class GraphPane {
 		});
 	}
 
+	/**
+	 * User feedback on the code-fence embed (GitHub issue #4): "Es dürfen
+	 * keine Filter, Colors oder gespeicherte Positionen übernommen werden" -
+	 * an embed is meant to be one small, predictable illustration of a
+	 * note's neighborhood, not a miniature of whatever the user's main graph
+	 * view happens to be showing right now. Every read of
+	 * plugin.settings.nodeGroups/filterPresets/pinnedPositions that feeds
+	 * what actually gets *drawn* goes through these three instead of the
+	 * setting directly - an embedded pane always sees an empty list/no pins,
+	 * regardless of what's saved. (Panel-*editing* code elsewhere still
+	 * reads plugin.settings directly - moot in practice, since an embed's
+	 * toolbar/panels are never shown to open one from - see `embedded`'s own
+	 * docstring.)
+	 */
+	private effectiveNodeGroups(): NodeGroup[] {
+		return this.embedded ? [] : this.plugin.settings.nodeGroups;
+	}
+
+	private effectiveFilterPresets(): FilterPreset[] {
+		return this.embedded ? [] : this.plugin.settings.filterPresets;
+	}
+
+	private effectivePinnedPositions() {
+		return this.embedded ? {} : this.plugin.settings.pinnedPositions;
+	}
+
 	setFiles(files: TFile[]): void {
 		this.layout?.stop();
 		this.renderer?.kill();
@@ -1148,7 +1174,7 @@ export class GraphPane {
 		this.refreshCriteriaOptions();
 		this.graph = buildVaultGraph(this.app, files, {
 			directed: false,
-			pinnedPositions: this.plugin.settings.pinnedPositions,
+			pinnedPositions: this.effectivePinnedPositions(),
 			showTagNodes: this.plugin.settings.appearance.showTagNodes,
 			showAttachmentNodes: this.plugin.settings.appearance.showAttachmentNodes,
 			showGhostNodes: this.plugin.settings.appearance.showGhostNodes,
@@ -1170,7 +1196,13 @@ export class GraphPane {
 		// rather than waiting for some later change to trigger it.
 		this.updateHeatmapRegions();
 		this.applyEdgeStyle();
-		this.setupNodeDragging();
+		// Dragging persists a pin to plugin.settings.pinnedPositions
+		// (finishDrag()) - skipped entirely for an embedded pane, not just
+		// gated at read time like effectivePinnedPositions() above, since a
+		// drag inside an embed must not *write* a pin into the user's real
+		// graph-view settings either (same "no saved positions carried
+		// over" requirement).
+		if (!this.embedded) this.setupNodeDragging();
 		this.setupNodeClick();
 		this.setupNodeHover();
 		this.layout = runLayout(this.graph, this.layoutOptions(SETTLE_DURATION_MS));
@@ -3045,7 +3077,7 @@ export class GraphPane {
 			degreeGrowth: appearance.nodeDegreeGrowth,
 		});
 
-		const groupByNode = evaluateGroups(this.buildCriteriaFacts(), this.plugin.settings.nodeGroups);
+		const groupByNode = evaluateGroups(this.buildCriteriaFacts(), this.effectiveNodeGroups());
 		this.clusterGroupHeatmapRegions = this.computeClusterGroupHeatmapRegions(groupByNode);
 		this.updateHeatmapRegions();
 
@@ -3440,9 +3472,29 @@ export class GraphPane {
 		return result;
 	}
 
-	/** Node groups and filter presets combined - see nodeGroups.ts's CriteriaOwner docstring for why needsContentSearch()/needsClusterFreshness() can treat both lists as one for buildCriteriaFacts()'s/refreshCriteriaContent()'s "does anything currently active need this" checks. */
+	/**
+	 * Node groups and filter presets combined - see nodeGroups.ts's
+	 * CriteriaOwner docstring for why needsContentSearch()/
+	 * needsClusterFreshness() can treat both lists as one for
+	 * buildCriteriaFacts()'s/refreshCriteriaContent()'s "does anything
+	 * currently active need this" checks.
+	 *
+	 * Routed through effectiveNodeGroups()/effectiveFilterPresets(), not
+	 * plugin.settings directly - found by a real repro, not by inspection:
+	 * an embedded pane (GitHub issue #4) that reads the *real* settings here
+	 * would report "needs content search" whenever the user's actual vault
+	 * has an unrelated `text` filter enabled, kicking off
+	 * refreshCriteriaContent()'s async content-cache read for criteria the
+	 * embed will never actually apply - and that method's own trailing
+	 * `applyFilter()` call, finding effectiveFilterPresets() correctly empty
+	 * ("no filter enabled"), calls clearFocus(), silently wiping out the
+	 * applyFocus() the embed had already set up. Net effect: the embed
+	 * rendered the *entire* vault a moment after correctly rendering just
+	 * the ego-graph, with nothing in graphEmbed.ts itself doing anything
+	 * wrong.
+	 */
 	private allCriteriaOwners(): CriteriaOwner[] {
-		return [...this.plugin.settings.nodeGroups, ...this.plugin.settings.filterPresets];
+		return [...this.effectiveNodeGroups(), ...this.effectiveFilterPresets()];
 	}
 
 	/**
@@ -3694,7 +3746,7 @@ export class GraphPane {
 		// Pinned nodes (GitHub issue #12) are restored to their pin instead,
 		// and kept fixed - none of the other layouts respect pins, so this
 		// is what makes a pin survive a round trip through any of them.
-		resetToDeterministicPositions(this.graph, this.plugin.settings.pinnedPositions);
+		resetToDeterministicPositions(this.graph, this.effectivePinnedPositions());
 		// Unlike the other layouts (which compute final positions
 		// synchronously, so fitting the camera right after is fitting the
 		// real result), ForceAtlas2 relaxes asynchronously over
@@ -4483,7 +4535,7 @@ export class GraphPane {
 	 * Stagnation already override each other in this file.
 	 */
 	private currentFilterMatches(): Set<string> | null {
-		const presets = this.plugin.settings.filterPresets;
+		const presets = this.effectiveFilterPresets();
 		if (!isAnyFilterEnabled(presets)) return null;
 		return evaluateFilters(this.buildCriteriaFacts(), presets, this.plugin.settings.filterCombineMode);
 	}
