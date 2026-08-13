@@ -94,6 +94,25 @@ const DRAG_SETTLE_DURATION_MS = 1500;
 const MIN_FIT_EXTENT = 32;
 
 /**
+ * User feedback on the code-fence embed's own visual polish ("die
+ * Darstellung [...] ist nicht schön"): at a small embed's on-screen scale,
+ * the user's real Appearance labelSizeThreshold (default 2 - see
+ * settings.ts's DEFAULT_APPEARANCE_SETTINGS) renders almost every
+ * neighbor's label at once, overlapping into an unreadable smear (verified
+ * directly against a real vault - see DEVELOPMENT.md's own writeup). A
+ * floor, not a fixed override - `Math.max(appearance.labelSizeThreshold,
+ * this)` in setFiles() - so a user who's deliberately set an even higher
+ * threshold for their real graph view keeps it; only ever raises the
+ * effective threshold for an embedded pane, never lowers it. The center
+ * node's own label is force-shown regardless (see applyFocus()'s
+ * `forceLabel` below), so this only thins out everything *around* it.
+ */
+const EMBED_LABEL_SIZE_THRESHOLD_FLOOR = 10;
+
+/** How much larger the embed's center-node ring makes it read, on top of whatever paintVisualEncoding() already sized it - see applyFocus()'s `highlightCenter` option. */
+const FOCUS_CENTER_SIZE_MULTIPLIER = 1.6;
+
+/**
  * How many routes total runPathSearch() asks findPaths() for (passed
  * straight through as its `k`) - the shortest route plus 3 alternatives.
  * pathfinding.ts's own default (k=5) is a generic library default, not a UI
@@ -1185,7 +1204,9 @@ export class GraphPane {
 			defaultEdgeColor: this.resolvedEdgeColor(),
 			labelColor: this.theme.labelColor,
 			hoverBackgroundColor: this.theme.backgroundColor,
-			labelRenderedSizeThreshold: appearance.labelSizeThreshold,
+			labelRenderedSizeThreshold: this.embedded
+				? Math.max(appearance.labelSizeThreshold, EMBED_LABEL_SIZE_THRESHOLD_FLOOR)
+				: appearance.labelSizeThreshold,
 			labelDensity: appearance.labelDensity,
 			edgeArrowSize: appearance.edgeArrowSize,
 		});
@@ -2963,8 +2984,27 @@ export class GraphPane {
 	 * ```clew-graph processor (GitHub issue #4) calls this directly right
 	 * after setFiles() to pin an embedded pane to one note's ego-network,
 	 * with no Focus panel of its own to drive it through.
+	 *
+	 * `options` are embed-only visual polish (user feedback: "die
+	 * Darstellung [...] ist nicht schön"), both default `false` so the real
+	 * Focus panel's own look is entirely unchanged:
+	 * - `highlightCenter` rings `file` itself (same accent/gap-color pair as
+	 *   `singledOutNodePath`'s own ring - Find-path's green, not a new
+	 *   color) and force-shows its label regardless of
+	 *   labelRenderedSizeThreshold, so the note the embed is actually
+	 *   *about* reads as such at a glance instead of looking like just
+	 *   another dot in the cluster.
+	 * - `fitCamera` re-fits the camera to just `egoSet` right after hiding
+	 *   everything else - see resetCameraAndRefresh()'s own `fitTo`
+	 *   docstring for why this needs to be scoped to the ego-set rather
+	 *   than reusing the plain "Reset view" behavior.
 	 */
-	applyFocus(file: TFile, hops: number): void {
+	/** Thin public wrapper around the private setRadialLayout() - graphEmbed.ts's own use, see that method's own `fitCamera` docstring for why it's called with `fitCamera: false` here (paired with a subsequent `applyFocus(..., { fitCamera: true })` call instead). */
+	setRadialFocus(focusPath: string): void {
+		this.setRadialLayout(focusPath, false);
+	}
+
+	applyFocus(file: TFile, hops: number, options: { highlightCenter?: boolean; fitCamera?: boolean } = {}): void {
 		if (!this.graph) return;
 		const graph = this.graph;
 		this.closeOtherPanels('focus');
@@ -2975,7 +3015,20 @@ export class GraphPane {
 		this.focusHops = hops;
 
 		const egoSet = computeEgoSubgraph(graph, file.path, hops);
-		this.renderer?.setSetting('nodeReducer', (node, attr) => ({ ...attr, hidden: !egoSet.has(node) }));
+		const highlightCenter = options.highlightCenter ?? false;
+		this.renderer?.setSetting('nodeReducer', (node, attr) => {
+			if (!egoSet.has(node)) return { ...attr, hidden: true };
+			if (highlightCenter && node === file.path) {
+				return {
+					...attr,
+					size: (attr.size as number) * FOCUS_CENTER_SIZE_MULTIPLIER,
+					borderColor: this.theme.primaryPathColor,
+					gapColor: this.theme.backgroundColor,
+					forceLabel: true,
+				};
+			}
+			return attr;
+		});
 		this.renderer?.setSetting('edgeReducer', (edge, attr) => ({
 			...attr,
 			hidden: !graph.extremities(edge).every((node) => egoSet.has(node)),
@@ -2984,6 +3037,8 @@ export class GraphPane {
 		this.renderFocusPanel();
 		this.updateFocusButtonState();
 		this.renderLegend();
+
+		if (options.fitCamera) void this.resetCameraAndRefresh(true, egoSet);
 	}
 
 	/** Fully resets Focus's state and reducers - the header's "x", and every other genuine close/supersede site (setFiles(), applyTimeline(), applyFilter(), closeOtherPanels(), refreshTheme()), same shape as Find-path's clearHighlight(). */
@@ -3726,13 +3781,28 @@ export class GraphPane {
 		new RadialLayoutModal(this.app, this.files, (focusFile) => this.setRadialLayout(focusFile.path)).open();
 	}
 
-	private setRadialLayout(focusPath: string): void {
+	/**
+	 * `fitCamera = false` - graphEmbed.ts's own use (GitHub issue #4, user
+	 * feedback "die Darstellung [...] ist nicht schön": Radial's clean
+	 * concentric rings read far better than Force's random scatter at a
+	 * small embed's size, and centering the ring here happens to be exactly
+	 * how the center-node highlight ring gets drawn too - see
+	 * activateLayoutMode()'s own comment) - skips this method's own
+	 * whole-graph camera fit, since the caller immediately follows this with
+	 * `applyFocus(..., { fitCamera: true })`, which fits to just the
+	 * ego-set instead. Fitting here first would still be visually correct
+	 * (computeRadialLayout() puts `focusPath` at the origin, same center
+	 * either fit ends up framing), but as a *second*, competing camera
+	 * animation a frame apart from applyFocus()'s own - kept avoidable
+	 * rather than relying on one tween silently winning the race.
+	 */
+	private setRadialLayout(focusPath: string, fitCamera = true): void {
 		if (!this.graph) return;
 		this.layout?.stop();
 		this.radialFocusNode = focusPath;
 		computeRadialLayout(this.graph, focusPath, this.plugin.settings.appearance.radialRingSpacing);
 		this.activateLayoutMode('radial');
-		void this.resetCameraAndRefresh();
+		if (fitCamera) void this.resetCameraAndRefresh();
 	}
 
 	private setForceLayout(): void {
@@ -3862,9 +3932,18 @@ export class GraphPane {
 	 * repeatedly while ForceAtlas2 settles to keep the camera tracking the
 	 * growing extent live, and a real animated tween restarting on every one
 	 * of those ticks would fight itself instead of looking smooth.
+	 *
+	 * `fitTo`, when given, restricts fittedBBox() to just that node set -
+	 * applyFocus()'s own `fitCamera` option (the code-fence embed) passes
+	 * its ego-set here: fitting to *every* node's position (the default)
+	 * would frame however far the current layout actually extends the whole
+	 * graph, most of which Focus has just hidden - for Radial specifically
+	 * (computeRadialLayout() positions every reachable note, not just the
+	 * notes within `hops`), that's most of the vault, leaving the embed's
+	 * actual ego-graph a speck in a mostly-empty frame.
 	 */
-	private async resetCameraAndRefresh(instant = false): Promise<void> {
-		const bbox = this.fittedBBox();
+	private async resetCameraAndRefresh(instant = false, fitTo?: Set<string>): Promise<void> {
+		const bbox = this.fittedBBox(fitTo);
 		if (bbox) this.renderer?.setCustomBBox(bbox);
 		await this.renderer?.getCamera().animatedReset(instant ? { duration: 0 } : undefined);
 		this.renderer?.refresh();
@@ -3884,16 +3963,19 @@ export class GraphPane {
 	 * notes to already reach this scale on its own - large graphs need no
 	 * special-casing, since "fit everything" is already the right behavior
 	 * there once there's enough content to naturally exceed the floor.
+	 *
+	 * `only`, when given, restricts the extent to just those node ids
+	 * instead of every node currently in the graph - see
+	 * resetCameraAndRefresh()'s own `fitTo` docstring for why the embed
+	 * needs this.
 	 */
-	private fittedBBox(): { x: [number, number]; y: [number, number] } | null {
+	private fittedBBox(only?: Set<string>): { x: [number, number]; y: [number, number] } | null {
 		if (!this.graph || this.graph.order === 0) return null;
 		let xMin = Infinity;
 		let xMax = -Infinity;
 		let yMin = Infinity;
 		let yMax = -Infinity;
-		this.graph.forEachNode((_node, attr) => {
-			const x = attr.x as number;
-			const y = attr.y as number;
+		const consider = (x: number, y: number): void => {
 			// Skip a non-finite coordinate rather than let it poison the
 			// whole extent - `x < xMin`/`x > xMax` are both false for a NaN
 			// `x` anyway (NaN comparisons are always false), so this node
@@ -3909,7 +3991,16 @@ export class GraphPane {
 			if (x > xMax) xMax = x;
 			if (y < yMin) yMin = y;
 			if (y > yMax) yMax = y;
-		});
+		};
+		if (only) {
+			const graph = this.graph;
+			for (const node of only) {
+				if (!graph.hasNode(node)) continue;
+				consider(graph.getNodeAttribute(node, 'x') as number, graph.getNodeAttribute(node, 'y') as number);
+			}
+		} else {
+			this.graph.forEachNode((_node, attr) => consider(attr.x as number, attr.y as number));
+		}
 		// Every node was non-finite (or there were none) - nothing valid to
 		// fit to, same as the empty-graph case above.
 		if (xMin > xMax) return null;

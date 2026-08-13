@@ -9,7 +9,11 @@ import type ClewPlugin from '../main';
  * (`node:`) out to a chosen number of hops (`hops:`, 1-3), sized by
  * `width:`/`height:` (falling back to full width / 16:9 - see
  * embedConfig.ts's parseEmbedConfig() for the exact syntax of all four),
- * with an optional manual `refresh:` button. First version deliberately has
+ * with an optional manual `refresh:` button. Rendered as Radial layout
+ * (not Force) with the center note ringed/labeled, a caption above the
+ * frame, and a softer frame than the graph view's own (user feedback: "die
+ * Darstellung [...] ist nicht schön" - see this class's `render()` and
+ * styles.css's `.clew-graph-embed-*` rules). First version deliberately has
  * no filter UI at all (see the issue's own "Abgrenzung") and never carries
  * over the user's real Filter/Color & size/pinned-node state (user
  * feedback: "Es dürfen keine Filter, Colors oder gespeicherte Positionen
@@ -58,6 +62,15 @@ class ClewGraphEmbed extends MarkdownRenderChild {
 			return;
 		}
 
+		// User feedback: "die Darstellung [...] ist nicht schön" - a short
+		// caption above the frame (the note's own name + hop count) gives
+		// context at a glance, without needing to open the code fence to
+		// find out what it's even centered on.
+		this.containerEl.createDiv({
+			cls: 'clew-graph-embed-caption',
+			text: `${file.basename} · ${config.hops} ${config.hops === 1 ? 'hop' : 'hops'}`,
+		});
+
 		const frameEl = this.containerEl.createDiv({ cls: 'clew-graph-embed-frame' });
 		// Only touches whichever dimension the fence actually set - the
 		// other stays governed by styles.css's own default (full width,
@@ -68,9 +81,18 @@ class ClewGraphEmbed extends MarkdownRenderChild {
 
 		this.pane = new GraphPane(this.app, frameEl, this.plugin, { embedded: true });
 		const pane = this.pane;
+		// Radial (centered on `file`), not Force - same feedback as the
+		// caption above: a small embed reads far better as clean concentric
+		// rings around the note it's actually about than as Force's
+		// randomly-scattered settle, and it's what draws the center-note
+		// highlight ring below "for free" (see setRadialFocus()'s own
+		// docstring). `highlightCenter`/`fitCamera` are embed-only options -
+		// the real Focus panel's own look is untouched (see applyFocus()'s
+		// docstring).
 		const render = (): void => {
 			pane.setFiles(this.app.vault.getMarkdownFiles());
-			pane.applyFocus(file, config.hops);
+			pane.setRadialFocus(file.path);
+			pane.applyFocus(file, config.hops, { highlightCenter: true, fitCamera: true });
 		};
 		render();
 

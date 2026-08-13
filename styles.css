@@ -15,12 +15,31 @@
    "16:9 unless height is set" behavior the spec asks for - a definite
    inline height overrides it via the CSS box sizing rules, not by this
    stylesheet fighting itself. */
+/* User feedback: "die Darstellung [...] ist nicht schön" - a soft shadow
+   instead of a flat, hard-edged 1px box (the docs site's own screenshot
+   frames use the same "hairline border + shadow lifts it off the page"
+   idea - see docs/.vitepress/theme/custom.css's .doc-shot). A hairline
+   border is kept too, not dropped - Obsidian's own background colors can
+   sit close enough to the page background that the shadow alone doesn't
+   read clearly on every theme. */
 .clew-graph-embed-frame {
 	width: 100%;
 	aspect-ratio: 16 / 9;
-	margin: 1em 0;
+	margin: 0 0 1em 0;
 	border: 1px solid var(--background-modifier-border);
 	border-radius: var(--radius-m);
+	box-shadow: var(--shadow-s);
+}
+
+/* Sits directly above the frame (see .clew-graph-embed-frame's own
+   margin-top: 0) - the note's own name + hop count, so the embed reads as
+   "about something" at a glance instead of an unlabeled graph fragment
+   (user feedback, same request as the shadow above). */
+.clew-graph-embed-caption {
+	margin: 1em 0 6px 0;
+	font-size: var(--font-ui-small);
+	font-weight: var(--font-medium);
+	color: var(--text-muted);
 }
 
 /* Two classes, not one - GraphPane's constructor also stamps this same
