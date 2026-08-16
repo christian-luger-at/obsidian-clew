@@ -199,7 +199,7 @@ Symlink the plugin the same file-by-file way as `test-vault` above, open it, and
 
 `spike-vault/` and `spike/dist/` are gitignored.
 
-**Known open item**: not yet verified on a real tablet (Obsidian mobile). Desktop has comfortable margin (steady 60fps at 10k nodes); mobile touch interaction (drag-to-pin, hover-to-highlight) is architecturally unlikely to work well since it's wired to Sigma's mouse captor, not a touch captor - unconfirmed either way.
+**Known open item**: not yet verified on a real tablet (Obsidian mobile), GitHub issue #7. Desktop has comfortable margin (steady 60fps at 10k nodes). Drag-to-pin's own touch gap is fixed (`setupNodeDragging()` now listens on the captor-agnostic `renderer.on('moveBody', ...)` plus the touch captor's own `touchup`, not just the mouse captor); still unconfirmed on real hardware: the ForceAtlas2 layout Worker's Blob-URL construction on iOS Safari's WebView, and whether Obsidian mobile's own hover-tooltip/hover-highlight fall back to tap.
 
 ## Release
 

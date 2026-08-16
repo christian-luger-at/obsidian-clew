@@ -3983,17 +3983,28 @@ export class GraphPane {
 			renderer.getCamera().disable();
 		});
 
-		renderer.getMouseCaptor().on('mousemovebody', (coordinates) => {
+		// renderer.on('moveBody', ...) rather than
+		// renderer.getMouseCaptor().on('mousemovebody', ...) - the latter is
+		// MouseCaptor-only and never fires from touch input (sigma's
+		// TouchCaptor is a separate object with its own touchmove handling),
+		// which left a touch-dragged node's position never updated and
+		// (worse) the drag never "finishing": endDrag was only wired to
+		// mouseCaptor's own mouseup/mouseleave, so a touch release left
+		// draggedNode set and the camera permanently disabled for the rest
+		// of the session. renderer's own 'moveBody' is captor-agnostic (fed
+		// from both mousemovebody and touchmove internally), so this one
+		// listener now covers both input types.
+		renderer.on('moveBody', (payload) => {
 			if (!this.draggedNode || !this.graph) return;
 			this.dragMoved = true;
-			const position = renderer.viewportToGraph(coordinates);
+			const position = renderer.viewportToGraph(payload.event);
 			this.graph.setNodeAttribute(this.draggedNode, 'x', position.x);
 			this.graph.setNodeAttribute(this.draggedNode, 'y', position.y);
 
 			// Otherwise sigma also tries to pan/select on the same drag.
-			coordinates.preventSigmaDefault();
-			coordinates.original.preventDefault();
-			coordinates.original.stopPropagation();
+			payload.event.preventSigmaDefault();
+			payload.event.original.preventDefault();
+			payload.event.original.stopPropagation();
 		});
 
 		const endDrag = (): void => {
@@ -4006,6 +4017,10 @@ export class GraphPane {
 		// Also on mouseleave, so releasing the button outside the canvas
 		// doesn't leave a drag "stuck" with the camera permanently disabled.
 		renderer.getMouseCaptor().on('mouseleave', endDrag);
+		// Touch has no separate "left the canvas" concept - TouchCaptor's
+		// own 'touchup' (bound to both a normal lift-off and touchcancel)
+		// is the one release event that matters here.
+		renderer.getTouchCaptor().on('touchup', endDrag);
 	}
 
 	/**
