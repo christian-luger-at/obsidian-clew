@@ -1,6 +1,6 @@
 {
 	"name": "obsidian-clew",
-	"version": "1.4.1",
+	"version": "1.4.2",
 	"description": "Clew is a Knowledge Explorer for your Obsidian vault",
 	"main": "main.js",
 	"type": "module",
