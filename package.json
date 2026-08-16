@@ -1,7 +1,7 @@
 {
 	"name": "obsidian-clew",
 	"version": "1.4.1",
-	"description": "Understand how your vault actually connects - hub, bridge, and stale-cluster analytics plus smart filters, not just a prettier graph.",
+	"description": "Clew is a Knowledge Explorer for your Obsidian vault",
 	"main": "main.js",
 	"type": "module",
 	"scripts": {
