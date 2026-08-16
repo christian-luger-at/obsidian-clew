@@ -1882,6 +1882,16 @@ Either way, the release is now visible on GitHub with the three files as downloa
 > [!tip]
 > To install the release in Obsidian manually: download all three files and place them in `.obsidian/plugins/clew/` inside your vault.
 
+## Bugfix: excluded-notes/folders settings didn't re-run an active Find-path search
+
+User-reported, reproducing a case the earlier "settings tab pushes a refresh to the live graph" fix (`refreshPathfindingExclusions()`, see `settingsTab.ts`'s own docstrings) didn't actually cover: with Find-path *actively showing a result* and a note/folder then excluded via Settings, the excluded-note ring repainted correctly, but the highlighted route itself stayed exactly as originally searched - still routing straight through the note the user had just excluded.
+
+**Root cause**: `refreshPathfindingExclusions()` only called `applyNodeSizeSettings()` (repaints `paintVisualEncoding()`'s ring), never re-ran the search itself. The ring and the route are two independent things this method needs to keep in sync, and only one of them was.
+
+**Fix**: `refreshPathfindingExclusions()` now also re-runs `runPathSearch(lastPathSource, lastPathTarget, lastPathDirected)` when those are set - non-null exactly while a result is currently showing (see that field's own docstring) - so the new search picks up `resolveExcludedNodePaths()`'s now-current exclusion list, same as a fresh manual search already would.
+
+**Manual QA** (real Obsidian, `.exclusion-qa-vault` built the same way as other recent QA rounds - script not committed): ran a real Find-path search (Ancient Greece → Cold War Era), confirmed the shortest route routed through `World War II Era`; excluded that exact note via the same code path Settings tab's button handler uses (`plugin.settings.pathfindingExcludedNotes.push(...)` + `saveSettings()` + `pane.refreshPathfindingExclusions()`, reached directly since the Settings modal itself wouldn't reliably open under this automation harness - a CDP/focus quirk of the harness, not the plugin); the route panel updated immediately to a different 10-note route via `Vladimir Lenin`/`Karl Marx`/`Chinese Communist Revolution`, completely avoiding the excluded note. Screenshot confirms the new route highlighted on the graph.
+
 ## Download statistics
 
 Once the plugin is in the community store, `scripts/release-stats.sh` prints

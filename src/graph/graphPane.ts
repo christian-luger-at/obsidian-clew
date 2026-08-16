@@ -3268,9 +3268,23 @@ export class GraphPane {
 	 * (paintVisualEncoding() only paints the ring then anyway) or no graph
 	 * view is open at all (getActive() returns null, nothing to call this
 	 * on).
+	 *
+	 * Follow-up fix, same report reproduced further: the ring alone wasn't
+	 * the whole bug. With a Find-path *result* already showing (not just
+	 * the ring), this only repainted the ring - the actual highlighted
+	 * route stayed exactly as it was searched, still happily routing
+	 * through a note the user had just excluded a moment earlier, since
+	 * nothing here ever re-ran the search itself. `lastPathSource`/
+	 * `lastPathTarget` are non-null exactly while a result is showing (see
+	 * their own docstring) - re-running runPathSearch() with them picks up
+	 * resolveExcludedNodePaths()'s now-current exclusion list, the same way
+	 * a fresh manual search already would.
 	 */
 	refreshPathfindingExclusions(): void {
 		this.applyNodeSizeSettings();
+		if (this.lastPathSource && this.lastPathTarget) {
+			this.runPathSearch(this.lastPathSource, this.lastPathTarget, this.lastPathDirected);
+		}
 	}
 
 	/**
