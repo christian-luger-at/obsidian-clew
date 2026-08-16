@@ -21,8 +21,7 @@ Three independent toggles, all off by default, each adding real nodes/edges to t
 - **Node color** - theme color by default; pick to override. Ignores cover images and Color & size groups.
 - **Node size** - base size, and how much it grows with a note's own link count.
 - **Edge color/intensity** - theme color by default (pick to override), and how strongly edges stand out against the background.
-- **Show edge direction** - draws arrowheads for directional links, with its own size slider once enabled.
-- **Edge path** - how edges are drawn: a straight line (the default), a single gentle curve, or an S-curve that bends one way then the other along its length. Combines freely with "Show edge direction" above - an arrowhead still points at the linked note, just following whichever shape is picked.
+- **Show edge direction** - draws arrowheads for directional links, with its own size slider once enabled. Edges are always drawn as straight lines.
 - **Cluster heatmap** - the soft glow behind Isolated clusters/Structural deviation's [Diagnostics](./diagnostics) highlight and enabled Community/Semantic clustering [Color & size](./color-and-size) groups. On by default; turn it off if you find it visually busy - the plain recolor/dim highlight and flat group coloring underneath are unaffected either way, only the glow itself.
 
 ## Physics (Force layout)

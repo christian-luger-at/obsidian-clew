@@ -166,35 +166,6 @@ export interface ClewAppearanceSettings {
 	/** Scales sigma's own default arrowhead length/wideness (both, together - see renderer.ts's createEdgePrograms()) - 1 = sigma's own default size. Only visible while showEdgeDirection is on. */
 	edgeArrowSize: number;
 	/**
-	 * Which of sigma's/edgeCurvedSProgram.ts's edge path shapes to draw
-	 * every edge with - `'line'` (a straight line, GitHub's own default,
-	 * same reasoning as showEdgeDirection above: a busier-looking default
-	 * most people don't want out of the box), `'curved'` (a single gentle
-	 * bend, `@sigma/edge-curve`), or `'curvedS'` (bends one way then the
-	 * other - this plugin's own hand-written program, see
-	 * edgeCurvedSProgram.ts's own docstring for why sigma's built-in
-	 * equivalent isn't used). User request citing sigma v4's five built-in
-	 * path types (`pathLine`/`pathCurved`/`pathStep`/`pathStepCurved`/
-	 * `pathCurvedS`) - "Berücksichtige alle"; decided, after the
-	 * alpha/beta-only sigma v4 dependency risk was laid out, to cover
-	 * `pathLine`/`pathCurved`/`pathCurvedS` and skip the two step variants.
-	 * A three-way choice, not a second boolean layered on top of an
-	 * earlier `curvedEdges` toggle (an actual earlier version of this
-	 * field, before `curvedS` existed) - once there are three mutually
-	 * exclusive shapes, "which one" reads far better as one dropdown than
-	 * as two toggles whose combinations need explaining. Combines freely
-	 * with showEdgeDirection either way - a curved/S-curved edge keeps its
-	 * arrowhead(s), just bent along the path instead of straight
-	 * (renderer.ts's createEdgePrograms(), via `@sigma/edge-curve`'s/
-	 * edgeCurvedSProgram.ts's own `arrowHead` option). Every curved/
-	 * S-curved edge bends by the same fixed amount (`@sigma/edge-curve`'s
-	 * own default curvature, reused as-is by edgeCurvedSProgram.ts) - not
-	 * user-tunable, and not per-edge, since Clew's graph never has true
-	 * parallel/multi-edges between the same two nodes for a per-edge
-	 * curvature to matter.
-	 */
-	edgePathStyle: EdgePathStyle;
-	/**
 	 * Whether the density-field glow behind Isolated clusters/Structural
 	 * deviation's Show-in-graph highlight and Community/Semantic clustering's
 	 * enabled Color & size groups is drawn at all (heatmapLayer.ts) - user
@@ -210,9 +181,6 @@ export interface ClewAppearanceSettings {
 	 */
 	showClusterHeatmap: boolean;
 }
-
-/** See ClewAppearanceSettings.edgePathStyle's own docstring. */
-export type EdgePathStyle = 'line' | 'curved' | 'curvedS';
 
 export const DEFAULT_APPEARANCE_SETTINGS: ClewAppearanceSettings = {
 	showTagNodes: false,
@@ -236,7 +204,6 @@ export const DEFAULT_APPEARANCE_SETTINGS: ClewAppearanceSettings = {
 	nodeColorOverride: null,
 	showEdgeDirection: false,
 	edgeArrowSize: 1,
-	edgePathStyle: 'line',
 	showClusterHeatmap: true,
 };
 

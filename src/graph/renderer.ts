@@ -2,7 +2,6 @@ import Graph from 'graphology';
 import Sigma from 'sigma';
 import { NodeImageProgram } from '@sigma/node-image';
 import { createNodeBorderProgram } from '@sigma/node-border';
-import { createEdgeCurveProgram } from '@sigma/edge-curve';
 import {
 	drawDiscNodeLabel,
 	NodeHoverDrawingFunction,
@@ -10,7 +9,6 @@ import {
 	createEdgeDoubleArrowProgram,
 	DEFAULT_EDGE_ARROW_HEAD_PROGRAM_OPTIONS,
 } from 'sigma/rendering';
-import { createEdgeCurvedSProgram } from './edgeCurvedSProgram';
 import { GeneratedGraph } from './generateGraph';
 
 const GRAPH_COLOR = '#7c3aed';
@@ -116,46 +114,29 @@ export function createNodeHoverDrawer(backgroundColor: string): NodeHoverDrawing
 }
 
 /**
- * Builds every edge program GraphPane registers - straight ('arrow'/
- * 'doubleArrow', ClewAppearanceSettings.showEdgeDirection), curved
- * ('curved'/'curvedArrow'/'curvedDoubleArrow', ClewAppearanceSettings.
- * curvedEdges), and S-curved ('curvedS'/'curvedSArrow'/
- * 'curvedSDoubleArrow', ClewAppearanceSettings.edgePathStyle === 'curvedS')
- * variants alike - a single-headed arrow for a one-way link, a
- * double-headed one for a mutual link (see vaultGraph.ts's `mutual` edge
- * attribute), each available in all three path shapes. The straight and
- * curved ones are sigma's own built-ins (createEdgeArrowProgram/
- * createEdgeDoubleArrowProgram from 'sigma/rendering', createEdgeCurveProgram
- * from the companion '@sigma/edge-curve' package); the S-curved ones are
- * this plugin's own edgeCurvedSProgram.ts (see that file's own docstring
- * for why - sigma v4's built-in `pathCurvedS` is alpha/beta-only, not a
- * foundation to depend on). All are re-created with `arrowSize` scaling
- * sigma's own default length/wideness ratios together (every arrow variant
- * takes the exact same ratios) - a factory (not a fixed constant) since
- * arrowSize is a live-tunable Appearance-panel slider: sigma's
- * edgeProgramClasses is a normal setting (handleSettingsUpdate diffs old
- * vs. new and calls registerEdgeProgram() per changed type), so GraphPane
- * can call this again and setSetting() the result whenever the slider
- * moves, no renderer recreation needed.
+ * Builds the two edge programs GraphPane registers - 'arrow' (a one-way
+ * link) and 'doubleArrow' (a mutual one, see vaultGraph.ts's `mutual` edge
+ * attribute), both sigma's own built-ins (createEdgeArrowProgram/
+ * createEdgeDoubleArrowProgram from 'sigma/rendering'). Every edge is
+ * always a straight line - the curved/S-curved path styles and their own
+ * Appearance dropdown were removed entirely (backlog "Setting 'Edge path'
+ * ausbauen und nur gerade Linie verwenden"), along with this plugin's own
+ * edgeCurvedSProgram.ts and the (by then otherwise-unused) `@sigma/edge-
+ * curve` dependency it and the 'curved' variant depended on.
  *
- * Every curved/S-curved edge uses a single fixed curvature (0.25,
- * `@sigma/edge-curve`'s own `DEFAULT_EDGE_CURVATURE`, reused as-is by
- * edgeCurvedSProgram.ts) - not user-tunable (yet); every edge bends by the
- * same fixed amount, since Clew's graph never has true parallel/multi-edges
- * between the same two nodes to need per-edge curvature variation (see
- * `hasEdge()` guards throughout vaultGraph.ts).
+ * Re-created with `arrowSize` scaling sigma's own default length/wideness
+ * ratios together - a factory (not a fixed constant) since arrowSize is a
+ * live-tunable Appearance-panel slider: sigma's edgeProgramClasses is a
+ * normal setting (handleSettingsUpdate diffs old vs. new and calls
+ * registerEdgeProgram() per changed type), so GraphPane can call this again
+ * and setSetting() the result whenever the slider moves, no renderer
+ * recreation needed.
  */
 type EdgeProgramType = ReturnType<typeof createEdgeArrowProgram>;
 
 export interface EdgePrograms {
 	arrow: EdgeProgramType;
 	doubleArrow: EdgeProgramType;
-	curved: EdgeProgramType;
-	curvedArrow: EdgeProgramType;
-	curvedDoubleArrow: EdgeProgramType;
-	curvedS: EdgeProgramType;
-	curvedSArrow: EdgeProgramType;
-	curvedSDoubleArrow: EdgeProgramType;
 	// Structural index signature - the named properties above are for this
 	// module's own construction/documentation; every call site only ever
 	// spreads the whole return value into sigma's own `edgeProgramClasses`
@@ -171,12 +152,6 @@ export function createEdgePrograms(arrowSize: number): EdgePrograms {
 	return {
 		arrow: createEdgeArrowProgram(ratios),
 		doubleArrow: createEdgeDoubleArrowProgram(ratios),
-		curved: createEdgeCurveProgram(),
-		curvedArrow: createEdgeCurveProgram({ arrowHead: { extremity: 'target', ...ratios } }),
-		curvedDoubleArrow: createEdgeCurveProgram({ arrowHead: { extremity: 'both', ...ratios } }),
-		curvedS: createEdgeCurvedSProgram(),
-		curvedSArrow: createEdgeCurvedSProgram({ arrowHead: { extremity: 'target', ...ratios } }),
-		curvedSDoubleArrow: createEdgeCurvedSProgram({ arrowHead: { extremity: 'both', ...ratios } }),
 	};
 }
 
@@ -386,15 +361,12 @@ export function createRenderer(graph: Graph, container: HTMLElement, options: Cr
 		// program above instead of sigma's own built-in default - see that
 		// program's own docstring for why.
 		defaultNodeType: 'bordered',
-		// The straight 'arrow'/'doubleArrow', curved 'curved'/'curvedArrow'/
-		// 'curvedDoubleArrow', and S-curved 'curvedS'/'curvedSArrow'/
-		// 'curvedSDoubleArrow' types are only actually used once GraphPane
-		// sets an edge's `type` attribute to one of them (showEdgeDirection/
-		// edgePathStyle) - registered unconditionally here regardless, since
-		// sigma's own edgeProgramClasses diffing (see createEdgePrograms()'s
-		// docstring) is how the arrow *size* slider updates live, and that
-		// needs the types already registered to have
-		// something to diff against.
+		// 'arrow'/'doubleArrow' are only actually used once GraphPane sets an
+		// edge's `type` attribute to one of them (showEdgeDirection) -
+		// registered unconditionally here regardless, since sigma's own
+		// edgeProgramClasses diffing (see createEdgePrograms()'s docstring)
+		// is how the arrow *size* slider updates live, and that needs the
+		// types already registered to have something to diff against.
 		edgeProgramClasses: createEdgePrograms(edgeArrowSize),
 		renderEdgeLabels: false,
 		// A vault-change refresh (StandaloneGraphView's create/changed/resolved

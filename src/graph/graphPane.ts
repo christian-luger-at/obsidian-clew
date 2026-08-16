@@ -47,7 +47,7 @@ import {
 } from './nodeGroups';
 import { embedText, loadEmbeddingModel } from './embeddingModel';
 import { detectSemanticClusters } from './semanticClustering';
-import { ClewAppearanceSettings, DEFAULT_APPEARANCE_SETTINGS, EdgePathStyle, SavedView } from '../settings';
+import { ClewAppearanceSettings, DEFAULT_APPEARANCE_SETTINGS, SavedView } from '../settings';
 import {
 	computeTimelineBounds,
 	computeTimelineSteps,
@@ -283,18 +283,16 @@ function debounce(fn: () => void, delayMs: number): () => void {
 
 interface AppearanceSliderSpec {
 	// Excludes edgeColorOverride/nodeColorOverride (non-numeric string |
-	// null settings, their own color-picker UI instead of a slider),
-	// edgePathStyle (a 3-way dropdown, not a slider), and showEdgeDirection/
-	// dissuadeHubs/linLogMode/showTagNodes/showAttachmentNodes/
-	// showGhostNodes/showClusterHeatmap (booleans, their own toggle UI
-	// instead) - see renderAppearancePanel()'s "Nodes"/"Edges"/"Physics"
-	// sections.
+	// null settings, their own color-picker UI instead of a slider), and
+	// showEdgeDirection/dissuadeHubs/linLogMode/showTagNodes/
+	// showAttachmentNodes/showGhostNodes/showClusterHeatmap (booleans,
+	// their own toggle UI instead) - see renderAppearancePanel()'s
+	// "Nodes"/"Edges"/"Physics" sections.
 	key: Exclude<
 		keyof ClewAppearanceSettings,
 		| 'edgeColorOverride'
 		| 'nodeColorOverride'
 		| 'showEdgeDirection'
-		| 'edgePathStyle'
 		| 'dissuadeHubs'
 		| 'linLogMode'
 		| 'showTagNodes'
@@ -394,28 +392,6 @@ const EDGE_ARROW_SIZE_SLIDER: AppearanceSliderSpec = {
 	apply: 'edgeArrow',
 };
 
-/**
- * Which of renderer.ts's createEdgePrograms() types applyEdgeStyle() picks
- * for a given ClewAppearanceSettings.edgePathStyle - `plain` when
- * showEdgeDirection is off, `arrow`/`doubleArrow` when it's on (a
- * single-headed arrow for a one-way link, double for a mutual one - see
- * vaultGraph.ts's `mutual` edge attribute). `line`'s `plain` is
- * `undefined`, not a `'line'` string - sigma has no registered `'line'`
- * type of its own to name; `undefined` falls back to its own
- * `defaultEdgeType` ('line'), the same way it always has.
- */
-const EDGE_TYPES_BY_PATH_STYLE: Record<EdgePathStyle, { plain: string | undefined; arrow: string; doubleArrow: string }> = {
-	line: { plain: undefined, arrow: 'arrow', doubleArrow: 'doubleArrow' },
-	curved: { plain: 'curved', arrow: 'curvedArrow', doubleArrow: 'curvedDoubleArrow' },
-	curvedS: { plain: 'curvedS', arrow: 'curvedSArrow', doubleArrow: 'curvedSDoubleArrow' },
-};
-
-/** Dropdown options for ClewAppearanceSettings.edgePathStyle - see EDGE_PATH_STYLE_OPTIONS's own render site (renderAppearancePanel()'s Edges section) for why this is a dropdown, not more toggles. */
-const EDGE_PATH_STYLE_OPTIONS: Record<EdgePathStyle, string> = {
-	line: 'Straight line',
-	curved: 'Curved',
-	curvedS: 'S-curved',
-};
 
 interface AppearanceSliderGroup {
 	heading: string;
@@ -1266,19 +1242,21 @@ export class GraphPane {
 	 * this needs to actually stick as the base attribute every other edge
 	 * reducer (hover, the filter, path highlight, cluster focus) spreads
 	 * `...attr` from and otherwise leaves alone), rather than installing a
-	 * permanent edgeReducer of its own. Combines showEdgeDirection and
-	 * edgePathStyle into one of the eight registered types renderer.ts's
-	 * createEdgePrograms() builds - `undefined` (edgePathStyle: 'line',
-	 * showEdgeDirection off, GitHub's own default) falls back to sigma's
-	 * own `defaultEdgeType` ('line') - see applyEdgeDefaults() in sigma's
-	 * source.
+	 * permanent edgeReducer of its own. Every edge is always a straight
+	 * line (backlog "Rang 7"-adjacent cleanup: the curved/S-curved path
+	 * styles and their own Appearance dropdown were removed entirely, not
+	 * just defaulted off - see renderer.ts's createEdgePrograms() for what
+	 * that took with it) - only whether it needs an arrowhead varies,
+	 * based on showEdgeDirection: `undefined` (plain) falls back to sigma's
+	 * own `defaultEdgeType` ('line'); `arrow`/`doubleArrow` otherwise, a
+	 * single-headed arrow for a one-way link, double for a mutual one (see
+	 * vaultGraph.ts's `mutual` edge attribute).
 	 */
 	private applyEdgeStyle(): void {
 		if (!this.graph) return;
-		const { showEdgeDirection, edgePathStyle } = this.plugin.settings.appearance;
-		const types = EDGE_TYPES_BY_PATH_STYLE[edgePathStyle];
+		const { showEdgeDirection } = this.plugin.settings.appearance;
 		this.graph.forEachEdge((edge, attr) => {
-			const type = showEdgeDirection ? (attr.mutual ? types.doubleArrow : types.arrow) : types.plain;
+			const type = showEdgeDirection ? (attr.mutual ? 'doubleArrow' : 'arrow') : undefined;
 			this.graph!.setEdgeAttribute(edge, 'type', type);
 		});
 		this.renderer?.refresh();
@@ -2012,17 +1990,6 @@ export class GraphPane {
 				}),
 			);
 		if (this.plugin.settings.appearance.showEdgeDirection) this.renderAppearanceSlider(EDGE_ARROW_SIZE_SLIDER);
-		new Setting(this.appearancePanelEl)
-			.setName('Edge path')
-			.setDesc('How edges are drawn between notes. Combines with "Show edge direction" above.')
-			.addDropdown((dropdown) => {
-				for (const [style, label] of Object.entries(EDGE_PATH_STYLE_OPTIONS)) dropdown.addOption(style, label);
-				dropdown.setValue(this.plugin.settings.appearance.edgePathStyle).onChange((value) => {
-					this.plugin.settings.appearance.edgePathStyle = value as EdgePathStyle;
-					void this.plugin.saveSettings();
-					this.applyEdgeStyle();
-				});
-			});
 		new Setting(this.appearancePanelEl)
 			.setName('Cluster heatmap')
 			.setDesc(
