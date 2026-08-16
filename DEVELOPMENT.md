@@ -1906,6 +1906,16 @@ Backlog "Rang 8": removed the three ready-made filters/color groups ("Non-existe
 
 Manual QA (real Obsidian): seeded a vault's `data.json` with a `default-filter-tags`/`default-group-tags` entry (simulating an existing install predating this change) - both the Filter and Color & size panel rows for "Tags" now show a working Delete control, and the group's edit form shows an editable name `<input>` plus its `Node type` criterion chip with a working "+ add", none of which were available for a default entry before.
 
+## Investigated, not fixed: "non-passive wheel event listener" console violation
+
+Backlog "Rang 5": Chrome DevTools' `[Violation] Added non-passive event listener to a scroll-blocking 'wheel' event` warning, reported from `plugin:clew:316` in the console.
+
+**Root cause, confirmed by reading source, not guessed**: the listener isn't ours. `grep`-ing this repo's own `src/` for `wheel` turns up exactly one hit - `renderer.ts`'s `mouseCaptor.on('wheel', scheduleRefresh)`, which is a subscription to sigma's own `MouseCaptor` `EventEmitter`, not a raw DOM `addEventListener`. The actual `container.addEventListener("wheel", handleWheel, { capture: false })` (no `passive: true`) lives inside sigma.js's own `MouseCaptor` constructor (`node_modules/sigma/dist/sigma.esm.js`), registered when `new Sigma(...)` runs. It surfaces as `plugin:clew:316` only because esbuild bundles sigma's source directly into this plugin's own `main.js` - the stack trace makes it look like Clew's own code, but it isn't.
+
+**Why this isn't fixable without breaking zoom**: sigma's `handleWheel` calls `preventDefault()` so a mouse-wheel/trackpad gesture zooms the graph instead of scrolling the page underneath it - a passive listener (what the violation is asking for) is categorically forbidden from calling `preventDefault()` at all, so marking it passive would silently disable wheel-zoom entirely, not just suppress a console message. This is the same fundamental tension every wheel-to-zoom library (D3, OpenLayers, Leaflet, ...) hits, not a Clew-specific oversight.
+
+**Decision, confirmed with the user**: no code change. This is a DevTools-console-only hint (`[Violation]`, not an error), invisible to any user who hasn't opened the browser console, with no measurable effect on actual scroll/zoom responsiveness. Patching sigma's own `MouseCaptor` via `patch-package` was considered and explicitly declined - real risk of regressing wheel-zoom, would need re-verification on every sigma version bump, for a warning nobody but a plugin developer ever sees.
+
 ## Shortened: Layout dialog descriptions
 
 Backlog "Rang 12": each of the four `LAYOUT_OPTIONS` descriptions (`layoutModal.ts`) trimmed from 2-3 sentences down to one short, still complete sentence - the dialog previously ran noticeably taller than the four option names alone needed. Meaning kept intact (what the layout does + what it's best for); only the wording that repeated what the layout name/UI already implied was cut.
