@@ -415,49 +415,6 @@ export const DEFAULT_GROUP_COLORS = [
 ];
 
 /**
- * Three ready-made groups, one per non-note `nodeKind` value, all built on
- * the unified `nodeKind` criterion - user feedback: "Erstelle Standard-
- * Color&Size-Definitionen für Non existent link, Attachment, Tag" (and
- * "Lösche den Standard-Color&Size 'Non-existent Notes'", the earlier single
- * `existence`-based group this replaces). Fixed `id`s (not user-editable)
- * so settings.ts's `showDefaultColorGroups` toggle (main.ts's
- * syncDefaultPresets()) can reliably find and add/remove exactly these
- * three. `enabled: false` on all three - same reasoning as filter.ts's
- * DEFAULT_FILTER_PRESETS: the toggle makes them *available* in the Color &
- * size panel, it doesn't silently recolor anyone's graph the moment they
- * update the plugin. Colors are this file's own DEFAULT_GROUP_COLORS
- * entries, not new one-off hexes - orange (`[1]`) carried over unchanged
- * from the group this replaces, blue (`[5]`) and violet (`[6]`, matching
- * theme.ts's own default `tagNodeColor`) for the two new ones.
- */
-export const DEFAULT_NODE_GROUPS: NodeGroup[] = [
-	{
-		id: 'default-group-nonexistent-links',
-		name: 'Non-existent links',
-		color: DEFAULT_GROUP_COLORS[1]!,
-		sizeMultiplier: null,
-		enabled: false,
-		criteria: [{ type: 'nodeKind', kind: 'nonexistent' }],
-	},
-	{
-		id: 'default-group-attachments',
-		name: 'Attachments',
-		color: DEFAULT_GROUP_COLORS[5]!,
-		sizeMultiplier: null,
-		enabled: false,
-		criteria: [{ type: 'nodeKind', kind: 'attachment' }],
-	},
-	{
-		id: 'default-group-tags',
-		name: 'Tags',
-		color: DEFAULT_GROUP_COLORS[6]!,
-		sizeMultiplier: null,
-		enabled: false,
-		criteria: [{ type: 'nodeKind', kind: 'tag' }],
-	},
-];
-
-/**
  * Frontmatter values can be a string, number, boolean, list, or nested
  * object - `String(value)` on an object/array would silently collapse to
  * "[object Object]", so each shape gets a sensible lowercase text form to

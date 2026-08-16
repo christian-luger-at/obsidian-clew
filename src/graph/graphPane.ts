@@ -20,12 +20,11 @@ import { ConfirmModal } from './confirmModal';
 import { communityHomogeneity, computeCommunityStats, detectCommunities, staleness } from './stagnation';
 import { readThemeColors, ThemeColors, blendToward, parseRgbString } from './theme';
 import { HeatmapLayer, HeatmapRegion, createHeatmapLayer } from './heatmapLayer';
-import { DEFAULT_FILTER_PRESETS, evaluateFilters, FilterCombineMode, FilterPreset, isAnyFilterEnabled, MAX_FILTER_PRESETS } from './filter';
+import { evaluateFilters, FilterCombineMode, FilterPreset, isAnyFilterEnabled, MAX_FILTER_PRESETS } from './filter';
 import {
 	CentralityBucket,
 	CriteriaOwner,
 	DEFAULT_GROUP_COLORS,
-	DEFAULT_NODE_GROUPS,
 	describeCriterion,
 	evaluateGroups,
 	GroupCriterion,
@@ -240,42 +239,6 @@ const CRITERION_DESCRIPTIONS: Record<GroupCriterionType, string> = {
 	nodeKind:
 		"Matches one specific kind of node: a normal note, a tag node, an attachment node, or a 'nonexistent link' (a link to a note that doesn't exist yet). Tag/attachment nodes only appear once 'Tags as nodes'/'Attachments as nodes' is turned on in Appearance, at the very top of the panel.",
 };
-
-/**
- * Whether `id` belongs to filter.ts's DEFAULT_FILTER_PRESETS - user
- * feedback: "diese Einträge dürfen vom Benutzer nicht gelöscht werden
- * [...] und auch nicht editierbar". renderFilterRow() uses this to skip
- * rendering the pencil (edit) *and* trash icon entirely for a default
- * filter row, rather than rendering either and having
- * toggleEditingFilter()/deleteFilter() silently refuse - an absent control
- * reads as "this isn't something you change," a present but
- * non-functional one would just read as broken. The row's own enabled
- * toggle is untouched by this (still there, still live) - "not editable"
- * means its name/criteria are fixed, not that it can't be switched on/off
- * like any other filter. The only way to remove one at all is Settings →
- * Community plugins → Clew (settingsTab.ts's showDefaultFilters toggle,
- * applied via ClewPlugin.syncDefaultPresets()).
- */
-function isDefaultFilterId(id: string): boolean {
-	return DEFAULT_FILTER_PRESETS.some((preset) => preset.id === id);
-}
-
-/**
- * Whether `id` belongs to nodeGroups.ts's DEFAULT_NODE_GROUPS - unlike
- * isDefaultFilterId() above, a default *group* isn't fully locked any
- * more: user feedback narrowed the original "nicht editierbar" rule
- * specifically to color and size ("Bei Standard-Einträgen: Farbe und
- * Grösse änderbar"), so renderGroupRow() still renders its pencil (opens
- * renderGroupEditForm(), which itself hides the name field and the whole
- * criteria section for a default group - see its own isDefault branch) but
- * keeps the trash hidden, same "an absent control reads as fixed" reasoning
- * as the filter case for deletion specifically. The only way to remove one
- * at all is still Settings → Community plugins → Clew (settingsTab.ts's
- * showDefaultColorGroups toggle, applied via ClewPlugin.syncDefaultPresets()).
- */
-function isDefaultGroupId(id: string): boolean {
-	return DEFAULT_NODE_GROUPS.some((group) => group.id === id);
-}
 
 /** Parses a criterion's number inputs (staleDays/minLinks) - empty/invalid/negative all mean "0", same as the field never being touched. */
 function parsePositiveInt(value: string): number | null {
@@ -4447,10 +4410,8 @@ export class GraphPane {
 
 		row.createSpan({ cls: 'clew-group-name', text: preset.name });
 
-		if (!isDefaultFilterId(preset.id)) {
-			new ExtraButtonComponent(row).setIcon('pencil').setTooltip('Edit').onClick(() => this.toggleEditingFilter(preset.id));
-			new ExtraButtonComponent(row).setIcon('trash').setTooltip('Delete').onClick(() => this.deleteFilter(preset.id));
-		}
+		new ExtraButtonComponent(row).setIcon('pencil').setTooltip('Edit').onClick(() => this.toggleEditingFilter(preset.id));
+		new ExtraButtonComponent(row).setIcon('trash').setTooltip('Delete').onClick(() => this.deleteFilter(preset.id));
 
 		new ToggleComponent(row).setValue(preset.enabled).onChange((value) => {
 			preset.enabled = value;
@@ -4993,18 +4954,8 @@ export class GraphPane {
 		row.createSpan({ cls: 'clew-group-swatch' }).style.backgroundColor = group.color;
 		row.createSpan({ cls: 'clew-group-name', text: group.name });
 
-		// Default groups (nodeGroups.ts's DEFAULT_NODE_GROUPS) get the pencil
-		// too now - user feedback: their color and size should be changeable
-		// like any other group's, just not their name or criteria (that's
-		// what makes it "Non-existing notes" rather than an arbitrary group -
-		// see renderGroupEditForm()'s own isDefaultGroupId branch for what
-		// stays locked). Only the trash stays hidden - deleting one is still
-		// only possible via Settings' showDefaultColorGroups toggle, same as
-		// before.
 		new ExtraButtonComponent(row).setIcon('pencil').setTooltip('Edit').onClick(() => this.toggleEditingGroup(group.id));
-		if (!isDefaultGroupId(group.id)) {
-			new ExtraButtonComponent(row).setIcon('trash').setTooltip('Delete').onClick(() => this.deleteGroup(group.id));
-		}
+		new ExtraButtonComponent(row).setIcon('trash').setTooltip('Delete').onClick(() => this.deleteGroup(group.id));
 
 		// After delete, not near the drag handle (user feedback) - the
 		// enable toggle is the row's own "is this active" state, not part
@@ -5256,8 +5207,6 @@ export class GraphPane {
 	 * commit or discard by then.
 	 */
 	private renderGroupEditForm(group: NodeGroup): void {
-		const isDefault = isDefaultGroupId(group.id);
-
 		// 'clew-group-edit-flat' in addition to the shared 'clew-group-edit'
 		// (still used as-is by Filter's own renderFilterEditForm()) - this
 		// form dropped its "Group"/"Criteria" Setting headings (flattened,
@@ -5281,32 +5230,24 @@ export class GraphPane {
 			this.debouncedSaveNodeGroups();
 			this.applyNodeGroups();
 		});
-		// A default group's (nodeGroups.ts's DEFAULT_NODE_GROUPS) name stays a
-		// static label, not a TextComponent - user feedback: color and size
-		// should be changeable for these, name and criteria (what actually
-		// makes it "Non-existing notes") should not, same as the criteria
-		// section skipped entirely below.
-		if (isDefault) nameRowEl.createSpan({ cls: 'clew-group-name', text: group.name });
-		else {
-			new TextComponent(nameRowEl).setValue(group.name).onChange((value) => {
-				group.name = value;
-				// Just the save, not applyNodeGroups() - user report: the
-				// graph visibly refreshed on every keystroke while typing a
-				// group's name. A name has zero effect on which nodes match
-				// or how they're colored/sized (only `criteria`/`color`/
-				// `sizeMultiplier` do - see NodeGroup's own docstring), and
-				// renderLegend() (the one place a name used to need to show
-				// up live) is a no-op now (user feedback removed the legend
-				// entirely - "Legende kann weg", see its own docstring) - so
-				// there was nothing left needing that per-keystroke repaint/
-				// renderer.refresh()/async refreshCriteriaContent() call at
-				// all, only the cost of running it. The collapsed row's own
-				// name label (`group.name`) still picks up the final value
-				// correctly, since it's read fresh from settings.nodeGroups
-				// every time the panel re-renders (e.g. closing this form).
-				this.debouncedSaveNodeGroups();
-			});
-		}
+		new TextComponent(nameRowEl).setValue(group.name).onChange((value) => {
+			group.name = value;
+			// Just the save, not applyNodeGroups() - user report: the
+			// graph visibly refreshed on every keystroke while typing a
+			// group's name. A name has zero effect on which nodes match
+			// or how they're colored/sized (only `criteria`/`color`/
+			// `sizeMultiplier` do - see NodeGroup's own docstring), and
+			// renderLegend() (the one place a name used to need to show
+			// up live) is a no-op now (user feedback removed the legend
+			// entirely - "Legende kann weg", see its own docstring) - so
+			// there was nothing left needing that per-keystroke repaint/
+			// renderer.refresh()/async refreshCriteriaContent() call at
+			// all, only the cost of running it. The collapsed row's own
+			// name label (`group.name`) still picks up the final value
+			// correctly, since it's read fresh from settings.nodeGroups
+			// every time the panel re-renders (e.g. closing this form).
+			this.debouncedSaveNodeGroups();
+		});
 		const optionsButton = new ExtraButtonComponent(nameRowEl).setIcon('more-vertical').setTooltip('More options');
 		optionsButton.onClick(() => this.openGroupOptionsMenu(optionsButton.extraSettingsEl, group));
 		new ExtraButtonComponent(nameRowEl).setIcon('x').setTooltip('Close').onClick(() => this.toggleEditingGroup(group.id));
@@ -5328,12 +5269,6 @@ export class GraphPane {
 					}),
 			);
 		}
-
-		// A default group's criteria are fixed (they're what makes it that
-		// specific ready-made group, e.g. `nodeKind: 'nonexistent'` for
-		// "Non-existent links") - no criteria list, no "+ add", nothing left
-		// to edit here once color/size are covered above.
-		if (isDefault) return;
 
 		// No "Criteria" heading/description any more (removed on feedback,
 		// same flattening as above) - AND-across-everything still isn't

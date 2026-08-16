@@ -75,34 +75,6 @@ export class ClewSettingTab extends PluginSettingTab {
 				}),
 			);
 
-		new Setting(containerEl).setName('Default filters & colors').setHeading();
-		containerEl.createEl('p', {
-			text: 'Ready-made filters/color groups, one per node type. Available in the graph view\'s Filter/Color & size panels - each still needs its own checkbox turned on there to actually apply.',
-			cls: 'setting-item-description',
-		});
-
-		new Setting(containerEl)
-			.setName('Default filters')
-			.setDesc('"Non-existent links" / "Attachments" / "Tags" in the Filter panel.')
-			.addToggle((toggle) =>
-				toggle.setValue(this.plugin.settings.showDefaultFilters).onChange(async (value) => {
-					this.plugin.settings.showDefaultFilters = value;
-					this.plugin.syncDefaultPresets();
-					await this.plugin.saveSettings();
-				}),
-			);
-
-		new Setting(containerEl)
-			.setName('Default color groups')
-			.setDesc('"Non-existent links" / "Attachments" / "Tags" in the Color & size panel.')
-			.addToggle((toggle) =>
-				toggle.setValue(this.plugin.settings.showDefaultColorGroups).onChange(async (value) => {
-					this.plugin.settings.showDefaultColorGroups = value;
-					this.plugin.syncDefaultPresets();
-					await this.plugin.saveSettings();
-				}),
-			);
-
 		new Setting(containerEl).setName('Find path').setHeading();
 		containerEl.createEl('p', {
 			text: 'Notes and folders every Find-path search leaves out entirely (e.g. a big MOC/index note, or a whole "Archive" folder, you never want a route hopping through) - excluded notes also get a ring while Find-path is open, so you can see which ones at a glance. Configured only here, not in the Find-path dialog itself.',

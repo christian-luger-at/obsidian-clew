@@ -1892,6 +1892,20 @@ User-reported, reproducing a case the earlier "settings tab pushes a refresh to 
 
 **Manual QA** (real Obsidian, `.exclusion-qa-vault` built the same way as other recent QA rounds - script not committed): ran a real Find-path search (Ancient Greece → Cold War Era), confirmed the shortest route routed through `World War II Era`; excluded that exact note via the same code path Settings tab's button handler uses (`plugin.settings.pathfindingExcludedNotes.push(...)` + `saveSettings()` + `pane.refreshPathfindingExclusions()`, reached directly since the Settings modal itself wouldn't reliably open under this automation harness - a CDP/focus quirk of the harness, not the plugin); the route panel updated immediately to a different 10-note route via `Vladimir Lenin`/`Karl Marx`/`Chinese Communist Revolution`, completely avoiding the excluded note. Screenshot confirms the new route highlighted on the graph.
 
+## Removed: default filters/color groups and their Settings toggle
+
+Backlog "Rang 8": removed the three ready-made filters/color groups ("Non-existent links"/"Attachments"/"Tags", filter.ts's `DEFAULT_FILTER_PRESETS` and nodeGroups.ts's `DEFAULT_NODE_GROUPS`) and the `showDefaultFilters`/`showDefaultColorGroups` Settings toggle that seeded/removed them (main.ts's `syncDefaultPresets()`/`syncById()`).
+
+- **`settings.ts`**: `showDefaultFilters`/`showDefaultColorGroups` fields removed from `ClewSettings`.
+- **`main.ts`**: `loadSettings()` no longer seeds either flag; `syncDefaultPresets()`/`syncById()` deleted outright (no longer called from anywhere).
+- **`settingsTab.ts`**: the "Default filters & colors" heading + two toggles removed from the Settings tab.
+- **`filter.ts`**/**`nodeGroups.ts`**: `DEFAULT_FILTER_PRESETS`/`DEFAULT_NODE_GROUPS` removed entirely - Clew ships with no ready-made filters/groups at all now, an empty Filter/Color & size panel on a fresh install (same as any user-created list once emptied).
+- **`graphPane.ts`**: `isDefaultFilterId()`/`isDefaultGroupId()` (and their special-casing in `renderFilterRow()`/`renderGroupRow()`/`renderGroupEditForm()` - hiding the edit/delete controls, locking a default group's name/criteria to a static label) removed. Every filter/group row now always shows its pencil and trash, and every group's edit form always shows an editable name field and its criteria section - there's no longer a second, locked-down shape to render.
+- **Backward compatible, no migration needed**: an existing vault that already had one of the old `default-filter-*`/`default-group-*` ids saved in `filterPresets`/`nodeGroups` keeps that entry exactly as-is on upgrade - it simply becomes a normal, fully editable/deletable entry from then on, same as anything the user built themselves.
+- **`docs/guide/filter.md`/`docs/guide/color-and-size.md`** updated to drop the "three ready-made filters/groups ship out of the box" claims - both now just describe the `Node type` criterion you'd build yourself for the same result.
+
+Manual QA (real Obsidian): seeded a vault's `data.json` with a `default-filter-tags`/`default-group-tags` entry (simulating an existing install predating this change) - both the Filter and Color & size panel rows for "Tags" now show a working Delete control, and the group's edit form shows an editable name `<input>` plus its `Node type` criterion chip with a working "+ add", none of which were available for a default entry before.
+
 ## Download statistics
 
 Once the plugin is in the community store, `scripts/release-stats.sh` prints

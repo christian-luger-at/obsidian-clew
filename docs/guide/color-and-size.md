@@ -32,6 +32,6 @@ Groups have a priority order - drag a group's handle to reorder the list. The **
 
 A group with no criteria yet - or a note that matches no enabled group at all - falls back to the graph's default color and size.
 
-## The ready-made groups
+## Coloring by node type
 
-Three ready-made groups - **"Non-existent links"**, **"Attachments"**, **"Tags"** - ship built on the `Node type` criterion, one per non-note kind of node Clew can show. Each is disabled by default; the tag/attachment ones also need their matching [Appearance → "Show as nodes"](./appearance#show-as-nodes) toggle on before there's anything to color at all. Their color and "Scale size" multiplier are editable just like any group you create yourself and persist the same way, but their name and criteria are fixed - turn these on/off entirely under **Settings → Community plugins → Clew → "Default color groups"**.
+To color non-note nodes (`[[broken links]]`, attachments, tags), build a group with the `Node type` criterion yourself - see [Filter](./filter#the-criteria)'s own description of that criterion. Tag/attachment nodes also need their matching [Appearance → "Show as nodes"](./appearance#show-as-nodes) toggle on before there's anything to color at all.

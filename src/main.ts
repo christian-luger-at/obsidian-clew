@@ -4,8 +4,6 @@ import { CLEW_STANDALONE_GRAPH_VIEW, StandaloneGraphView } from './graph/standal
 import { FIND_PATH_ENABLED, GraphPane } from './graph/graphPane';
 import { registerGraphEmbed } from './graph/graphEmbed';
 import { ClewSettingTab } from './settingsTab';
-import { DEFAULT_FILTER_PRESETS } from './graph/filter';
-import { DEFAULT_NODE_GROUPS } from './graph/nodeGroups';
 
 export default class ClewPlugin extends Plugin {
 	settings!: ClewSettings;
@@ -78,47 +76,13 @@ export default class ClewPlugin extends Plugin {
 			nodeGroups: [...(loaded?.nodeGroups ?? [])],
 			timeline: { ...DEFAULT_TIMELINE_SETTINGS, ...loaded?.timeline },
 			diagnostics: { ...DEFAULT_DIAGNOSTICS_SETTINGS, ...loaded?.diagnostics },
-			showDefaultFilters: loaded?.showDefaultFilters ?? true,
-			showDefaultColorGroups: loaded?.showDefaultColorGroups ?? true,
 			pathfindingExcludedNotes: [...(loaded?.pathfindingExcludedNotes ?? [])],
 			pathfindingExcludedFolders: [...(loaded?.pathfindingExcludedFolders ?? [])],
 			savedViews: [...(loaded?.savedViews ?? [])],
 		};
-		this.syncDefaultPresets();
 	}
 
 	async saveSettings() {
 		await this.saveData(this.settings);
-	}
-
-	/**
-	 * Adds/removes filter.ts's DEFAULT_FILTER_PRESETS and nodeGroups.ts's
-	 * DEFAULT_NODE_GROUPS by their fixed `id`s to match
-	 * showDefaultFilters/showDefaultColorGroups - see those settings' own
-	 * docstrings for why this is presence-by-id, not a live filter applied
-	 * everywhere a preset/group list is read. Called once from
-	 * loadSettings() (so a freshly-installed or just-updated vault gets the
-	 * defaults immediately) and again by settingsTab.ts whenever either
-	 * toggle changes, so the effect is immediate without needing a plugin
-	 * reload. This is the *only* way a default filter/group is ever added
-	 * or removed - graphPane.ts's Filter/Color & size panels don't offer a
-	 * delete control for one at all (user feedback: "diese Einträge dürfen
-	 * vom Benutzer nicht gelöscht werden" - see isDefaultFilterId()/
-	 * isDefaultGroupId() there), so this can safely assume "id present"
-	 * always means "the user still wants it," never "they deleted it and
-	 * it should stay gone."
-	 */
-	syncDefaultPresets(): void {
-		syncById(this.settings.filterPresets, DEFAULT_FILTER_PRESETS, this.settings.showDefaultFilters);
-		syncById(this.settings.nodeGroups, DEFAULT_NODE_GROUPS, this.settings.showDefaultColorGroups);
-	}
-}
-
-/** Adds any `defaults` entry missing from `list` (by `id`) when `show` is true; removes any present entry when `show` is false. Mutates `list` in place - both settings.filterPresets and settings.nodeGroups are live arrays other code already holds references into. */
-function syncById<T extends { id: string }>(list: T[], defaults: T[], show: boolean): void {
-	for (const def of defaults) {
-		const index = list.findIndex((item) => item.id === def.id);
-		if (show && index === -1) list.push({ ...def });
-		if (!show && index !== -1) list.splice(index, 1);
 	}
 }

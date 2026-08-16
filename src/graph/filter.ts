@@ -45,49 +45,6 @@ export interface FilterPreset extends CriteriaOwner {
 	name: string;
 }
 
-/**
- * Three ready-made filters, one per non-note `nodeKind` value
- * (nodeGroups.ts) - user feedback: rather than expecting everyone to
- * discover "+ new filter" → "Node type" on their own, ship the most
- * obviously useful combinations out of the box. "Show non-existing notes"
- * (the old `existence`-based filter) is gone along with the `existence`
- * criterion itself - "Non-existent links" below is its direct replacement,
- * same behavior, new mechanism. "Show existing notes" (`nodeKind: 'note'`)
- * was dropped too on later user feedback - "Filter 'Show existing notes'
- * löschen" - a plain, empty filter list already shows every note including
- * these three kinds, so a `nodeKind: 'note'` filter's only real use
- * (hiding tag/attachment/ghost nodes once one of those toggles is on)
- * reads better as "disable the toggle" than as a filter. Fixed `id`s (not
- * user-editable) so settings.ts's `showDefaultFilters` toggle (main.ts's
- * syncDefaultPresets()) can reliably find and add/remove exactly these
- * three, regardless of whether the user has since renamed them. `enabled:
- * false` on all three - shipping any of them pre-enabled would hide notes
- * in every vault the moment someone updates the plugin; the point of this
- * toggle is to make them *available* in the Filter panel, not to silently
- * change what's currently on screen. Same reasoning as DEFAULT_NODE_GROUPS
- * in nodeGroups.ts.
- */
-export const DEFAULT_FILTER_PRESETS: FilterPreset[] = [
-	{
-		id: 'default-filter-nonexistent-links',
-		name: 'Non-existent links',
-		enabled: false,
-		criteria: [{ type: 'nodeKind', kind: 'nonexistent' }],
-	},
-	{
-		id: 'default-filter-attachments',
-		name: 'Attachments',
-		enabled: false,
-		criteria: [{ type: 'nodeKind', kind: 'attachment' }],
-	},
-	{
-		id: 'default-filter-tags',
-		name: 'Tags',
-		enabled: false,
-		criteria: [{ type: 'nodeKind', kind: 'tag' }],
-	},
-];
-
 export type NoteFilterFacts = NodeGroupFacts;
 
 /** Whether no filter is enabled - the caller's cue to fall back to "nothing active" (show everything) instead of evaluating an empty OR/AND (which would otherwise mean "show nothing" either way, the opposite of "no filter"). */

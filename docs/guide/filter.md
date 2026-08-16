@@ -25,7 +25,7 @@ Three kinds of criteria: plain ones that look at a note directly (its text, tags
 - **Filename** - the note's title (not its body) contains a word or phrase.
 - **Not edited at least (days)** - the note hasn't been modified in at least this many days.
 - **Minimum number of links** - the note has at least this many links (its degree in the graph, in + out combined).
-- **Node type** - matches one specific kind of node: a normal note, a *tag node*, an *attachment node*, or a *nonexistent link* (a link to a note that doesn't exist yet, also called a "ghost node"). Tag and attachment nodes only appear on the graph at all once you turn them on under [Appearance](./appearance#show-as-nodes) - each is off by default, since either one adds real nodes/edges to the graph, not just a style change. Three ready-made filters - **"Non-existent links"**, **"Attachments"**, **"Tags"** - are available out of the box (disabled by default, and each still needs its matching "Show as nodes" toggle on to actually see anything) so you don't have to build this one from scratch.
+- **Node type** - matches one specific kind of node: a normal note, a *tag node*, an *attachment node*, or a *nonexistent link* (a link to a note that doesn't exist yet, also called a "ghost node"). Tag and attachment nodes only appear on the graph at all once you turn them on under [Appearance](./appearance#show-as-nodes) - each is off by default, since either one adds real nodes/edges to the graph, not just a style change.
 
 ### Link-graph criteria
 
