@@ -110,7 +110,7 @@ area.
 ## Releases
 
 Releases are cut by the author with `release.sh` (see the
-[release section in DEVELOPMENT.md](DEVELOPMENT.md#build-production-release)). Contributors do not
+[release section in DEVELOPMENT.md](DEVELOPMENT.md#release)). Contributors do not
 need to bump versions or create tags - please leave `manifest.json`,
 `package.json`, and `versions.json` version numbers unchanged in your PR.
 
