@@ -4,6 +4,7 @@ import { CLEW_STANDALONE_GRAPH_VIEW, StandaloneGraphView } from './graph/standal
 import { FIND_PATH_ENABLED, GraphPane } from './graph/graphPane';
 import { registerGraphEmbed } from './graph/graphEmbed';
 import { ClewSettingTab } from './settingsTab';
+import { reportError } from './errorReporting';
 
 export default class ClewPlugin extends Plugin {
 	settings!: ClewSettings;
@@ -42,6 +43,42 @@ export default class ClewPlugin extends Plugin {
 				},
 			});
 		}
+
+		this.registerGlobalErrorReporting();
+	}
+
+	/**
+	 * Backlog "Rang 7", "Fehlerhandling" - catches uncaught errors/rejected
+	 * promises that originate from Clew's own bundled code specifically,
+	 * not Obsidian core or another plugin, and routes them through
+	 * errorReporting.ts's `reportError()` (console always, a copyable
+	 * Notice too when `settings.debugMode` is on).
+	 *
+	 * Filtered by `plugin:${this.manifest.id}` - confirmed directly, not
+	 * assumed, by throwing a real error from inside a bundled command
+	 * callback and inspecting the resulting `ErrorEvent`/
+	 * `PromiseRejectionEvent`: Obsidian's plugin loader names each plugin's
+	 * evaluated source `plugin:<id>` (no path/extension), which is exactly
+	 * what `ErrorEvent.filename` reports for a synchronous throw, and what
+	 * `Error.stack`'s own first frame names for an async one - a bug inside
+	 * Obsidian core or a different plugin reports its *own* different
+	 * source name instead, so this cleanly excludes them rather than
+	 * showing a notice for something Clew had nothing to do with.
+	 * `registerDomEvent` (not a bare `window.addEventListener`) so both
+	 * listeners are automatically removed on unload, same as every other
+	 * event this plugin registers.
+	 */
+	private registerGlobalErrorReporting(): void {
+		const ownSource = `plugin:${this.manifest.id}`;
+		this.registerDomEvent(window, 'error', (event) => {
+			if (event.filename !== ownSource) return;
+			reportError('Uncaught error', event.error ?? event.message, this.settings.debugMode);
+		});
+		this.registerDomEvent(window, 'unhandledrejection', (event) => {
+			const stack = event.reason instanceof Error ? event.reason.stack : undefined;
+			if (!stack?.includes(`${ownSource}:`)) return;
+			reportError('Unhandled promise rejection', event.reason, this.settings.debugMode);
+		});
 	}
 
 	onunload() {}
@@ -79,6 +116,7 @@ export default class ClewPlugin extends Plugin {
 			pathfindingExcludedNotes: [...(loaded?.pathfindingExcludedNotes ?? [])],
 			pathfindingExcludedFolders: [...(loaded?.pathfindingExcludedFolders ?? [])],
 			savedViews: [...(loaded?.savedViews ?? [])],
+			debugMode: loaded?.debugMode ?? false,
 		};
 	}
 

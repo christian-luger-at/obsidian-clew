@@ -82,6 +82,19 @@ export class ClewSettingTab extends PluginSettingTab {
 		});
 		this.renderExcludedNotesSetting(containerEl);
 		this.renderExcludedFoldersSetting(containerEl);
+
+		new Setting(containerEl).setName('Debug').setHeading();
+		new Setting(containerEl)
+			.setName('Show error notifications')
+			.setDesc(
+				'Every unexpected error already goes to the developer console. Turn this on to also see a copyable notification for it - useful while reporting a bug, noisy for everyday use, which is why it defaults off.',
+			)
+			.addToggle((toggle) =>
+				toggle.setValue(this.plugin.settings.debugMode).onChange(async (value) => {
+					this.plugin.settings.debugMode = value;
+					await this.plugin.saveSettings();
+				}),
+			);
 	}
 
 	/**

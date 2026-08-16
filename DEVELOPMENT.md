@@ -43,9 +43,10 @@ esbuild watch mode - rebuilds `main.js` on every save.
 
 ```
 src/
-  main.ts                  # plugin entry point, lifecycle
+  main.ts                  # plugin entry point, lifecycle, global error listeners
   settings.ts               # persisted settings shape + defaults
   settingsTab.ts             # Settings → Community plugins → Clew
+  errorReporting.ts           # console + optional copyable Notice for Clew's own errors
   graph/
     vaultGraph.ts             # builds a graphology graph from vault files + links
     graphPane.ts               # the graph view's rendering + every panel (toolbar, Filter, Color & size, Diagnostics, Focus, Find path, Timeline, Appearance, Saved views)
@@ -170,6 +171,9 @@ Every `npm run build` after that updates the vault automatically. Open `test-vau
 
 **Code-fence embed** (` ```clew-graph ` in any note - see `graphEmbed.ts`/`embedConfig.ts`)
 - `node:` (required, resolved like a `[[wikilink]]`), `hops:` (1-3, default 1), `width:`/`height:` (CSS length; no width → 100%, no height → 16:9), `refresh:` (shows a manual refresh button). Renders Radial-centered on `node:`, never inherits the vault's real filters/colors/pinned positions. Missing/unresolvable `node:` renders a red inline error, not a crash.
+
+**Error notifications** (Settings → Community plugins → Clew → "Debug" - see `errorReporting.ts`)
+- Off by default. Every unexpected error inside Clew's own code always goes to the console regardless; turning "Show error notifications" on additionally shows a sticky, copyable `Notice` (context + message + stack) for it. An error from Obsidian core or a different plugin never triggers one, either way - filtered by the `plugin:clew` source name Obsidian's own loader stamps onto this plugin's bundled code.
 
 ## Rendering at scale
 

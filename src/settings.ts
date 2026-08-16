@@ -346,6 +346,17 @@ export interface ClewSettings {
 	pathfindingExcludedFolders: string[];
 	/** See SavedView's own docstring. Empty array = none saved yet - GraphPane's Views button has no "is-active" state to track (unlike Filter/Color & size, there's nothing here that's ever "on" independent of a specific view being applied). */
 	savedViews: SavedView[];
+	/**
+	 * Backlog "Rang 7", "Fehlerhandling" - user feedback: "Wenn ein Fehler
+	 * geworfen wird und auf der Console dargestellt wird, dann soll der
+	 * Benutzer auch eine Meldung bekommen. Dieses Feature kann in den
+	 * Settings abgeschaltet werden (Debug = Ja/Nein)." Gates
+	 * errorReporting.ts's `reportError()` showing a copyable `Notice` on top
+	 * of its always-on `console.error()` - **off by default** ("Standardwert
+	 * für Setting = Nein"), so a normal user's session stays quiet unless
+	 * they've deliberately turned this on (e.g. while reporting a bug).
+	 */
+	debugMode: boolean;
 }
 
 /**

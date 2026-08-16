@@ -1153,3 +1153,35 @@
 	font-size: var(--font-ui-smaller);
 	white-space: nowrap;
 }
+
+/* Backlog "Rang 7", "Fehlerhandling" - the copyable error Notice
+   errorReporting.ts's reportError() builds when settings.debugMode is on. */
+.clew-error-notice-context {
+	font-weight: var(--font-medium);
+	margin-bottom: var(--size-4-1);
+}
+
+.clew-error-notice-text {
+	max-height: 200px;
+	overflow-y: auto;
+	white-space: pre-wrap;
+	word-break: break-word;
+	font-size: var(--font-ui-smaller);
+	/* Obsidian's own Notice forces a fixed (theme-independent) text color
+	   on everything inside it - --background-secondary is meant to pair
+	   with --text-normal, not whatever that forced color happens to be, so
+	   without reclaiming it explicitly here the text reads as
+	   near-invisible (verified directly - white text on a near-white
+	   background). */
+	color: var(--text-normal);
+	background-color: var(--background-secondary);
+	border-radius: var(--radius-s);
+	padding: var(--size-4-2);
+	margin: 0 0 var(--size-4-2) 0;
+}
+
+.clew-error-notice-copy {
+	display: flex;
+	align-items: center;
+	gap: var(--size-4-1);
+}
