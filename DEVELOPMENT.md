@@ -1906,6 +1906,12 @@ Backlog "Rang 8": removed the three ready-made filters/color groups ("Non-existe
 
 Manual QA (real Obsidian): seeded a vault's `data.json` with a `default-filter-tags`/`default-group-tags` entry (simulating an existing install predating this change) - both the Filter and Color & size panel rows for "Tags" now show a working Delete control, and the group's edit form shows an editable name `<input>` plus its `Node type` criterion chip with a working "+ add", none of which were available for a default entry before.
 
+## Shortened: Layout dialog descriptions
+
+Backlog "Rang 12": each of the four `LAYOUT_OPTIONS` descriptions (`layoutModal.ts`) trimmed from 2-3 sentences down to one short, still complete sentence - the dialog previously ran noticeably taller than the four option names alone needed. Meaning kept intact (what the layout does + what it's best for); only the wording that repeated what the layout name/UI already implied was cut.
+
+Manual QA (real Obsidian): opened the Layout dialog, all four descriptions now read as one line-wrapped sentence each instead of three-plus, dialog is visibly more compact; every layout still switches correctly when picked.
+
 ## Download statistics
 
 Once the plugin is in the community store, `scripts/release-stats.sh` prints

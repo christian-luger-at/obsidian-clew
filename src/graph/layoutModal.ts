@@ -32,22 +32,21 @@ export interface LayoutOption {
 export const LAYOUT_OPTIONS: LayoutOption[] = [
 	{
 		mode: 'force',
-		description:
-			'The default. Physics pulls linked notes toward each other, so related notes settle into organic clusters - the best general-purpose overview of how the whole vault connects.',
+		// Shortened on user feedback ("Texte kürzen bei Dialog-Beschreibung
+		// für Layouts") - the pre-shortening wording is preserved in this
+		// file's git history if the fuller framing is ever needed again.
+		description: 'Physics clusters linked notes together - the default, best general-purpose overview.',
 	},
 	{
 		mode: 'hierarchical',
-		description:
-			'Arranges notes top-down by link direction, like a tree or outline. Best when the vault has a real hierarchy - MOCs, outlines, structured notes - that a physics-based clustering would otherwise obscure.',
+		description: 'Top-down by link direction, like an outline. Best for a vault with a real hierarchy.',
 	},
 	{
 		mode: 'radial',
-		description:
-			'Rings every note out from one you pick, by link distance - its direct links on the first ring, their links on the next, and so on. Best for "how does the rest of the vault relate to this one note?".',
+		description: 'Rings out from one note you pick, by link distance. Best for "how does everything relate to this note?".',
 	},
 	{
 		mode: 'circular',
-		description:
-			"Places every note evenly around a single circle. The simplest arrangement for spotting recurring connection patterns as arcs across the circle - patterns force layout's clustering can hide.",
+		description: 'Every note evenly spaced on one circle. Good for spotting recurring connection patterns.',
 	},
 ];
