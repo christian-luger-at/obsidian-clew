@@ -110,9 +110,9 @@ export interface ClewAppearanceSettings {
 	radialRingSpacing: number;
 	/** Ring radius in the circular layout (circularLayout.ts). */
 	circularRadius: number;
-	/** dagre's nodesep (hierarchicalLayout.ts) - spacing between nodes on the same rank. */
+	/** dagre's nodesep - spacing between nodes on the same rank. Shared by Hierarchical (hierarchicalLayout.ts) and Folder tree (folderLayout.ts), both dagre-based layered layouts tuned by the same two knobs. */
 	hierarchicalNodeSpacing: number;
-	/** dagre's ranksep (hierarchicalLayout.ts) - spacing between ranks. */
+	/** dagre's ranksep - spacing between ranks. Shared by Hierarchical (hierarchicalLayout.ts) and Folder tree (folderLayout.ts). */
 	hierarchicalRankSpacing: number;
 	/** Pixels per day of real elapsed time along the X axis in the timeline layout (timelineLayout.ts). */
 	timelineDayWidth: number;

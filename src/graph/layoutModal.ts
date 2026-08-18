@@ -1,10 +1,10 @@
 /**
  * 'force' is the only mode with live physics (ForceAtlas2) and the only one
  * dragging (GraphPane.setupNodeDragging) or pinning (finishDrag) works
- * against - the other three lay the whole graph out fresh from a pure
+ * against - every other mode lays the whole graph out fresh from a pure
  * function each time, with no per-node "leave this one alone" concept.
  */
-export type LayoutMode = 'force' | 'hierarchical' | 'radial' | 'circular' | 'timeline';
+export type LayoutMode = 'force' | 'hierarchical' | 'radial' | 'circular' | 'timeline' | 'folder';
 
 export const LAYOUT_MODE_LABELS: Record<LayoutMode, string> = {
 	force: 'Force',
@@ -12,6 +12,7 @@ export const LAYOUT_MODE_LABELS: Record<LayoutMode, string> = {
 	radial: 'Radial',
 	circular: 'Circular',
 	timeline: 'Timeline',
+	folder: 'Folder tree',
 };
 
 export interface LayoutOption {
@@ -53,5 +54,9 @@ export const LAYOUT_OPTIONS: LayoutOption[] = [
 	{
 		mode: 'timeline',
 		description: "Left to right by creation date, real gaps and all. Best for spotting quiet stretches and bursts in your vault's history.",
+	},
+	{
+		mode: 'folder',
+		description: 'Top-down by folder, like your file explorer. Best for a vault organized by folders rather than links.',
 	},
 ];
