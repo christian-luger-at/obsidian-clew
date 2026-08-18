@@ -84,22 +84,6 @@ const VISIBILITY_FADE_MS = TIMELINE_FADE_MS;
 /** Same reasoning as TIMELINE_FADE_TICK_MS above, shared by Filter/Focus's fade ticker (startVisibilityFadeTicker()). */
 const VISIBILITY_FADE_TICK_MS = TIMELINE_FADE_TICK_MS;
 
-/**
- * Backlog Rang 14 item 3: how often idle physics (startIdlePhysics()) gives
- * each non-fixed node a small random nudge. ForceAtlas2 itself has no
- * built-in randomness or "reheat" the way some other force-simulation
- * libraries do - once converged it's numerically still, so left running
- * alone (even indefinitely, see maybeStartIdlePhysics()) it would never
- * actually produce visible motion. The nudge is what supplies that
- * "energy"; the *already-running* ForceAtlas2 supervisor is what pulls
- * things back into a stable arrangement afterward, rather than leaving a
- * jarring jump - the combination is what reads as a gentle, continuous
- * "breathing," not two separate, disconnected effects.
- */
-const IDLE_PHYSICS_NUDGE_MS = 4000;
-/** Max random offset (in either direction, on each axis) one idle-physics nudge gives a node - small relative to typical node spacing (nodeBaseSize's own default is 2.5) so it reads as a subtle drift, not a visible jump. */
-const IDLE_PHYSICS_JITTER = 3;
-
 /** "10s"/"30s"/"1 min"/"3 min" - TIMELINE_DURATIONS is always whole seconds, some of them >= 60. */
 function formatTimelineDuration(seconds: number): string {
 	if (seconds < 60) return `${seconds}s`;
@@ -316,7 +300,7 @@ function debounce(fn: () => void, delayMs: number): () => void {
 interface AppearanceSliderSpec {
 	// Excludes edgeColorOverride/nodeColorOverride (non-numeric string |
 	// null settings, their own color-picker UI instead of a slider), and
-	// showEdgeDirection/dissuadeHubs/linLogMode/idlePhysics/showTagNodes/
+	// showEdgeDirection/dissuadeHubs/linLogMode/showTagNodes/
 	// showAttachmentNodes/showGhostNodes/showClusterHeatmap (booleans,
 	// their own toggle UI instead) - see renderAppearancePanel()'s
 	// "Nodes"/"Edges"/"Physics" sections.
@@ -327,7 +311,6 @@ interface AppearanceSliderSpec {
 		| 'showEdgeDirection'
 		| 'dissuadeHubs'
 		| 'linLogMode'
-		| 'idlePhysics'
 		| 'showTagNodes'
 		| 'showAttachmentNodes'
 		| 'showGhostNodes'
@@ -893,8 +876,6 @@ export class GraphPane {
 	/** Backlog Rang 14 item 1: shared by Filter's and Focus's nodeReducer/edgeReducer (applyFilter()/applyFocus()) - both hide/show a node subset, so one tracker covers both rather than two that would need to stay in sync on every switch between them (the two modes are already mutually exclusive - see applyFocus()'s docstring). */
 	private visibilityFadeTracker: FadeTracker = createFadeTracker();
 	private visibilityFadeIntervalId: number | null = null;
-	/** Backlog Rang 14 item 3: the periodic-nudge timer, separate from `this.layout` (the actual FA2 supervisor) - see startIdlePhysics()'s own docstring for why both are needed together. */
-	private idlePhysicsIntervalId: number | null = null;
 
 	/**
 	 * GitHub issue #4 (code-fence embed): true for a pane created by
@@ -2110,38 +2091,6 @@ export class GraphPane {
 						this.reapplyActiveLayout();
 					}),
 				);
-			// Rang 14 item 3 ("Dynamik in der Darstellung") - unlike the two
-			// toggles above, this doesn't call reapplyActiveLayout() (that
-			// would restart the whole settle from the deterministic seed,
-			// far more disruptive than what flipping this actually needs):
-			// turning it on starts idle physics right away if the graph is
-			// already settled and idle (maybeStartIdlePhysics() itself
-			// no-ops if it isn't, e.g. still mid-settle - onSettled picks it
-			// up once that finishes on its own); turning it off just stops
-			// the periodic nudge and the now-unwanted supervisor immediately.
-			new Setting(this.appearancePanelEl)
-				.setName('Idle physics')
-				.setDesc('Keeps a gentle physics simulation running after the graph settles, instead of freezing in place.')
-				.addToggle((toggle) =>
-					toggle.setValue(this.plugin.settings.appearance.idlePhysics).onChange((value) => {
-						this.plugin.settings.appearance.idlePhysics = value;
-						void this.plugin.saveSettings();
-						if (value) this.maybeStartIdlePhysics();
-						// Only stop `this.layout` if idle physics is actually
-						// the thing currently running (idlePhysicsIntervalId
-						// non-null) - if the graph is still mid its *initial*
-						// settle when this is switched off, `this.layout` is
-						// that legitimate settle, not idle physics yet, and
-						// killing it here would cut the settle short instead.
-						// maybeStartIdlePhysics() re-checks this same setting
-						// once that settle's own onSettled fires, so it
-						// simply won't switch into idle mode at that point.
-						else if (this.idlePhysicsIntervalId !== null) {
-							this.stopIdlePhysics();
-							this.layout?.stop();
-						}
-					}),
-				);
 		}
 
 		for (const group of APPEARANCE_SLIDER_GROUPS) {
@@ -2540,48 +2489,6 @@ export class GraphPane {
 		return isVisible ? Math.max(0.15, fade) : fade;
 	}
 
-	/**
-	 * Backlog Rang 14 item 3: called from every ForceAtlas2 run's
-	 * `onSettled` (the initial settle in setForceLayout(), the short
-	 * re-settle in finishDrag()) - if idle physics is enabled and the mode
-	 * hasn't changed since (a layout switch, or the settle simply finishing
-	 * after the user had already switched away, both possible during an
-	 * async settle), keeps the *same* graph's supervisor running
-	 * indefinitely (`durationMs: undefined`, see layoutRunner.ts) instead
-	 * of letting it get killed once settled, and starts the periodic nudge
-	 * that's the actual source of visible motion - see
-	 * startIdlePhysics()'s own docstring for why ForceAtlas2 alone doesn't
-	 * move once converged.
-	 */
-	private maybeStartIdlePhysics(): void {
-		if (!this.plugin.settings.appearance.idlePhysics) return;
-		if (this.layoutMode !== 'force' || !this.graph) return;
-		this.layout = runLayout(this.graph, this.layoutOptions());
-		this.startIdlePhysics();
-	}
-
-	/** Self-stopping is deliberately *not* how this one ends, unlike startTimelineFadeTicker()/startVisibilityFadeTicker() above - idle physics only stops when told to (a layout switch, a drag starting, the setting being turned off, the pane closing), never because "nothing's happening right now," since the whole point is to keep gently happening indefinitely. */
-	private startIdlePhysics(): void {
-		if (this.idlePhysicsIntervalId !== null) return;
-		this.idlePhysicsIntervalId = window.setInterval(() => {
-			if (!this.graph || this.layoutMode !== 'force') return;
-			this.graph.forEachNode((node, attr) => {
-				if (attr.fixed) return; // respects a pinned note, same as ForceAtlas2 itself does
-				const x = typeof attr.x === 'number' ? attr.x : 0;
-				const y = typeof attr.y === 'number' ? attr.y : 0;
-				this.graph!.setNodeAttribute(node, 'x', x + (Math.random() - 0.5) * IDLE_PHYSICS_JITTER);
-				this.graph!.setNodeAttribute(node, 'y', y + (Math.random() - 0.5) * IDLE_PHYSICS_JITTER);
-			});
-		}, IDLE_PHYSICS_NUDGE_MS);
-	}
-
-	private stopIdlePhysics(): void {
-		if (this.idlePhysicsIntervalId !== null) {
-			window.clearInterval(this.idlePhysicsIntervalId);
-			this.idlePhysicsIntervalId = null;
-		}
-	}
-
 	private toggleTimelinePlayback(): void {
 		if (this.timelinePlaying) this.stopTimelinePlayback();
 		else this.startTimelinePlayback();
@@ -2641,13 +2548,6 @@ export class GraphPane {
 	destroy(): void {
 		this.stopTimelinePlayback();
 		this.stopTimelineFadeTicker();
-		// Both were missing here before this pane's fade/idle-physics
-		// features existed to leave running - a closed pane's timers would
-		// otherwise keep firing (harmlessly, since every check inside them
-		// already guards on `this.graph`, but pointlessly) until they
-		// happened to self-stop or the whole plugin unloaded.
-		this.stopVisibilityFadeTicker();
-		this.stopIdlePhysics();
 		this.layout?.stop();
 		this.heatmapLayer?.destroy();
 		this.renderer?.kill();
@@ -3926,17 +3826,6 @@ export class GraphPane {
 	 */
 	private activateLayoutMode(mode: LayoutMode): void {
 		this.layoutMode = mode;
-		// Every set*Layout() method calls this - the one place all of them
-		// funnel through, so it's also the one place idle physics (Rang 14
-		// item 3) needs stopping regardless of *which* layout is being
-		// switched to, including a fresh switch back to 'force' itself
-		// (setForceLayout() calls this before its own new settle even
-		// starts, clearing out whatever a previous force session may have
-		// left running). Only stops the periodic-nudge timer - the
-		// underlying ForceAtlas2 supervisor (`this.layout`) is already
-		// stopped by each set*Layout() method's own `this.layout?.stop()`
-		// call, made right before this one.
-		this.stopIdlePhysics();
 		setTooltip(this.layoutButton, `Layout: ${LAYOUT_MODE_LABELS[mode]}`);
 		// The Appearance panel's layout-specific slider groups (Physics,
 		// Radial/Circular/Hierarchical spacing) are filtered by this mode -
@@ -4032,16 +3921,6 @@ export class GraphPane {
 
 	private setForceLayout(): void {
 		if (!this.graph) return;
-		// Every other set*Layout() method already stops `this.layout` before
-		// computing its own positions - missing here before idle physics
-		// (Rang 14 item 3) existed, since a Force session always used to
-		// expire on its own (SETTLE_DURATION_MS) before this could ever
-		// matter. Idle physics can leave a *previous* Force session's
-		// ForceAtlas2 supervisor running indefinitely, so a fresh call here
-		// (re-picking Force, "Reset to defaults", clearPinnedPositions())
-		// must stop it explicitly - otherwise two supervisors would end up
-		// writing to the same graph concurrently.
-		this.layout?.stop();
 		this.activateLayoutMode('force');
 
 		// Restores the deterministic seed rather than letting FA2 relax from
@@ -4079,7 +3958,6 @@ export class GraphPane {
 			onSettled: () => {
 				window.clearInterval(refitIntervalId);
 				void this.resetCameraAndRefresh();
-				this.maybeStartIdlePhysics();
 			},
 		});
 	}
@@ -4139,10 +4017,10 @@ export class GraphPane {
 		this.renderer?.refresh();
 	}, 100);
 
-	/** ForceAtlas2 options shared by every runLayout() call site - gravity/scalingRatio/dissuadeHubs/linLogMode are all user-tunable (Appearance panel's Physics group), only the duration differs per call site (initial settle, the short post-drag re-settle, or - `undefined` - idle physics's indefinite run, see maybeStartIdlePhysics()). */
+	/** ForceAtlas2 options shared by every runLayout() call site - gravity/scalingRatio/dissuadeHubs/linLogMode are all user-tunable (Appearance panel's Physics group), only the duration differs per call site (initial settle vs. the short post-drag re-settle). */
 	private layoutOptions(
-		durationMs?: number,
-	): { durationMs?: number; gravity: number; scalingRatio: number; outboundAttractionDistribution: boolean; linLogMode: boolean } {
+		durationMs: number,
+	): { durationMs: number; gravity: number; scalingRatio: number; outboundAttractionDistribution: boolean; linLogMode: boolean } {
 		const appearance = this.plugin.settings.appearance;
 		return {
 			durationMs,
@@ -4273,17 +4151,6 @@ export class GraphPane {
 			if (this.layoutMode !== 'force') return;
 			this.draggedNode = payload.node;
 			renderer.getCamera().disable();
-			// Idle physics (Rang 14 item 3), if running, would otherwise keep
-			// its own ForceAtlas2 supervisor computing/overwriting every
-			// node's position - including the one now being moved by hand -
-			// fighting the drag. Stopped here, restarted once finishDrag()'s
-			// own short re-settle completes (maybeStartIdlePhysics(), wired
-			// into that runLayout() call's own onSettled below). Safe to call
-			// unconditionally even with idle physics off - stopping an
-			// already-settled layout run is a no-op (see layoutRunner.ts's
-			// own `if (settled) return` guard).
-			this.stopIdlePhysics();
-			this.layout?.stop();
 		});
 
 		// renderer.on('moveBody', ...) rather than
@@ -4356,13 +4223,7 @@ export class GraphPane {
 		}
 
 		this.layout?.stop();
-		this.layout = runLayout(this.graph, {
-			...this.layoutOptions(DRAG_SETTLE_DURATION_MS),
-			// Rang 14 item 3: resumes idle physics (stopped in setupNodeDragging()'s
-			// own 'downNode' handler right as this drag began) once this short
-			// re-settle finishes, same as the initial settle's own onSettled does.
-			onSettled: () => this.maybeStartIdlePhysics(),
-		});
+		this.layout = runLayout(this.graph, this.layoutOptions(DRAG_SETTLE_DURATION_MS));
 
 		// The Appearance panel's own "Pinned node positions" count/"Clear
 		// all" button (renderAppearancePanel()) only reads

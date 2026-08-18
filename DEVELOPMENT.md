@@ -168,7 +168,6 @@ Every `npm run build` after that updates the vault automatically. Open `test-vau
 **Interaction**
 - Click opens the note; hover highlights its neighbors (composes with whatever mode is active, restores it on mouseleave). Drag pins a node (Force layout only) - neighbors visibly resettle, position persists across a reload; a plain click doesn't pin.
 - Whichever note is the app-wide active file gets a persistent ring (any leaf, not just this view's own tab) and the camera pans to it - opening a note elsewhere, or switching tabs, keeps the graph in sync. Filter and Focus fade notes/edges in and out (~400ms) instead of an instant hide, same transition speed Timeline's own grow-in uses.
-- Idle physics (Appearance panel, off by default): keeps ForceAtlas2 running indefinitely after the settle instead of killing the supervisor, plus a periodic small random nudge per non-fixed node (`IDLE_PHYSICS_NUDGE_MS`/`IDLE_PHYSICS_JITTER`) - FA2 alone has no "reheat," so left alone it would just sit numerically still once converged; the nudge supplies the motion, FA2 pulls things back into shape afterward. Paused during a drag (would otherwise fight the manual move), resumes once the post-drag re-settle finishes.
 - Theme switch (light/dark/community theme) updates graph colors live, no reload.
 - Empty states: no notes in the vault vs. a filter matching nothing show distinct explanatory cards, not a blank canvas.
 
