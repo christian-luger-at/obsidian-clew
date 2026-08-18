@@ -28,6 +28,10 @@ Places every note evenly around a single circle. The simplest arrangement for sp
 
 Spreads notes left to right by creation date - real elapsed time, not just order, so a quiet month and a writing burst look as different as they actually are. Notes created the same day stack in one column. Best for seeing how your vault has grown over time, something none of the other layouts show at a glance the way the [Timeline scrubber](./timeline) plays through it.
 
+## Cluster
+
+Pulls each detected community into its own separate region, instead of only telling them apart by color the way a [Color & size](./color-and-size) "Community" group does. Best for a large, densely-linked vault where Force's own organic clustering leaves communities visually blended together even when colored differently.
+
 ## Switching back to Force
 
 Switching to Force always restarts from the same deterministic starting positions (or a pinned note's saved position, see [Interacting with the graph](./interactions)), then lets the physics settle for a couple of seconds - the camera tracks the graph live while it does, rather than jumping to the final framing all at once.

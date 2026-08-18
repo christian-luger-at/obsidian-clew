@@ -54,7 +54,7 @@ src/
     graphEmbed.ts              # ```clew-graph code-fence embed
     renderer.ts                 # sigma.js setup, node/edge programs
     layoutRunner.ts              # ForceAtlas2 (Worker-based)
-    hierarchicalLayout.ts / radialLayout.ts / circularLayout.ts / timelineLayout.ts
+    hierarchicalLayout.ts / radialLayout.ts / circularLayout.ts / timelineLayout.ts / clusterLayout.ts
     nodeGroups.ts               # Color & size / Filter's shared criteria engine
     filter.ts                    # FilterPreset on top of nodeGroups.ts
     pathfinding.ts               # Yen's k-shortest-paths, hub-avoidance weighting
@@ -153,10 +153,10 @@ Every `npm run build` after that updates the vault automatically. Open `test-vau
 - Most criteria show a clickable `is`/`is not` (or equivalent) word for negation; Property/Activity/Structure don't need one (their own dropdown already covers it).
 
 **Appearance** (sliders icon)
-- Node/edge size, physics (Force), spacing (Radial/Hierarchical/Circular/Timeline - only the active layout's group shows), label density/threshold, edge style, "Show as nodes" (tags/attachments/non-existent links, each off by default and rebuilding the graph when toggled), cluster-heatmap toggle. "Pinned node positions" count + "Clear all" updates live while dragging a node with the panel open.
+- Node/edge size, physics (Force), spacing (Radial/Hierarchical/Circular/Timeline/Cluster - only the active layout's group shows), label density/threshold, edge style, "Show as nodes" (tags/attachments/non-existent links, each off by default and rebuilding the graph when toggled), cluster-heatmap toggle. "Pinned node positions" count + "Clear all" updates live while dragging a node with the panel open.
 
 **Layouts** (Layout dialog)
-- Force (default, physics-clustered, deterministic starting positions), Hierarchical (top-down by link direction, disabled above `HIERARCHICAL_LAYOUT_NODE_LIMIT` notes), Radial (rings from a picked note; always opens a note-picker), Circular (one ring, breadth-first ordering), Timeline (X = real elapsed time since the vault's earliest note, ctime-only same as the Timeline scrubber; notes sharing a day stack in one column). Switching back to Force restarts from the same deterministic seed, not wherever the previous layout left nodes.
+- Force (default, physics-clustered, deterministic starting positions), Hierarchical (top-down by link direction, disabled above `HIERARCHICAL_LAYOUT_NODE_LIMIT` notes), Radial (rings from a picked note; always opens a note-picker), Circular (one ring, breadth-first ordering), Timeline (X = real elapsed time since the vault's earliest note, ctime-only same as the Timeline scrubber; notes sharing a day stack in one column), Cluster (reuses stagnation.ts's detectCommunities(); each community packed into its own sunflower-spiral blob, blob centers spaced around one outer circle - no physics, no node-count ceiling). Switching back to Force restarts from the same deterministic seed, not wherever the previous layout left nodes.
 
 **Timeline** (history icon)
 - Scrubber starts at the oldest note, not "today". New notes/edges grow in over ~400ms, not popping in at full size. Duration (10s/30s/1min/3min) always paces the *whole* vault's history evenly regardless of real date spread; the pace-mode toggle switches to real-calendar-time spacing instead. Combines with an active filter (intersection, not override). A vault where every note shares one ctime disables Play with an explanation instead of silently doing nothing.

@@ -9,6 +9,7 @@ import { runHierarchicalLayout, HIERARCHICAL_LAYOUT_NODE_LIMIT } from './hierarc
 import { computeRadialLayout } from './radialLayout';
 import { computeCircularLayout } from './circularLayout';
 import { computeTimelineLayout } from './timelineLayout';
+import { computeClusterLayout } from './clusterLayout';
 import { basename, findPaths, PathResult } from './pathfinding';
 import { findOrphans, findBrokenLinks, findIsolatedClusters, findConnectedComponents } from './diagnostics';
 import { computeEgoSubgraph } from './egoGraph';
@@ -537,6 +538,30 @@ const APPEARANCE_SLIDER_GROUPS: AppearanceSliderGroup[] = [
 				min: 20,
 				max: 150,
 				step: 5,
+				apply: 'layout',
+			},
+		],
+	},
+	{
+		heading: 'Cluster layout spacing',
+		showForLayout: (mode) => mode === 'cluster',
+		sliders: [
+			{
+				key: 'clusterPointSpacing',
+				name: 'Cluster point spacing',
+				desc: 'Space between notes within the same community.',
+				min: 4,
+				max: 40,
+				step: 1,
+				apply: 'layout',
+			},
+			{
+				key: 'clusterSpacing',
+				name: 'Cluster spacing',
+				desc: 'Space between different communities.',
+				min: 100,
+				max: 800,
+				step: 20,
 				apply: 'layout',
 			},
 		],
@@ -1316,6 +1341,9 @@ export class GraphPane {
 				break;
 			case 'timeline':
 				this.setTimelineLayout();
+				break;
+			case 'cluster':
+				this.setClusterLayout();
 				break;
 		}
 	}
@@ -3682,6 +3710,7 @@ export class GraphPane {
 				else if (option.mode === 'hierarchical') this.setHierarchicalLayout();
 				else if (option.mode === 'circular') this.setCircularLayout();
 				else if (option.mode === 'timeline') this.setTimelineLayout();
+				else if (option.mode === 'cluster') this.setClusterLayout();
 			});
 		}
 	}
@@ -3756,6 +3785,16 @@ export class GraphPane {
 		const appearance = this.plugin.settings.appearance;
 		computeTimelineLayout(this.graph, this.ctimeByPath, appearance.timelineDayWidth, appearance.timelineRowSpacing);
 		this.activateLayoutMode('timeline');
+		void this.resetCameraAndRefresh();
+	}
+
+	/** A sixth layout: pulls each detected community into its own region - see clusterLayout.ts's own docstring. Synchronous like the other non-Force layouts (Louvain + a spiral pack, no crossing-minimization step), so no "Computing layout…" disable treatment needed the way dagre-based Hierarchical does. */
+	private setClusterLayout(): void {
+		if (!this.graph) return;
+		this.layout?.stop();
+		const appearance = this.plugin.settings.appearance;
+		computeClusterLayout(this.graph, appearance.clusterPointSpacing, appearance.clusterSpacing);
+		this.activateLayoutMode('cluster');
 		void this.resetCameraAndRefresh();
 	}
 
@@ -6126,6 +6165,8 @@ export class GraphPane {
 			this.setCircularLayout();
 		} else if (view.layoutMode === 'timeline') {
 			this.setTimelineLayout();
+		} else if (view.layoutMode === 'cluster') {
+			this.setClusterLayout();
 		} else {
 			this.setForceLayout();
 		}
