@@ -102,6 +102,19 @@ export interface ClewAppearanceSettings {
 	 * baseline everyone's used to seeing switches under them.
 	 */
 	linLogMode: boolean;
+	/**
+	 * Backlog Rang 14 item 3 ("Dynamik in der Darstellung"): keeps
+	 * ForceAtlas2 running at a very low intensity after the initial settle
+	 * instead of freezing in place, closer to how Obsidian's own core
+	 * Graph View never fully stops moving. Off by default - a deliberate,
+	 * real trade-off (a background Worker computing indefinitely costs
+	 * some CPU even at low intensity), unlike most of this file's toggles,
+	 * which try to default to whatever's simply better. See graphPane.ts's
+	 * startIdlePhysics()/maybeStartIdlePhysics() for why FA2 alone doesn't
+	 * actually keep moving once converged, and what makes it visibly
+	 * "alive" instead.
+	 */
+	idlePhysics: boolean;
 	/** sigma's labelRenderedSizeThreshold (renderer.ts) - on-screen node size a label must cross to render. */
 	labelSizeThreshold: number;
 	/** sigma's labelDensity (renderer.ts) - how many labels are allowed to render per area at a given zoom. */
@@ -197,6 +210,7 @@ export const DEFAULT_APPEARANCE_SETTINGS: ClewAppearanceSettings = {
 	scalingRatio: 10,
 	dissuadeHubs: false,
 	linLogMode: false,
+	idlePhysics: false,
 	labelSizeThreshold: 2,
 	labelDensity: 0.5,
 	radialRingSpacing: 120,

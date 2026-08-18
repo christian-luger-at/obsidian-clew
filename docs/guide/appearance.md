@@ -32,6 +32,7 @@ Only shown while Force layout is active - Hierarchical/Radial/Circular have thei
 - **Scaling ratio** - overall repulsion/attraction strength.
 - **Dissuade hubs** - spreads a heavily-linked note's neighbors out around it instead of clumping them on top of it.
 - **Tighter clusters** - pulls closely-linked notes into denser, more separated clusters.
+- **Idle physics** - keeps a gentle physics simulation running after the graph settles, instead of freezing in place. Off by default.
 
 ## Labels
 

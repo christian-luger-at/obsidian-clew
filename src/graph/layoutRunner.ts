@@ -27,7 +27,13 @@ import FA2LayoutSupervisor from 'graphology-layout-forceatlas2/worker';
 const EXACT_REPULSION_NODE_LIMIT = 2000;
 
 export interface LayoutRunOptions {
-	/** Wall-clock budget before the layout auto-stops. */
+	/**
+	 * Wall-clock budget before the layout auto-stops. `undefined` means no
+	 * budget at all - the supervisor keeps running until the caller calls
+	 * `stop()` itself. Used for idle physics (Rang 14 item 3, see
+	 * graphPane.ts's maybeStartIdlePhysics()) - every other call site
+	 * passes an explicit duration.
+	 */
 	durationMs?: number;
 	barnesHutOptimize?: boolean;
 	/** Pull toward the center - user-tunable (Settings tab), see settings.ts's ClewAppearanceSettings.gravity. */
@@ -47,7 +53,7 @@ export interface LayoutRun {
 
 export function runLayout(graph: Graph, options: LayoutRunOptions = {}): LayoutRun {
 	const {
-		durationMs = 8000,
+		durationMs,
 		barnesHutOptimize = graph.order > EXACT_REPULSION_NODE_LIMIT,
 		gravity = 0.3,
 		scalingRatio = 10,
@@ -95,11 +101,11 @@ export function runLayout(graph: Graph, options: LayoutRunOptions = {}): LayoutR
 	};
 
 	supervisor.start();
-	const timer = window.setTimeout(stop, durationMs);
+	const timer = durationMs !== undefined ? window.setTimeout(stop, durationMs) : null;
 
 	return {
 		stop: () => {
-			window.clearTimeout(timer);
+			if (timer !== null) window.clearTimeout(timer);
 			stop();
 		},
 	};
