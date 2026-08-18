@@ -6,7 +6,6 @@ import { createRenderer, createNodeHoverDrawer, createEdgePrograms } from './ren
 import { runLayout, LayoutRun } from './layoutRunner';
 import { buildVaultGraph, resetToDeterministicPositions, sizeNodesByDegree } from './vaultGraph';
 import { runHierarchicalLayout, HIERARCHICAL_LAYOUT_NODE_LIMIT } from './hierarchicalLayout';
-import { runFolderLayout, FOLDER_LAYOUT_NODE_LIMIT } from './folderLayout';
 import { computeRadialLayout } from './radialLayout';
 import { computeCircularLayout } from './circularLayout';
 import { computeTimelineLayout } from './timelineLayout';
@@ -495,16 +494,12 @@ const APPEARANCE_SLIDER_GROUPS: AppearanceSliderGroup[] = [
 		],
 	},
 	{
-		// Shared by Hierarchical and Folder tree - both are dagre-based
-		// layered layouts (hierarchicalLayout.ts / folderLayout.ts) tuned by
-		// exactly the same two knobs, so one slider pair covers both rather
-		// than offering two near-identical groups.
-		heading: 'Hierarchical / folder tree spacing',
-		showForLayout: (mode) => mode === 'hierarchical' || mode === 'folder',
+		heading: 'Hierarchical layout spacing',
+		showForLayout: (mode) => mode === 'hierarchical',
 		sliders: [
 			{
 				key: 'hierarchicalNodeSpacing',
-				name: 'Node spacing',
+				name: 'Hierarchical node spacing',
 				desc: 'Space between notes on the same level.',
 				min: 10,
 				max: 100,
@@ -513,7 +508,7 @@ const APPEARANCE_SLIDER_GROUPS: AppearanceSliderGroup[] = [
 			},
 			{
 				key: 'hierarchicalRankSpacing',
-				name: 'Level spacing',
+				name: 'Hierarchical level spacing',
 				desc: 'Space between levels.',
 				min: 20,
 				max: 200,
@@ -1321,9 +1316,6 @@ export class GraphPane {
 				break;
 			case 'timeline':
 				this.setTimelineLayout();
-				break;
-			case 'folder':
-				this.setFolderLayout();
 				break;
 		}
 	}
@@ -3630,7 +3622,6 @@ export class GraphPane {
 	 */
 	private renderLayoutPanel(): void {
 		const tooLargeForHierarchical = (this.graph?.order ?? 0) > HIERARCHICAL_LAYOUT_NODE_LIMIT;
-		const tooLargeForFolderTree = (this.graph?.order ?? 0) > FOLDER_LAYOUT_NODE_LIMIT;
 
 		this.layoutPanelEl.empty();
 		const headerEl = this.layoutPanelEl.createDiv({ cls: 'clew-appearance-panel-header' });
@@ -3650,7 +3641,7 @@ export class GraphPane {
 		for (const option of LAYOUT_OPTIONS) {
 			const isActive = this.layoutMode === option.mode;
 			const isRadial = option.mode === 'radial';
-			const isDisabled = (option.mode === 'hierarchical' && tooLargeForHierarchical) || (option.mode === 'folder' && tooLargeForFolderTree);
+			const isDisabled = option.mode === 'hierarchical' && tooLargeForHierarchical;
 
 			const rowEl = listEl.createDiv({ cls: 'clew-layout-option' });
 			rowEl.toggleClass('is-active', isActive);
@@ -3691,7 +3682,6 @@ export class GraphPane {
 				else if (option.mode === 'hierarchical') this.setHierarchicalLayout();
 				else if (option.mode === 'circular') this.setCircularLayout();
 				else if (option.mode === 'timeline') this.setTimelineLayout();
-				else if (option.mode === 'folder') this.setFolderLayout();
 			});
 		}
 	}
@@ -3748,28 +3738,6 @@ export class GraphPane {
 
 			this.layoutButton.disabled = false;
 			this.activateLayoutMode('hierarchical');
-		}, 0);
-	}
-
-	/** A sixth layout: dagre again, but the tree is folder parentage, not link direction - see folderLayout.ts's own docstring. Same "disable the button while dagre blocks" treatment as setHierarchicalLayout(), same underlying cost. */
-	private setFolderLayout(): void {
-		if (!this.graph) return;
-		this.layout?.stop();
-
-		this.layoutButton.disabled = true;
-		setTooltip(this.layoutButton, 'Computing layout…');
-
-		window.setTimeout(() => {
-			if (!this.graph) return;
-			const appearance = this.plugin.settings.appearance;
-			runFolderLayout(this.graph, {
-				nodesep: appearance.hierarchicalNodeSpacing,
-				ranksep: appearance.hierarchicalRankSpacing,
-			});
-			void this.resetCameraAndRefresh();
-
-			this.layoutButton.disabled = false;
-			this.activateLayoutMode('folder');
 		}, 0);
 	}
 
@@ -6158,8 +6126,6 @@ export class GraphPane {
 			this.setCircularLayout();
 		} else if (view.layoutMode === 'timeline') {
 			this.setTimelineLayout();
-		} else if (view.layoutMode === 'folder') {
-			this.setFolderLayout();
 		} else {
 			this.setForceLayout();
 		}
