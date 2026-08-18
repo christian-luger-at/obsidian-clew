@@ -4,7 +4,7 @@
  * against - the other three lay the whole graph out fresh from a pure
  * function each time, with no per-node "leave this one alone" concept.
  */
-export type LayoutMode = 'force' | 'hierarchical' | 'radial' | 'circular' | 'timeline' | 'cluster';
+export type LayoutMode = 'force' | 'hierarchical' | 'radial' | 'circular' | 'timeline';
 
 export const LAYOUT_MODE_LABELS: Record<LayoutMode, string> = {
 	force: 'Force',
@@ -12,7 +12,6 @@ export const LAYOUT_MODE_LABELS: Record<LayoutMode, string> = {
 	radial: 'Radial',
 	circular: 'Circular',
 	timeline: 'Timeline',
-	cluster: 'Cluster',
 };
 
 export interface LayoutOption {
@@ -54,9 +53,5 @@ export const LAYOUT_OPTIONS: LayoutOption[] = [
 	{
 		mode: 'timeline',
 		description: "Left to right by creation date, real gaps and all. Best for spotting quiet stretches and bursts in your vault's history.",
-	},
-	{
-		mode: 'cluster',
-		description: 'Pulls each detected community into its own separate region. Best for seeing where one community ends and another begins.',
 	},
 ];

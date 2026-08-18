@@ -118,10 +118,6 @@ export interface ClewAppearanceSettings {
 	timelineDayWidth: number;
 	/** Vertical spacing between notes sharing the same day in the timeline layout (timelineLayout.ts). */
 	timelineRowSpacing: number;
-	/** Spacing between successive notes within one community's own spiral in the cluster layout (clusterLayout.ts). */
-	clusterPointSpacing: number;
-	/** Spacing between community centers in the cluster layout (clusterLayout.ts). */
-	clusterSpacing: number;
 	/**
 	 * null = auto (the current theme's --graph-line, with an automatic
 	 * contrast-safety fallback if that's too hard to see against the
@@ -209,8 +205,6 @@ export const DEFAULT_APPEARANCE_SETTINGS: ClewAppearanceSettings = {
 	hierarchicalRankSpacing: 80,
 	timelineDayWidth: 8,
 	timelineRowSpacing: 60,
-	clusterPointSpacing: 12,
-	clusterSpacing: 300,
 	edgeColorOverride: null,
 	edgeIntensity: 0.45,
 	nodeColorOverride: null,
