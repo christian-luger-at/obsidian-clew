@@ -12,6 +12,7 @@ import { computeTimelineLayout } from './timelineLayout';
 import { basename, findPaths, PathResult } from './pathfinding';
 import { findOrphans, findBrokenLinks, findIsolatedClusters, findConnectedComponents } from './diagnostics';
 import { computeEgoSubgraph } from './egoGraph';
+import { createFadeTracker, updateFadeTracker, fadeMultiplier, hasPendingFades, type FadeTracker } from './visibilityFade';
 import { computeBetweenness, computePageRank, normalizeToUnitRange } from './graphAnalytics';
 import { NoteSuggest } from './noteSuggest';
 
@@ -71,6 +72,17 @@ const TIMELINE_TICK_MS = 200;
 const TIMELINE_FADE_MS = 400;
 /** How often the fade ticker forces a re-render while anything is still growing in - Sigma reducers re-run on every refresh() on their own, this just needs to happen more often than TIMELINE_TICK_MS for the fade to read as smooth motion rather than a couple of visible jumps. */
 const TIMELINE_FADE_TICK_MS = 30;
+
+/**
+ * Backlog Rang 14 item 1: how long Filter/Focus take to fade a note/edge
+ * in or out, instead of the instant `hidden: true`/`false` flip they used
+ * before - same duration Timeline's own grow-in (TIMELINE_FADE_MS above)
+ * uses, for one consistent "how long does this kind of visibility change
+ * take" feel across every mode that hides/reveals part of the graph.
+ */
+const VISIBILITY_FADE_MS = TIMELINE_FADE_MS;
+/** Same reasoning as TIMELINE_FADE_TICK_MS above, shared by Filter/Focus's fade ticker (startVisibilityFadeTicker()). */
+const VISIBILITY_FADE_TICK_MS = TIMELINE_FADE_TICK_MS;
 
 /** "10s"/"30s"/"1 min"/"3 min" - TIMELINE_DURATIONS is always whole seconds, some of them >= 60. */
 function formatTimelineDuration(seconds: number): string {
@@ -155,6 +167,9 @@ export const FIND_PATH_ENABLED = true;
  * dimProgress for the animation this drives.
  */
 const HOVER_DIM_TRANSITION_MS = 200;
+
+/** How long the camera takes to pan to the active note (setActiveFile()/panCameraToNode()) - Rang 14 item 4. Slower than the hover dim above - a camera move covering real screen distance reads as rushed at the same speed a color blend does. */
+const ACTIVE_NOTE_PAN_MS = 400;
 
 /** A persistent label at the start of every Color & size criterion row (renderCriterionRow()) - user feedback: once a folder/filename/text criterion had a value typed in, its placeholder-only hint disappeared and every free-text row looked identical. */
 const CRITERION_TYPE_LABELS: Record<GroupCriterionType, string> = {
@@ -607,6 +622,17 @@ export class GraphPane {
 	private focusFile: TFile | null = null;
 	/** Hop depth (1-3) the panel remembers - both while Focus is active and, once cleared, as the pre-fill for reopening the panel fresh, same reasoning as lastPathDirected. */
 	private focusHops = 1;
+	/**
+	 * Backlog Rang 14 item 2: the vault path of whichever note is currently
+	 * the app-wide active file (any leaf, not just this graph view) - set
+	 * from StandaloneGraphView's 'file-open' listener via setActiveFile().
+	 * Kept even when that note isn't (or isn't currently) a node in this
+	 * graph, so its ring reappears on its own the moment it is again,
+	 * without needing setActiveFile() called a second time.
+	 */
+	private activeFilePath: string | null = null;
+	/** activeFilePath resolved to whether it's actually a node in the current graph - recomputed by every paintVisualEncoding() pass, same relationship singledOutNodePath has to focusFile/radialFocusNode below. */
+	private activeNoteNode: string | null = null;
 	private readonly colorAndSizeButton: HTMLButtonElement;
 	private readonly colorAndSizePanelEl: HTMLElement;
 	// Reassigned on every renderColorAndSizePanel() call, same reasoning as
@@ -847,6 +873,9 @@ export class GraphPane {
 	/** Date.now() a node/edge id first became visible - drives timelineFadeProgress()'s grow-in (user feedback: new notes/links should visibly appear, not just instantly be there). Shared by node and edge ids since graphology keys them separately and this is only ever looked up by the id the caller already knows the kind of. */
 	private timelineAppearedAt = new Map<string, number>();
 	private timelineFadeIntervalId: number | null = null;
+	/** Backlog Rang 14 item 1: shared by Filter's and Focus's nodeReducer/edgeReducer (applyFilter()/applyFocus()) - both hide/show a node subset, so one tracker covers both rather than two that would need to stay in sync on every switch between them (the two modes are already mutually exclusive - see applyFocus()'s docstring). */
+	private visibilityFadeTracker: FadeTracker = createFadeTracker();
+	private visibilityFadeIntervalId: number | null = null;
 
 	/**
 	 * GitHub issue #4 (code-fence embed): true for a pane created by
@@ -2438,6 +2467,28 @@ export class GraphPane {
 		}
 	}
 
+	/** Backlog Rang 14 item 1: same self-stopping ticker shape as startTimelineFadeTicker() above, just driven by visibilityFadeTracker/hasPendingFades instead of timelineAppearedAt - shared by applyFilter() and applyFocus(). */
+	private startVisibilityFadeTicker(): void {
+		if (this.visibilityFadeIntervalId !== null) return;
+		this.visibilityFadeIntervalId = window.setInterval(() => {
+			this.renderer?.refresh();
+			if (!hasPendingFades(this.visibilityFadeTracker, VISIBILITY_FADE_MS, Date.now())) this.stopVisibilityFadeTicker();
+		}, VISIBILITY_FADE_TICK_MS);
+	}
+
+	private stopVisibilityFadeTicker(): void {
+		if (this.visibilityFadeIntervalId !== null) {
+			window.clearInterval(this.visibilityFadeIntervalId);
+			this.visibilityFadeIntervalId = null;
+		}
+	}
+
+	/** 0-1 factor for how faded-in/out `id` currently is - same floor Timeline's own timelineFadeProgress() uses for the fade-*in* direction only (a node/edge growing in from literal 0 reads as a glitch for that first instant, invisible but still hit-testable, not a smooth appear); fading *out* has no such floor, since ending at genuinely 0/hidden is the whole point there. Shared by applyFilter()'s and applyFocus()'s reducers. */
+	private visibilityFadeFactor(id: string, isVisible: boolean): number {
+		const fade = fadeMultiplier(this.visibilityFadeTracker, id, isVisible, VISIBILITY_FADE_MS, Date.now());
+		return isVisible ? Math.max(0.15, fade) : fade;
+	}
+
 	private toggleTimelinePlayback(): void {
 		if (this.timelinePlaying) this.stopTimelinePlayback();
 		else this.startTimelinePlayback();
@@ -2974,23 +3025,34 @@ export class GraphPane {
 
 		const egoSet = computeEgoSubgraph(graph, file.path, hops);
 		const highlightCenter = options.highlightCenter ?? false;
+
+		// Backlog Rang 14 item 1: same fade-instead-of-instant-hide treatment
+		// as applyFilter() - see visibilityFadeTracker's own docstring.
+		const now = Date.now();
+		const edgeVisible = (edge: string): boolean => graph.extremities(edge).every((node) => egoSet.has(node));
+		updateFadeTracker(this.visibilityFadeTracker, graph.nodes(), (node) => egoSet.has(node), now);
+		updateFadeTracker(this.visibilityFadeTracker, graph.edges(), edgeVisible, now);
+		this.startVisibilityFadeTicker();
+
 		this.renderer?.setSetting('nodeReducer', (node, attr) => {
-			if (!egoSet.has(node)) return { ...attr, hidden: true };
+			const fade = this.visibilityFadeFactor(node, egoSet.has(node));
+			if (fade <= 0) return { ...attr, hidden: true };
 			if (highlightCenter && node === file.path) {
 				return {
 					...attr,
-					size: (attr.size as number) * FOCUS_CENTER_SIZE_MULTIPLIER,
+					size: (attr.size as number) * FOCUS_CENTER_SIZE_MULTIPLIER * fade,
 					borderColor: this.theme.primaryPathColor,
 					gapColor: this.theme.backgroundColor,
 					forceLabel: true,
 				};
 			}
-			return attr;
+			return fade >= 1 ? attr : { ...attr, size: (attr.size as number) * fade };
 		});
-		this.renderer?.setSetting('edgeReducer', (edge, attr) => ({
-			...attr,
-			hidden: !graph.extremities(edge).every((node) => egoSet.has(node)),
-		}));
+		this.renderer?.setSetting('edgeReducer', (edge, attr) => {
+			const fade = this.visibilityFadeFactor(edge, edgeVisible(edge));
+			if (fade <= 0) return { ...attr, hidden: true };
+			return fade >= 1 ? attr : { ...attr, size: ((attr.size as number | undefined) ?? 0.5) * fade };
+		});
 
 		this.renderFocusPanel();
 		this.updateFocusButtonState();
@@ -3135,6 +3197,13 @@ export class GraphPane {
 		// only matters while layoutMode is actually 'radial').
 		this.singledOutNodePath = this.focusFile?.path ?? (this.layoutMode === 'radial' ? this.radialFocusNode : null);
 		const singledOutPath = this.singledOutNodePath;
+		// Backlog Rang 14 item 2: whichever note is the app-wide active file
+		// right now (setActiveFile()) - a fourth, lower-priority ring, only
+		// drawn when that note isn't already wearing the Focus/Radial one
+		// above (same node, same visual effect either way, no need to pick a
+		// "winner" color).
+		this.activeNoteNode = this.activeFilePath && graph.hasNode(this.activeFilePath) ? this.activeFilePath : null;
+		const activeNotePath = this.activeNoteNode;
 		graph.forEachNode((node, attr) => {
 			// Ghost nodes (vaultGraph.ts's `kind: 'ghost'`) default to
 			// ghostNodeColor - NOT dimNodeColor (a real bug this exact line
@@ -3185,12 +3254,19 @@ export class GraphPane {
 			// to sit behind it.
 			const isExcluded = excludedPaths?.has(node) ?? false;
 			const isSingledOut = node === singledOutPath;
+			const isActiveNote = !isSingledOut && node === activeNotePath;
 			graph.setNodeAttribute(
 				node,
 				'borderColor',
-				isExcluded ? this.theme.excludedBorderColor : isSingledOut ? this.theme.primaryPathColor : resolvedColor,
+				isExcluded
+					? this.theme.excludedBorderColor
+					: isSingledOut
+						? this.theme.primaryPathColor
+						: isActiveNote
+							? this.theme.matchColor
+							: resolvedColor,
 			);
-			graph.setNodeAttribute(node, 'gapColor', isExcluded || isSingledOut ? this.theme.backgroundColor : resolvedColor);
+			graph.setNodeAttribute(node, 'gapColor', isExcluded || isSingledOut || isActiveNote ? this.theme.backgroundColor : resolvedColor);
 		});
 	}
 
@@ -3201,7 +3277,10 @@ export class GraphPane {
 	 * (primaryPathColor/background, singledOutNodePath - Find-path's own
 	 * green, not the note's own color; user feedback: "Die Ringe in
 	 * Knotenfarbe sind nicht gut sichtbar. Verwende das gleiche grün, wie
-	 * Find Path beim gefundenen Pfad") instead of losing it to whatever
+	 * Find Path beim gefundenen Pfad"), or the active-note ring
+	 * (matchColor/background, activeNoteNode - Rang 14 item 2, reuses the
+	 * accent Obsidian's own `--graph-node-focused` CSS variable already
+	 * means for exactly this) - instead of losing any of them to whatever
 	 * *this* reducer's own dim/highlight color happens to be; for any
 	 * other node, both just match `newColor` (ring stays invisible).
 	 * Shared by applyHighlight()'s and setupNodeHover()'s own nodeReducers
@@ -3211,7 +3290,59 @@ export class GraphPane {
 	private ringOverrideFor(node: string, newColor: string): { borderColor: string; gapColor: string } {
 		if (this.excludedNodePaths?.has(node)) return { borderColor: this.theme.excludedBorderColor, gapColor: this.theme.backgroundColor };
 		if (node === this.singledOutNodePath) return { borderColor: this.theme.primaryPathColor, gapColor: this.theme.backgroundColor };
+		if (node === this.activeNoteNode) return { borderColor: this.theme.matchColor, gapColor: this.theme.backgroundColor };
 		return { borderColor: newColor, gapColor: newColor };
+	}
+
+	/**
+	 * Backlog Rang 14 items 2 + 4: called from StandaloneGraphView's
+	 * 'file-open' listener - keeps whichever note is the app-wide active
+	 * file ringed in the graph (activeNoteNode, see paintVisualEncoding()/
+	 * ringOverrideFor() above) and pans the camera to it, so switching
+	 * notes elsewhere in the workspace keeps the graph "in sync" the way
+	 * Obsidian's own core Graph View does. A no-op if the file hasn't
+	 * actually changed - 'file-open' can fire for reasons that don't
+	 * represent a genuine switch (e.g. the same file re-opening in a new
+	 * leaf), and repainting/panning on every one of those would be
+	 * needless churn.
+	 */
+	setActiveFile(file: TFile | null): void {
+		const path = file?.path ?? null;
+		if (path === this.activeFilePath) return;
+		this.activeFilePath = path;
+		// Not loaded yet (setFiles() is still running its first pass) -
+		// paintVisualEncoding() picks activeFilePath up on its own once the
+		// graph exists, no separate call needed once it does. Also skips the
+		// pan below, which matters here specifically: panning to a single
+		// point while the initial Force settle is still framing the *whole*
+		// graph (resetCameraAndRefresh()'s own repeated refits) would fight
+		// that animation instead of complementing it.
+		if (!this.graph) return;
+		this.applyNodeSizeSettings();
+		if (path) this.panCameraToNode(path);
+	}
+
+	/**
+	 * Smoothly pans (never a hard jump) the camera to center on `node`,
+	 * keeping the current zoom level - unlike resetCameraAndRefresh()'s
+	 * bounding-box fit (reframes to a whole node *set*, can change the zoom
+	 * level too), this is a single-point "fly to," the same kind of move
+	 * Obsidian's own core Graph View makes when the active file changes.
+	 * `getNodeDisplayData()` rather than the graph's own raw x/y attributes -
+	 * sigma's camera state lives in its normalized "framed graph" space
+	 * (see sigma's own graphToViewport()), not the graph's raw coordinate
+	 * system; display data is already computed in that camera-ready space,
+	 * the same technique sigma's own docs use for "center camera on a node."
+	 * Deliberately doesn't check whether `node` is currently hidden by an
+	 * active Filter/Focus/Find-path result first - panning to a hidden
+	 * note's position is harmless (nothing draws there either way) and not
+	 * worth the extra reducer-state bookkeeping needed to detect it ahead of
+	 * time.
+	 */
+	private panCameraToNode(node: string): void {
+		const display = this.renderer?.getNodeDisplayData(node);
+		if (!display) return;
+		void this.renderer?.getCamera().animate({ x: display.x, y: display.y }, { duration: ACTIVE_NOTE_PAN_MS });
 	}
 
 	/**
@@ -4678,8 +4809,28 @@ export class GraphPane {
 		this.updateFocusButtonState();
 
 		const visibleEdges = new Set(graph.edges().filter((edge) => graph.extremities(edge).every((node) => matches.has(node))));
-		this.renderer?.setSetting('nodeReducer', (node, attr) => ({ ...attr, hidden: !matches.has(node) }));
-		this.renderer?.setSetting('edgeReducer', (edge, attr) => ({ ...attr, hidden: !visibleEdges.has(edge) }));
+
+		// Backlog Rang 14 item 1: fades notes/edges in and out instead of an
+		// instant hidden:true/false flip - see visibilityFadeTracker's own
+		// docstring. Recorded once here (a real visibility-set change), not
+		// per reducer call - the reducers below just read the resulting
+		// progress every frame, same split startTimelineFadeTicker()/
+		// timelineFadeProgress() already uses for Timeline's own fade.
+		const now = Date.now();
+		updateFadeTracker(this.visibilityFadeTracker, graph.nodes(), (node) => matches.has(node), now);
+		updateFadeTracker(this.visibilityFadeTracker, graph.edges(), (edge) => visibleEdges.has(edge), now);
+		this.startVisibilityFadeTicker();
+
+		this.renderer?.setSetting('nodeReducer', (node, attr) => {
+			const fade = this.visibilityFadeFactor(node, matches.has(node));
+			if (fade <= 0) return { ...attr, hidden: true };
+			return fade >= 1 ? attr : { ...attr, size: ((attr.size as number | undefined) ?? 1) * fade };
+		});
+		this.renderer?.setSetting('edgeReducer', (edge, attr) => {
+			const fade = this.visibilityFadeFactor(edge, visibleEdges.has(edge));
+			if (fade <= 0) return { ...attr, hidden: true };
+			return fade >= 1 ? attr : { ...attr, size: ((attr.size as number | undefined) ?? 0.5) * fade };
+		});
 		this.renderLegend();
 		this.updateEmptyState(matches.size);
 	}

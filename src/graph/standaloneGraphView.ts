@@ -94,6 +94,18 @@ export class StandaloneGraphView extends ItemView {
 		// needed at all here, not just a redundant safety net.
 		this.registerEvent(this.app.workspace.on('active-leaf-change', () => this.pane?.handleResize()));
 		this.registerEvent(this.app.workspace.on('resize', () => this.pane?.handleResize()));
+
+		// Backlog Rang 14 items 2 + 4: keeps the graph in sync with whichever
+		// note is actually open, the way Obsidian's own core Graph View does -
+		// 'file-open' (not 'active-leaf-change' above, used only for resize)
+		// is the dedicated "the active file changed" event, handing the TFile
+		// directly instead of a leaf to inspect. Fires for every leaf, not
+		// just this view's own tab, matching the core graph's own scope.
+		this.registerEvent(this.app.workspace.on('file-open', (file) => this.pane?.setActiveFile(file)));
+		// Picks up whatever note is already open when the graph view itself
+		// opens, not just future switches - GraphPane.setActiveFile() no-ops
+		// safely if the graph isn't loaded yet (see its own docstring).
+		this.pane?.setActiveFile(this.app.workspace.getActiveFile());
 	}
 
 	onClose(): Promise<void> {

@@ -23,3 +23,7 @@ In Force layout, dragging a note fixes it at the position you drop it - its neig
 Manage every pinned note at once from the [Appearance panel](./appearance)'s "Pinned node positions" section - it shows how many are pinned, with a "Clear all" button.
 
 Pinning has no effect in Hierarchical, Radial, or Circular layout - each of those computes every note's position fresh from the graph structure, with no per-note "leave this one alone" concept.
+
+## The graph follows the note you're working on
+
+Whichever note is currently open - in this pane or any other, including a split view - gets a ring around it in the graph, and the camera smoothly pans over to keep it in view. Switch notes, and the graph follows along, the same way Obsidian's own core Graph View keeps its own highlight in sync.

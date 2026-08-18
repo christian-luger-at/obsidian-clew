@@ -65,6 +65,7 @@ src/
     semanticClustering.ts / embeddingModel.ts  # local-embedding note clustering
     theme.ts                       # Obsidian CSS-variable → graph color mapping
     timeline.ts                    # ctime-based replay
+    visibilityFade.ts               # Filter/Focus's shared fade-in/out tracker
 ```
 
 Keep `main.ts` limited to lifecycle; split features into their own modules - see [AGENTS.md](AGENTS.md) for conventions.
@@ -93,7 +94,7 @@ npm run test:watch
 npm run test:coverage
 ```
 
-[Vitest](https://vitest.dev). Covers every pure graph-algorithm module (`pathfinding.ts`, `stagnation.ts`, `diagnostics.ts`, `egoGraph.ts`, `graphAnalytics.ts`, `nodeGroups.ts`, `filter.ts`, `semanticClustering.ts`, `vaultGraph.ts`, layout modules, `embedConfig.ts`, ...) - coverage-enforced, 85%/80% per file.
+[Vitest](https://vitest.dev). Covers every pure graph-algorithm module (`pathfinding.ts`, `stagnation.ts`, `diagnostics.ts`, `egoGraph.ts`, `graphAnalytics.ts`, `nodeGroups.ts`, `filter.ts`, `semanticClustering.ts`, `vaultGraph.ts`, layout modules, `visibilityFade.ts`, `embedConfig.ts`, ...) - coverage-enforced, 85%/80% per file.
 
 UI classes (`GraphPane`, `StandaloneGraphView`, `renderer.ts`, `main.ts`, `settingsTab.ts`) are **not** unit tested - faking enough of Obsidian's UI layer isn't worth it relative to manual QA below. If a future feature adds pure logic, it goes through the same test+coverage bar as the list above; UI wiring goes through manual QA instead.
 
@@ -166,6 +167,7 @@ Every `npm run build` after that updates the vault automatically. Open `test-vau
 
 **Interaction**
 - Click opens the note; hover highlights its neighbors (composes with whatever mode is active, restores it on mouseleave). Drag pins a node (Force layout only) - neighbors visibly resettle, position persists across a reload; a plain click doesn't pin.
+- Whichever note is the app-wide active file gets a persistent ring (any leaf, not just this view's own tab) and the camera pans to it - opening a note elsewhere, or switching tabs, keeps the graph in sync. Filter and Focus fade notes/edges in and out (~400ms) instead of an instant hide, same transition speed Timeline's own grow-in uses.
 - Theme switch (light/dark/community theme) updates graph colors live, no reload.
 - Empty states: no notes in the vault vs. a filter matching nothing show distinct explanatory cards, not a blank canvas.
 
