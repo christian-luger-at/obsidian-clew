@@ -114,6 +114,10 @@ export interface ClewAppearanceSettings {
 	hierarchicalNodeSpacing: number;
 	/** dagre's ranksep (hierarchicalLayout.ts) - spacing between ranks. */
 	hierarchicalRankSpacing: number;
+	/** Pixels per day of real elapsed time along the X axis in the timeline layout (timelineLayout.ts). */
+	timelineDayWidth: number;
+	/** Vertical spacing between notes sharing the same day in the timeline layout (timelineLayout.ts). */
+	timelineRowSpacing: number;
 	/**
 	 * null = auto (the current theme's --graph-line, with an automatic
 	 * contrast-safety fallback if that's too hard to see against the
@@ -199,6 +203,8 @@ export const DEFAULT_APPEARANCE_SETTINGS: ClewAppearanceSettings = {
 	circularRadius: 400,
 	hierarchicalNodeSpacing: 40,
 	hierarchicalRankSpacing: 80,
+	timelineDayWidth: 8,
+	timelineRowSpacing: 60,
 	edgeColorOverride: null,
 	edgeIntensity: 0.45,
 	nodeColorOverride: null,

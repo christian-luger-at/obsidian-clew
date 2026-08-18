@@ -4,13 +4,14 @@
  * against - the other three lay the whole graph out fresh from a pure
  * function each time, with no per-node "leave this one alone" concept.
  */
-export type LayoutMode = 'force' | 'hierarchical' | 'radial' | 'circular';
+export type LayoutMode = 'force' | 'hierarchical' | 'radial' | 'circular' | 'timeline';
 
 export const LAYOUT_MODE_LABELS: Record<LayoutMode, string> = {
 	force: 'Force',
 	hierarchical: 'Hierarchical',
 	radial: 'Radial',
 	circular: 'Circular',
+	timeline: 'Timeline',
 };
 
 export interface LayoutOption {
@@ -48,5 +49,9 @@ export const LAYOUT_OPTIONS: LayoutOption[] = [
 	{
 		mode: 'circular',
 		description: 'Every note evenly spaced on one circle. Good for spotting recurring connection patterns.',
+	},
+	{
+		mode: 'timeline',
+		description: "Left to right by creation date, real gaps and all. Best for spotting quiet stretches and bursts in your vault's history.",
 	},
 ];

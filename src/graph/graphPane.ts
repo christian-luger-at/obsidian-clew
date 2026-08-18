@@ -8,6 +8,7 @@ import { buildVaultGraph, resetToDeterministicPositions, sizeNodesByDegree } fro
 import { runHierarchicalLayout, HIERARCHICAL_LAYOUT_NODE_LIMIT } from './hierarchicalLayout';
 import { computeRadialLayout } from './radialLayout';
 import { computeCircularLayout } from './circularLayout';
+import { computeTimelineLayout } from './timelineLayout';
 import { basename, findPaths, PathResult } from './pathfinding';
 import { findOrphans, findBrokenLinks, findIsolatedClusters, findConnectedComponents } from './diagnostics';
 import { computeEgoSubgraph } from './egoGraph';
@@ -512,6 +513,30 @@ const APPEARANCE_SLIDER_GROUPS: AppearanceSliderGroup[] = [
 				min: 20,
 				max: 200,
 				step: 10,
+				apply: 'layout',
+			},
+		],
+	},
+	{
+		heading: 'Timeline layout spacing',
+		showForLayout: (mode) => mode === 'timeline',
+		sliders: [
+			{
+				key: 'timelineDayWidth',
+				name: 'Timeline day width',
+				desc: 'Horizontal space per day of real elapsed time.',
+				min: 1,
+				max: 40,
+				step: 1,
+				apply: 'layout',
+			},
+			{
+				key: 'timelineRowSpacing',
+				name: 'Timeline row spacing',
+				desc: 'Vertical space between notes created the same day.',
+				min: 20,
+				max: 150,
+				step: 5,
 				apply: 'layout',
 			},
 		],
@@ -1288,6 +1313,9 @@ export class GraphPane {
 				break;
 			case 'circular':
 				this.setCircularLayout();
+				break;
+			case 'timeline':
+				this.setTimelineLayout();
 				break;
 		}
 	}
@@ -3653,6 +3681,7 @@ export class GraphPane {
 				if (option.mode === 'force') this.setForceLayout();
 				else if (option.mode === 'hierarchical') this.setHierarchicalLayout();
 				else if (option.mode === 'circular') this.setCircularLayout();
+				else if (option.mode === 'timeline') this.setTimelineLayout();
 			});
 		}
 	}
@@ -3717,6 +3746,16 @@ export class GraphPane {
 		this.layout?.stop();
 		computeCircularLayout(this.graph, this.plugin.settings.appearance.circularRadius);
 		this.activateLayoutMode('circular');
+		void this.resetCameraAndRefresh();
+	}
+
+	/** A fifth layout: X axis = note age (Rang 13 research -> Rang 1 build). `ctimeByPath` is threaded in the same way timeline.ts's own scrubber functions consume it - see timelineLayout.ts's docstring for why real elapsed time, not rank, drives the X position. */
+	private setTimelineLayout(): void {
+		if (!this.graph) return;
+		this.layout?.stop();
+		const appearance = this.plugin.settings.appearance;
+		computeTimelineLayout(this.graph, this.ctimeByPath, appearance.timelineDayWidth, appearance.timelineRowSpacing);
+		this.activateLayoutMode('timeline');
 		void this.resetCameraAndRefresh();
 	}
 
@@ -6085,6 +6124,8 @@ export class GraphPane {
 			this.setHierarchicalLayout();
 		} else if (view.layoutMode === 'circular') {
 			this.setCircularLayout();
+		} else if (view.layoutMode === 'timeline') {
+			this.setTimelineLayout();
 		} else {
 			this.setForceLayout();
 		}
