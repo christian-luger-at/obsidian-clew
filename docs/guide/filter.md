@@ -74,7 +74,7 @@ Every criterion, once added to a filter, has an **(i)** button next to its name 
 
 ## Several filters at once
 
-Enable more than one filter, and a note shows if it matches at least one of them by default - "Show if it matches: **At least one filter**", a dropdown above the filter list. Switch it to **"Every filter"** to require a note to satisfy *all* of the enabled filters instead (effectively AND-ing separate filters together).
+Create a second filter, and a "Show if it matches: **At least one filter**" dropdown appears above the list (hidden with 0 or 1 filter - nothing to combine yet). A note shows if it matches at least one *enabled* filter by default; switch it to **"Every filter"** to require a note to satisfy *all* of the enabled filters instead (effectively AND-ing separate filters together).
 
 Drag a filter's handle to reorder the list - purely for your own organization, since it has no effect on which notes are shown.
 

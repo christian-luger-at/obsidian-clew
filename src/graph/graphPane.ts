@@ -4509,18 +4509,24 @@ export class GraphPane {
 		// gelten", after an earlier version put this choice on each
 		// filter's own criteria instead. A single control for the whole
 		// panel, not per-filter - it describes how the *list* combines, not
-		// any one filter's own behavior.
-		new Setting(this.filterPanelEl).setName('Show if it matches').addDropdown((dropdown) =>
-			dropdown
-				.addOption('or', 'At least one filter')
-				.addOption('and', 'Every filter')
-				.setValue(this.plugin.settings.filterCombineMode)
-				.onChange((value) => {
-					this.plugin.settings.filterCombineMode = value as FilterCombineMode;
-					void this.plugin.saveSettings();
-					this.applyFilters();
-				}),
-		);
+		// any one filter's own behavior. Only shown with at least two
+		// filters defined - user feedback: with 0 or 1, "combine" has
+		// nothing to actually combine, so the control only reads as
+		// confusing clutter until there's a second filter for it to matter
+		// against.
+		if (this.plugin.settings.filterPresets.length >= 2) {
+			new Setting(this.filterPanelEl).setName('Show if it matches').addDropdown((dropdown) =>
+				dropdown
+					.addOption('or', 'At least one filter')
+					.addOption('and', 'Every filter')
+					.setValue(this.plugin.settings.filterCombineMode)
+					.onChange((value) => {
+						this.plugin.settings.filterCombineMode = value as FilterCombineMode;
+						void this.plugin.saveSettings();
+						this.applyFilters();
+					}),
+			);
+		}
 
 		// Shared by every `folder` criterion row's text input, own id per
 		// panel (see CriteriaEditorContext's folderDatalistId docstring) so
