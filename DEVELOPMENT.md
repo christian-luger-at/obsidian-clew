@@ -203,6 +203,8 @@ Symlink the plugin the same file-by-file way as `test-vault` above, open it, and
 
 **Verified on a real tablet** (iPad, Obsidian mobile, GitHub issue #7, closed): the standalone graph view opens and renders, the ForceAtlas2 layout Worker spawns and runs fine on iOS Safari's WebView (Blob-URL construction was the one open risk - it's not one in practice), WebGL performance and pan/zoom/tap feel are all fine, and drag-to-pin works correctly (see `setupNodeDragging()`'s captor-agnostic `renderer.on('moveBody', ...)` plus the touch captor's own `touchup` - this was the one real bug the touch gap exposed, fixed before this verification). Hover-tooltips and hover-highlight-neighbors also work as expected on tap.
 
+User-reported follow-up: NoteSuggest's dropdown (Find-path From/To, Radial's "Center on", Focus's note picker, Settings' excluded-notes list - Obsidian's own `AbstractInputSuggest` popover, `.suggestion-container`) rendered underneath some other Obsidian chrome on mobile, unusable. Not reproducible on desktop (its `.suggestion-container` already sits at z-index 60, above every other checked element there) and not something Clew positions itself - the popover is appended straight to `<body>`, not nested in any Clew panel. Fixed with a global `z-index: 1000` override on `.suggestion-container` in styles.css (can't be scoped to just Clew's own inputs - Obsidian marks the popover with nothing that says which input triggered it). Verified on desktop that the override applies and picking a suggestion still works; the actual mobile fix itself is unverified (no way to run real Obsidian mobile from this environment - the iOS Simulator can't install App Store apps, see the tablet verification above).
+
 ## Release
 
 ### 1. Bump the version

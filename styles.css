@@ -1069,6 +1069,23 @@
 	flex: 0 0 80px;
 }
 
+/**
+ * User-reported (Obsidian mobile): NoteSuggest's dropdown (Obsidian's own
+ * AbstractInputSuggest popover, `.suggestion-container` - appended straight
+ * to `<body>`, not nested inside any Clew panel, so this isn't Clew's own
+ * stacking to begin with) rendered *underneath* some other Obsidian chrome
+ * on mobile, making the suggestion list unusable - can't be reproduced on
+ * desktop (verified: desktop's own `.suggestion-container` already sits at
+ * z-index 60, above every other Obsidian chrome element checked there).
+ * Global, not scoped to Clew's own note-picker inputs specifically -
+ * Obsidian gives the popover no marker for which input triggered it, and a
+ * suggestion popup sitting in front of everything else is the correct
+ * behavior everywhere it appears, not just here.
+ */
+.suggestion-container {
+	z-index: 1000;
+}
+
 /** Shared by every Clew dialog with an in-dialog validation error (RadialLayoutModal, Find-path's input form, ...) - never a Notice (top-right toast), since the dialog is already open right in front of the user. */
 .clew-modal-error {
 	color: var(--text-error);
