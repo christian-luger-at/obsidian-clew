@@ -1169,6 +1169,17 @@ export class GraphPane {
 		// longer matches what's about to be rebuilt below.
 		this.stopTimelinePlayback();
 		this.stopTimelineFadeTicker();
+		// Same reasoning, same bug class as the two above (and as
+		// destroy()'s own long comment on this) - a still-running Filter/
+		// Focus fade from *before* this refresh would otherwise keep
+		// ticking against whatever `this.renderer` becomes next. Caught by
+		// this session's own bug hunt: seeding a fresh filter right before
+		// calling setFiles() directly reproduced a real, if only
+		// single-shot (not runaway - the try/finally hardening in
+		// startVisibilityFadeTicker() already contained it), "Sigma: could
+		// not find a suitable program for node type "image"!" from exactly
+		// this gap.
+		this.stopVisibilityFadeTicker();
 		this.timelineVisibleNodes = new Set();
 		this.timelineVisibleEdges = new Set();
 		this.timelineAppearedAt.clear();
