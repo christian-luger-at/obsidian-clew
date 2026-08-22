@@ -2443,20 +2443,41 @@ export class GraphPane {
 		return Math.max(0.15, elapsed / TIMELINE_FADE_MS);
 	}
 
-	/** Sigma reducers already re-run on every refresh() on their own - this just forces refreshes often enough, for as long as anything in timelineAppearedAt is still within its fade window, for that to read as smooth growth rather than a couple of visible jumps. Self-stopping: the last tick that finds nothing still fading clears its own interval. */
+	/**
+	 * Sigma reducers already re-run on every refresh() on their own - this
+	 * just forces refreshes often enough, for as long as anything in
+	 * timelineAppearedAt is still within its fade window, for that to read
+	 * as smooth growth rather than a couple of visible jumps. Self-stopping:
+	 * the last tick that finds nothing still fading clears its own interval.
+	 *
+	 * `refresh()` is wrapped in try/finally, not called plain - a real bug
+	 * this exact shape caused (see destroy()'s own long comment for the
+	 * full story): if `refresh()` throws (e.g. a killed-but-still-referenced
+	 * `this.renderer`, the scenario that actually happened), the throw
+	 * happening *before* the self-stop check meant that check never ran
+	 * either, so the ticker kept re-throwing every tick forever instead of
+	 * failing once and stopping like it was supposed to. try/finally
+	 * guarantees the self-stop check always runs, regardless of whether
+	 * `refresh()` succeeded - a ticker that's meant to be self-stopping
+	 * should not be capable of getting permanently wedged by an unrelated
+	 * exception.
+	 */
 	private startTimelineFadeTicker(): void {
 		if (this.timelineFadeIntervalId !== null) return;
 		this.timelineFadeIntervalId = window.setInterval(() => {
-			this.renderer?.refresh();
-			const now = Date.now();
-			let stillFading = false;
-			for (const appearedAt of this.timelineAppearedAt.values()) {
-				if (now - appearedAt < TIMELINE_FADE_MS) {
-					stillFading = true;
-					break;
+			try {
+				this.renderer?.refresh();
+			} finally {
+				const now = Date.now();
+				let stillFading = false;
+				for (const appearedAt of this.timelineAppearedAt.values()) {
+					if (now - appearedAt < TIMELINE_FADE_MS) {
+						stillFading = true;
+						break;
+					}
 				}
+				if (!stillFading) this.stopTimelineFadeTicker();
 			}
-			if (!stillFading) this.stopTimelineFadeTicker();
 		}, TIMELINE_FADE_TICK_MS);
 	}
 
@@ -2467,12 +2488,22 @@ export class GraphPane {
 		}
 	}
 
-	/** Backlog Rang 14 item 1: same self-stopping ticker shape as startTimelineFadeTicker() above, just driven by visibilityFadeTracker/hasPendingFades instead of timelineAppearedAt - shared by applyFilter() and applyFocus(). */
+	/**
+	 * Backlog Rang 14 item 1: same self-stopping ticker shape as
+	 * startTimelineFadeTicker() above (see its own docstring for why
+	 * `refresh()` is wrapped in try/finally, not called plain - the exact
+	 * bug that reasoning describes was first found and fixed here), just
+	 * driven by visibilityFadeTracker/hasPendingFades instead of
+	 * timelineAppearedAt - shared by applyFilter() and applyFocus().
+	 */
 	private startVisibilityFadeTicker(): void {
 		if (this.visibilityFadeIntervalId !== null) return;
 		this.visibilityFadeIntervalId = window.setInterval(() => {
-			this.renderer?.refresh();
-			if (!hasPendingFades(this.visibilityFadeTracker, VISIBILITY_FADE_MS, Date.now())) this.stopVisibilityFadeTicker();
+			try {
+				this.renderer?.refresh();
+			} finally {
+				if (!hasPendingFades(this.visibilityFadeTracker, VISIBILITY_FADE_MS, Date.now())) this.stopVisibilityFadeTicker();
+			}
 		}, VISIBILITY_FADE_TICK_MS);
 	}
 
@@ -2548,9 +2579,33 @@ export class GraphPane {
 	destroy(): void {
 		this.stopTimelinePlayback();
 		this.stopTimelineFadeTicker();
+		// Real, reproduced bug (GitHub issue "clew-graph embeds don't render
+		// in Live Preview, spam console errors"): Obsidian's Live Preview
+		// renders a ```clew-graph code block against a still-detached
+		// container for an initial "measurement" pass, then immediately
+		// unloads it (ClewGraphEmbed.onunload() -> this.destroy()) before
+		// ever attaching a real one - applyFocus()'s own
+		// startVisibilityFadeTicker() was still running at that point (its
+		// fade window hadn't elapsed yet), and its interval calls
+		// `this.renderer?.refresh()` *before* checking whether it should
+		// stop itself. Without nulling `this.renderer` here (setFiles() a
+		// few methods up already does exactly this, with its own docstring
+		// explaining the identical "Sigma: could not find a suitable
+		// program..." crash this same gap causes there), that stale
+		// still-referenced-but-killed renderer kept throwing on every 30ms
+		// tick - and because the throw happened before the ticker's own
+		// stop-check could run, it never reached the code that would have
+		// stopped it, so it kept throwing indefinitely instead of for one
+		// tick. See startVisibilityFadeTicker()/startTimelineFadeTicker()'s
+		// own try/finally for the second half of this fix - stopping the
+		// ticker here is what makes destroy() itself clean, hardening the
+		// tickers is what stops *any* future exception in refresh() (not
+		// just this specific stale-renderer one) from wedging one open.
+		this.stopVisibilityFadeTicker();
 		this.layout?.stop();
 		this.heatmapLayer?.destroy();
 		this.renderer?.kill();
+		this.renderer = null;
 		if (GraphPane.active === this) GraphPane.active = null;
 	}
 
