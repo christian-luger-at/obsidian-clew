@@ -62,8 +62,9 @@ otherwise. For a change to `src/graph/`, adding or updating a test there is
 expected, not optional - see DEVELOPMENT.md's Testing section for the
 patterns (`test/fakeApp.ts` for anything touching Obsidian's API). Please
 still describe in the PR **how you verified the change** in a real vault
-(the generated `test-vault/` - see DEVELOPMENT.md - covers most functional
-edge cases) for anything a unit test can't reach, like actual rendering.
+(the generated `test-vault/` - see [TESTING.md](TESTING.md) - covers most
+functional edge cases) for anything a unit test can't reach, like actual
+rendering.
 
 ## Coding guidelines
 
