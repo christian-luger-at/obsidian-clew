@@ -734,6 +734,8 @@ export class GraphPane {
 	 * the other related fix, embeddingWorker.ts) came out of.
 	 */
 	private semanticModelDownloadProgress: number | null = null;
+	/** Bumped at the start of every refreshSemanticClusters() call - lets that method tell whether it's still the most recently started one once its own async work resolves, so an overlapping older call can never clobber a newer one's result. See that method's own docstring for the user report this fixes. */
+	private semanticClusteringRequestId = 0;
 	private readonly appearanceButton: HTMLButtonElement;
 	private readonly diagnosticsButton: HTMLButtonElement;
 	private readonly diagnosticsPanelEl: HTMLElement;
@@ -5085,6 +5087,28 @@ export class GraphPane {
 	 * file's docstring and MODEL_LOAD_TIMEOUT_MS's own for the full story).
 	 */
 	private async refreshSemanticClusters(): Promise<void> {
+		// User report (follow-up to the Worker-offload fix above): the
+		// panel got stuck on "Downloading model… 100%" forever, and a
+		// second attempt immediately showed the error state instead of
+		// retrying cleanly. Root cause: every field in the Color & size
+		// edit form calls applyNodeGroups() on its own change (see that
+		// method's own docstring - there is no separate "Save" step), and
+		// each of those can independently reach this method via
+		// refreshCriteriaContent(). With no re-entrancy guard, a user
+		// making a couple of quick edits while a `semanticCluster`
+		// criterion is active (e.g. picking the criterion type, then
+		// toggling the group on) fired multiple *overlapping* calls, all
+		// racing to write the same shared semanticClusteringStatus/
+		// semanticModelDownloadProgress fields - whichever call's own
+		// `finally` happened to run last "won", even if an *earlier* call
+		// had already succeeded. `semanticClusteringRequestId` makes only
+		// the most recently started call allowed to write any of that
+		// shared state; a superseded call's own result (success or
+		// failure) is simply discarded once a newer one has started -
+		// exactly the outcome the user actually wants ("show me the result
+		// of my *latest* change"), and it means a stale call finishing late
+		// can no longer clobber a newer one that already finished first.
+		const myRequestId = ++this.semanticClusteringRequestId;
 		this.semanticClusteringStatus = 'loading';
 		this.semanticModelDownloadProgress = null;
 		if (this.colorAndSizePanelEl.isShown()) this.renderColorAndSizePanel();
@@ -5118,6 +5142,7 @@ export class GraphPane {
 				// instead of spinning up a new one.
 				const fresh = await Promise.race([
 					embedBatch(toEmbed, (percent) => {
+						if (myRequestId !== this.semanticClusteringRequestId) return; // a newer call has since started - its own progress events are what should drive the badge now
 						this.semanticModelDownloadProgress = percent;
 						this.updateSemanticClusteringBadgeText();
 					}),
@@ -5125,8 +5150,13 @@ export class GraphPane {
 						window.setTimeout(() => reject(new Error(`Clew: embedding model load timed out after ${MODEL_LOAD_TIMEOUT_MS / 1000}s`)), MODEL_LOAD_TIMEOUT_MS);
 					}),
 				]);
+				// Still cache whatever came back even if superseded below -
+				// the vectors themselves are correct and reusable regardless
+				// of which call requested them, no reason to throw real,
+				// finished work away.
 				for (const [key, vector] of fresh) this.semanticEmbeddingCache.set(key, vector);
 			}
+			if (myRequestId !== this.semanticClusteringRequestId) return; // superseded - a newer call is already running (or has already finished) and will paint the real, current result instead
 			this.semanticModelDownloadProgress = null;
 			const vectors = new Map<string, Float32Array>();
 			for (const file of this.files) {
@@ -5137,13 +5167,20 @@ export class GraphPane {
 			this.semanticClusterByPath = detectSemanticClusters([...vectors.keys()], vectors);
 			this.semanticClusteringStatus = 'ready';
 		} catch (err) {
+			if (myRequestId !== this.semanticClusteringRequestId) return; // a superseded call's own failure (e.g. a timeout caused by racing a newer call for the same worker) must not overwrite a newer call's success
 			console.error('Clew: failed to compute semantic embeddings', err);
 			this.semanticClusterByPath = null;
 			this.semanticClusteringStatus = 'error';
 		} finally {
-			this.semanticModelDownloadProgress = null;
-			if (this.colorAndSizePanelEl.isShown()) this.renderColorAndSizePanel();
-			if (this.filterPanelEl.isShown()) this.renderFilterPanel();
+			// No early `return` here (ESLint's no-unsafe-finally) - guarded
+			// with an `if` instead, same "don't repaint over whatever the
+			// newer, still-in-flight (or already-finished) call has put on
+			// screen" reasoning as the try/catch guards above.
+			if (myRequestId === this.semanticClusteringRequestId) {
+				this.semanticModelDownloadProgress = null;
+				if (this.colorAndSizePanelEl.isShown()) this.renderColorAndSizePanel();
+				if (this.filterPanelEl.isShown()) this.renderFilterPanel();
+			}
 		}
 	}
 
