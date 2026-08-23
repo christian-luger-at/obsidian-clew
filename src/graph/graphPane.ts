@@ -159,38 +159,35 @@ const MAX_SAVED_VIEWS = 10;
  * Nothing here can block Obsidian's UI any more, at any vault size.
  *
  * User follow-up report on a larger vault: the badge showed "Downloading
- * model… 100%" and then just sat there. Measured live (see
- * EMBED_TIMEOUT_PER_NOTE_MS's own docstring below) - it hadn't actually
- * frozen, it was still genuinely embedding notes with zero visible feedback
- * once the download itself finished, and a fixed 45s budget (this
- * constant's own former value) was nowhere near enough for a few hundred
- * notes at the real, measured per-note cost. Fixed two ways: a scaling
- * timeout (below) instead of one flat number, and a genuine "Embedding
- * notes… done/total" progress phase (embeddingWorker.ts's embed-progress
- * message, surfaced via semanticClusteringBadgeText()) so the badge keeps
- * moving instead of freezing the moment the download itself is done.
+ * model… 100%" and then just sat there. It hadn't actually frozen, it was
+ * still genuinely embedding notes with zero visible feedback once the
+ * download itself finished - fixed with a genuine "Embedding notes…
+ * done/total" progress phase (embeddingWorker.ts's embed-progress message,
+ * surfaced via semanticClusteringBadgeText()) so the badge keeps moving
+ * instead of freezing the moment the download itself is done.
+ *
+ * A first attempt at the *timeout* half of that same fix scaled the total
+ * budget by note count, calibrated against a test vault of short notes
+ * (real, measured throughput there was ~40-50ms/note, not the spike write-
+ * up's own ~2.5ms/note figure). User follow-up report on a real vault: it
+ * still hit the error state ("Could not compute embeddings") after visibly
+ * making progress first - real notes carry far more text per note than the
+ * short test notes that number was calibrated against, so per-note cost
+ * (which scales with how much text there is to tokenize) varies far more
+ * than any single "ms per note" constant could predict. A total-duration
+ * budget is the wrong shape for this regardless of its number: it has to
+ * either guess low (and misfire on slow-but-genuinely-progressing work,
+ * exactly what happened here) or guess so high it stops meaning anything.
+ *
+ * Fixed by changing what the timeout actually measures - not total
+ * duration, but *time since the last sign of life*. IDLE_TIMEOUT_MS below
+ * resets on every progress event (download tick or embed tick alike) and
+ * only ever fires if genuinely nothing has happened for that long - a
+ * stalled/firewalled fetch, or a hung worker, the two things a timeout
+ * here should actually be protecting against. Work that's still visibly
+ * progressing, however slowly, can now never time out.
  */
-
-/**
- * Per-note budget for the *embedding* phase's own share of the timeout
- * below (the *download* phase already has no fixed timeout budget of its
- * own worth separating out - see modelLoadTimeoutMs()'s calculation).
- * Real, measured throughput in a live Obsidian vault (not the spike
- * write-up's own ~2.5ms/note figure, which reflected a different
- * environment) was ~40-50ms/note - generous headroom over that (a slower
- * machine, longer note bodies) without letting a genuinely vast vault wait
- * forever before ever reaching the panel's own "Could not compute
- * embeddings" error state.
- */
-const EMBED_TIMEOUT_PER_NOTE_MS = 200;
-
-/** Flat floor under the scaling budget below - covers the one-time model download/init itself (see this constant's own former flat-45s docstring, still accurate for *that* part) even when there are few or no notes left to actually embed. */
-const MODEL_LOAD_TIMEOUT_FLOOR_MS = 45_000;
-
-/** `refreshSemanticClusters()`'s own total timeout budget for one embedBatch() call, scaled by how many notes actually need embedding - see EMBED_TIMEOUT_PER_NOTE_MS/MODEL_LOAD_TIMEOUT_FLOOR_MS's own docstrings for the two components. */
-function modelLoadTimeoutMs(noteCount: number): number {
-	return MODEL_LOAD_TIMEOUT_FLOOR_MS + noteCount * EMBED_TIMEOUT_PER_NOTE_MS;
-}
+const IDLE_TIMEOUT_MS = 45_000;
 
 /**
  * How many entries a Diagnostics list (Orphans/Broken links/Isolated
@@ -5115,7 +5112,7 @@ export class GraphPane {
 	 * that triggered this call actually belongs to from here) - the actual
 	 * freeze was the main-thread-blocking embedding pipeline itself, fixed
 	 * by moving it into embeddingWorker.ts's Worker thread instead (see that
-	 * file's docstring and modelLoadTimeoutMs()'s own for the full story).
+	 * file's docstring and IDLE_TIMEOUT_MS's own for the full story).
 	 */
 	private async refreshSemanticClusters(): Promise<void> {
 		// User report (follow-up to the Worker-offload fix above): the
@@ -5161,27 +5158,37 @@ export class GraphPane {
 				}
 			}
 			if (toEmbed.length > 0) {
-				// Raced against a timeout, not awaited bare - see
-				// modelLoadTimeoutMs()'s own docstring: a stalled/firewalled
-				// fetch to the Hugging Face CDN inside the worker would
-				// otherwise hang this forever with no way to ever reach the
-				// `catch` block below. The worker's own model (memoized for
-				// its whole lifetime) is left untouched either way - if it
+				// Guarded by an *idle* timeout, not a bare await - see
+				// IDLE_TIMEOUT_MS's own docstring for why this measures time
+				// since the last progress event rather than total duration.
+				// The worker's own model (memoized for its whole lifetime) is
+				// left untouched either way if this does time out - if it
 				// does eventually finish loading in the background after
-				// this races it out, the *next* attempt (reopening this
+				// this gives up on it, the *next* attempt (reopening this
 				// panel) picks up that already-warm worker immediately
 				// instead of spinning up a new one.
-				const timeoutMs = modelLoadTimeoutMs(toEmbed.length);
-				const fresh = await Promise.race([
+				const fresh = await new Promise<Map<string, Float32Array>>((resolve, reject) => {
+					let idleTimer: number;
+					const resetIdleTimer = (): void => {
+						window.clearTimeout(idleTimer);
+						idleTimer = window.setTimeout(() => reject(new Error(`Clew: embedding stalled - no progress for ${IDLE_TIMEOUT_MS / 1000}s`)), IDLE_TIMEOUT_MS);
+					};
+					resetIdleTimer();
 					embedBatch(toEmbed, (progress) => {
+						resetIdleTimer();
 						if (myRequestId !== this.semanticClusteringRequestId) return; // a newer call has since started - its own progress events are what should drive the badge now
 						this.semanticClusteringProgress = progress;
 						this.updateSemanticClusteringBadgeText();
-					}),
-					new Promise<never>((_, reject) => {
-						window.setTimeout(() => reject(new Error(`Clew: embedding timed out after ${Math.round(timeoutMs / 1000)}s`)), timeoutMs);
-					}),
-				]);
+					})
+						.then((result) => {
+							window.clearTimeout(idleTimer);
+							resolve(result);
+						})
+						.catch((err: unknown) => {
+							window.clearTimeout(idleTimer);
+							reject(err instanceof Error ? err : new Error(String(err)));
+						});
+				});
 				// Still cache whatever came back even if superseded below -
 				// the vectors themselves are correct and reusable regardless
 				// of which call requested them, no reason to throw real,
