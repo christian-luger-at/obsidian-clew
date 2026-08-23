@@ -136,6 +136,39 @@ const MAX_PATH_ROUTES = 4;
 const MAX_SAVED_VIEWS = 10;
 
 /**
+ * User-reported: enabling a `semanticCluster` criterion left the Color &
+ * size/Filter panel stuck on "Computing embeddings…" AND froze Obsidian
+ * itself, not just that one panel. Root cause, confirmed by reading
+ * embeddingModel.ts's own numThreads=1 comment: the embedding model runs
+ * single-threaded WASM directly on the renderer's main thread (no Web
+ * Worker), and each `await embedText(...)` inside
+ * refreshSemanticClusters()'s per-note loop resolves via a microtask, not a
+ * macrotask - so a long run of them in a row never actually hands control
+ * back to the browser's paint/input loop, however many `await`s separate
+ * them. A vault with enough notes therefore reads as a full app freeze, not
+ * just a static label. Yielding via `setTimeout` (a real macrotask) every
+ * this many notes breaks that chain up into paint-sized chunks - frequent
+ * enough that Obsidian stays responsive, infrequent enough not to
+ * meaningfully slow the embedding pass down (per-note cost is ~2.5ms per
+ * the spike write-up, so even 20 notes is only ~50ms between yields).
+ */
+const SEMANTIC_EMBED_YIELD_EVERY = 20;
+
+/**
+ * Same user report as SEMANTIC_EMBED_YIELD_EVERY above: the model is
+ * fetched from the Hugging Face CDN (embeddingModel.ts's own docstring) on
+ * first use, with no timeout anywhere in that path - a stalled or
+ * firewalled connection left `semanticClusteringStatus` stuck at
+ * `'loading'` forever, never reaching the `catch` block's `'error'` state
+ * the panel already has a real message for. Generous on purpose: the
+ * documented worst case is "tens of seconds on a slow connection", so this
+ * needs enough headroom not to misfire on merely-slow networks while still
+ * eventually giving the user an actionable error instead of an infinite
+ * spinner.
+ */
+const MODEL_LOAD_TIMEOUT_MS = 45_000;
+
+/**
  * How many entries a Diagnostics list (Orphans/Broken links/Isolated
  * clusters) shows before offering "+ N more" - user feedback ("Denk daran,
  * dass u.U. viele Daten anzeigt werden müssen"): a vault with hundreds of
@@ -699,6 +732,16 @@ export class GraphPane {
 	private semanticEmbeddingCache = new Map<string, Float32Array>();
 	/** Drives the Color & size panel's "Computing embeddings…" status line (renderColorAndSizePanel()) while refreshSemanticClusters() is in flight - a first-time model download/load can take several seconds to tens of seconds (see the spike write-up), long enough that the panel would otherwise look frozen with no feedback at all. */
 	private semanticClusteringStatus: 'idle' | 'loading' | 'ready' | 'error' = 'idle';
+	/**
+	 * 0-100, or null before the first progress event/once embedding itself
+	 * (as opposed to the one-time model download) is underway -
+	 * loadEmbeddingModel()'s progress_callback feeds this so the "Computing
+	 * embeddings…" badge can read "Downloading model… N%" during that first,
+	 * potentially tens-of-seconds-long download instead of sitting static.
+	 * See SEMANTIC_EMBED_YIELD_EVERY's docstring for the user report this
+	 * (and the other two related fixes) came out of.
+	 */
+	private semanticModelDownloadProgress: number | null = null;
 	private readonly appearanceButton: HTMLButtonElement;
 	private readonly diagnosticsButton: HTMLButtonElement;
 	private readonly diagnosticsPanelEl: HTMLElement;
@@ -5057,11 +5100,32 @@ export class GraphPane {
 	 */
 	private async refreshSemanticClusters(): Promise<void> {
 		this.semanticClusteringStatus = 'loading';
+		this.semanticModelDownloadProgress = null;
 		if (this.colorAndSizePanelEl.isShown()) this.renderColorAndSizePanel();
 		if (this.filterPanelEl.isShown()) this.renderFilterPanel();
 		try {
-			const extractor = await loadEmbeddingModel();
+			// Raced against a timeout, not awaited bare - see
+			// MODEL_LOAD_TIMEOUT_MS's own docstring: a stalled/firewalled
+			// fetch to the Hugging Face CDN would otherwise hang this
+			// forever with no way to ever reach the `catch` block below.
+			// loadEmbeddingModel()'s own memoized modelPromise is left
+			// untouched either way - if it does eventually resolve in the
+			// background after this races it out, the *next* attempt
+			// (reopening this panel) picks up that already-finished result
+			// immediately instead of re-downloading.
+			const extractor = await Promise.race([
+				loadEmbeddingModel((info) => {
+					if (info.status !== 'progress' && info.status !== 'progress_total') return;
+					this.semanticModelDownloadProgress = Math.round(info.progress);
+					this.updateSemanticClusteringBadgeText();
+				}),
+				new Promise<never>((_, reject) => {
+					window.setTimeout(() => reject(new Error(`Clew: embedding model load timed out after ${MODEL_LOAD_TIMEOUT_MS / 1000}s`)), MODEL_LOAD_TIMEOUT_MS);
+				}),
+			]);
+			this.semanticModelDownloadProgress = null;
 			const vectors = new Map<string, Float32Array>();
+			let sinceYield = 0;
 			for (const file of this.files) {
 				const mtime = this.mtimeByPath.get(file.path) ?? file.stat.mtime;
 				const cacheKey = `${file.path}:${mtime}`;
@@ -5070,6 +5134,14 @@ export class GraphPane {
 					const content = this.noteContentCache.get(file.path) ?? `${file.basename}\n${await this.app.vault.cachedRead(file)}`.toLowerCase();
 					vector = await embedText(extractor, content);
 					this.semanticEmbeddingCache.set(cacheKey, vector);
+					// See SEMANTIC_EMBED_YIELD_EVERY's own docstring - only
+					// counts notes that actually ran the (main-thread-
+					// blocking) model, not cache hits, which cost nothing to
+					// begin with and would just yield needlessly often.
+					if (++sinceYield >= SEMANTIC_EMBED_YIELD_EVERY) {
+						sinceYield = 0;
+						await new Promise((resolve) => window.setTimeout(resolve, 0));
+					}
 				}
 				vectors.set(file.path, vector);
 			}
@@ -5080,9 +5152,38 @@ export class GraphPane {
 			this.semanticClusterByPath = null;
 			this.semanticClusteringStatus = 'error';
 		} finally {
+			this.semanticModelDownloadProgress = null;
 			if (this.colorAndSizePanelEl.isShown()) this.renderColorAndSizePanel();
 			if (this.filterPanelEl.isShown()) this.renderFilterPanel();
 		}
+	}
+
+	/**
+	 * A direct text-node patch, not a renderColorAndSizePanel()/
+	 * renderFilterPanel() call - the download-progress callback above can
+	 * fire many times over the download's ~2s (one per chunk), and a full
+	 * panel rebuild on every tick would both be wasteful and drop whatever
+	 * the user was mid-typing in an unrelated field in that panel at the
+	 * time. Matched by text prefix, not a dedicated element reference -
+	 * badges aren't retained across the full re-renders every other status
+	 * change already goes through (error/ready), so there's no stable
+	 * handle to hold onto between ticks; matching by content is what the
+	 * `community` criterion's own same-class badge relies on not colliding
+	 * with, so this checks the exact same two prefixes renderCriterionControls()
+	 * writes.
+	 */
+	private updateSemanticClusteringBadgeText(): void {
+		const text = this.semanticClusteringBadgeText();
+		for (const el of Array.from(this.containerEl.querySelectorAll<HTMLElement>('.clew-criterion-community-badge'))) {
+			if (el.textContent === 'Computing embeddings…' || el.textContent?.startsWith('Downloading model…')) {
+				el.textContent = text;
+			}
+		}
+	}
+
+	/** Single source of truth for the "still working" badge text - used both by the live-patch above and by the initial render in renderCriterionControls(), so the two can never drift out of sync with each other. */
+	private semanticClusteringBadgeText(): string {
+		return this.semanticModelDownloadProgress !== null ? `Downloading model… ${this.semanticModelDownloadProgress}%` : 'Computing embeddings…';
 	}
 
 	/** Synchronous repaint using whatever's already in noteContentCache - the part of applyNodeGroups() every group-definition change needs *immediately*, split out so refreshNodeGroupContent() below can call it again once fresh content lands, without redoing the button-state/graph-guard bookkeeping twice. */
@@ -5883,7 +5984,7 @@ export class GraphPane {
 					break;
 				}
 				if (this.semanticClusteringStatus !== 'ready') {
-					controlsEl.createSpan({ cls: 'clew-criterion-community-badge', text: 'Computing embeddings…' });
+					controlsEl.createSpan({ cls: 'clew-criterion-community-badge', text: this.semanticClusteringBadgeText() });
 					break;
 				}
 
