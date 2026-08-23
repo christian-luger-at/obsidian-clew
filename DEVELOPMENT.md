@@ -62,7 +62,7 @@ src/
     egoGraph.ts                   # BFS ego-network (Focus panel)
     graphAnalytics.ts              # betweenness / PageRank wrappers
     stagnation.ts                  # Louvain communities, staleness, structural deviation
-    semanticClustering.ts / embeddingModel.ts  # local-embedding note clustering
+    semanticClustering.ts / embeddingModel.ts / embeddingWorker.ts  # local-embedding note clustering (main-thread RPC client + the Worker thread it drives)
     theme.ts                       # Obsidian CSS-variable → graph color mapping
     timeline.ts                    # ctime-based replay
     visibilityFade.ts               # Filter/Focus's shared fade-in/out tracker
@@ -111,7 +111,7 @@ Separate from `npm run test` (wall-clock assertions are noisier on CI than corre
 ### 3. Manual QA vault
 
 ```bash
-npm run gen-test-vault   # writes ./test-vault, ~19 hand-designed notes
+npm run gen-test-vault   # writes ./test-vault, ~27 hand-designed notes
 ```
 
 Symlink the build output **file by file** (not the whole directory - `test-vault` needs its own `data.json`):
@@ -173,7 +173,7 @@ Every `npm run build` after that updates the vault automatically. Open `test-vau
 
 **Code-fence embed** (` ```clew-graph ` in any note - see `graphEmbed.ts`/`embedConfig.ts`)
 - `node:` (required, resolved like a `[[wikilink]]`), `hops:` (1-3, default 1), `width:`/`height:` (CSS length; no width → 100%, no height → 16:9), `refresh:` (shows a manual refresh button). Renders Radial-centered on `node:`, never inherits the vault's real filters/colors/pinned positions. Missing/unresolvable `node:` renders a red inline error, not a crash.
-- Check this specifically in **Live Preview** (Obsidian's default editing view), not just Reading view - Obsidian renders a code block's widget against a still-detached container for an initial "measurement" pass first, immediately unloading it before the real, attached one mounts. A real bug this exposed (fixed): `GraphPane.destroy()` didn't null `this.renderer` after `.kill()` (unlike `setFiles()`, which already does, with its own docstring explaining why), and the still-running `startVisibilityFadeTicker()`/`startTimelineFadeTicker()` intervals called `renderer.refresh()` *before* their own self-stop check - a throw from that stale renderer skipped the stop-check every tick, so the ticker never stopped, spamming "Sigma: could not find a suitable program for node type "bordered"!" forever instead of failing once. Both tickers now wrap `refresh()` in try/finally so their self-stop check always runs regardless.
+- Check this specifically in **Live Preview** (Obsidian's default editing view), not just Reading view - Obsidian renders a code block's widget against a still-detached container for an initial "measurement" pass first, then immediately unloads it before the real, attached one mounts. A trap for anything that starts an interval/ticker in `onload()`: it must tear down cleanly in `onunload()` even though it never got to run for real (see `GraphPane.destroy()`).
 
 **Error notifications** (Settings → Community plugins → Clew → "Debug" - see `errorReporting.ts`)
 - Off by default. Every unexpected error inside Clew's own code always goes to the console regardless; turning "Show error notifications" on additionally shows a sticky, copyable `Notice` (context + message + stack) for it. An error from Obsidian core or a different plugin never triggers one, either way - filtered by the `plugin:clew` source name Obsidian's own loader stamps onto this plugin's bundled code.
@@ -202,9 +202,9 @@ Symlink the plugin the same file-by-file way as `test-vault` above, open it, and
 
 `spike-vault/` and `spike/dist/` are gitignored.
 
-**Verified on a real tablet** (iPad, Obsidian mobile, GitHub issue #7, closed): the standalone graph view opens and renders, the ForceAtlas2 layout Worker spawns and runs fine on iOS Safari's WebView (Blob-URL construction was the one open risk - it's not one in practice), WebGL performance and pan/zoom/tap feel are all fine, and drag-to-pin works correctly (see `setupNodeDragging()`'s captor-agnostic `renderer.on('moveBody', ...)` plus the touch captor's own `touchup` - this was the one real bug the touch gap exposed, fixed before this verification). Hover-tooltips and hover-highlight-neighbors also work as expected on tap.
+**Verified on a real tablet** (iPad, Obsidian mobile, GitHub issue #7, closed): the standalone graph view, the ForceAtlas2 layout Worker (spawned from a Blob URL - works fine there), WebGL rendering, pan/zoom/tap, hover-tooltips/hover-highlight-neighbors on tap, and drag-to-pin all work correctly - the touch captor needs its own `touchup` handler alongside the pointer one (see `setupNodeDragging()`'s captor-agnostic `renderer.on('moveBody', ...)`).
 
-User-reported follow-up: NoteSuggest's dropdown (Find-path From/To, Radial's "Center on", Focus's note picker, Settings' excluded-notes list - Obsidian's own `AbstractInputSuggest` popover, `.suggestion-container`) rendered underneath some other Obsidian chrome on mobile, unusable. Not reproducible on desktop (its `.suggestion-container` already sits at z-index 60, above every other checked element there) and not something Clew positions itself - the popover is appended straight to `<body>`, not nested in any Clew panel. Fixed with a global `z-index: 1000` override on `.suggestion-container` in styles.css (can't be scoped to just Clew's own inputs - Obsidian marks the popover with nothing that says which input triggered it). Verified on desktop that the override applies and picking a suggestion still works; the actual mobile fix itself is unverified (no way to run real Obsidian mobile from this environment - the iOS Simulator can't install App Store apps, see the tablet verification above).
+NoteSuggest's dropdown (Find-path From/To, Radial's "Center on", Focus's note picker, Settings' excluded-notes list - Obsidian's own `AbstractInputSuggest` popover, `.suggestion-container`) needs a `z-index: 1000` override in styles.css to clear other Obsidian chrome on mobile (can't be scoped to just Clew's own inputs - the popover is appended straight to `<body>`, and Obsidian marks it with nothing that says which input triggered it). Verified on desktop only that the override applies and picking a suggestion still works - the actual mobile behavior is unverified (no way to run real Obsidian mobile from this environment - the iOS Simulator can't install App Store apps).
 
 ## Release
 
