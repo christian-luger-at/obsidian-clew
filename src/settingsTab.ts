@@ -1,4 +1,4 @@
-import { App, PluginSettingTab, Setting, setIcon, setTooltip, TFile, TFolder } from 'obsidian';
+import { App, PluginSettingTab, Setting, SettingDefinitionItem, setIcon, setTooltip, TFile, TFolder } from 'obsidian';
 import type ClewPlugin from './main';
 import { GraphPane } from './graph/graphPane';
 import { NoteSuggest } from './graph/noteSuggest';
@@ -14,6 +14,27 @@ import { FolderSuggest } from './graph/folderSuggest';
  * one-time "what do I even want to see" choice, made once and forgotten,
  * which is what Obsidian's own Settings screen is for - not something that
  * needs the graph on screen to make sense of.
+ *
+ * Implements both `getSettingDefinitions()` (Obsidian 1.13+'s declarative
+ * API - the toggles below become indexable by Obsidian's own settings
+ * search) and `display()` (the pre-1.13 imperative fallback,
+ * `getSettingDefinitions()`'s own docstring: "Only implement display() as
+ * a fallback for plugins that need to support Obsidian versions older than
+ * 1.13.0" - manifest.json's minAppVersion is 1.12.0, so this plugin still
+ * needs it). Both call the exact same renderExcludedNotesSetting()/
+ * renderExcludedFoldersSetting() helpers (now taking an already-named
+ * `Setting` rather than a bare `containerEl`) so the two code paths can't
+ * drift out of sync with each other - the custom note/folder picker+chips
+ * UI has no equivalent declarative control type, so it's still rendered
+ * imperatively either way (1.13+ via a `render` definition, pre-1.13 via
+ * display() calling it directly).
+ *
+ * getSettingDefinitions() itself is unverified against a real Obsidian
+ * 1.13+ build - the newest available in this dev environment is 1.12.7, a
+ * version old enough that it never calls getSettingDefinitions() at all
+ * (falls through to display() instead, which *is* exercised by the usual
+ * manual-QA vault). Built against the official 1.13.1 type definitions,
+ * not guessed.
  */
 export class ClewSettingTab extends PluginSettingTab {
 	private readonly plugin: ClewPlugin;
@@ -21,6 +42,149 @@ export class ClewSettingTab extends PluginSettingTab {
 	constructor(app: App, plugin: ClewPlugin) {
 		super(app, plugin);
 		this.plugin = plugin;
+	}
+
+	/**
+	 * Every toggle below is a plain `boolean` living at a fixed, known path
+	 * in `ClewSettings` - simple enough that a hand-written switch is
+	 * clearer and safer than a generic dotted-path resolver would be for
+	 * just five keys, and it keeps this in one place next to
+	 * getSettingDefinitions() itself rather than introducing a parsing
+	 * convention that would need documenting on its own.
+	 */
+	getControlValue(key: string): unknown {
+		switch (key) {
+			case 'diagnostics.showOrphans':
+				return this.plugin.settings.diagnostics.showOrphans;
+			case 'diagnostics.showBrokenLinks':
+				return this.plugin.settings.diagnostics.showBrokenLinks;
+			case 'diagnostics.showIsolatedClusters':
+				return this.plugin.settings.diagnostics.showIsolatedClusters;
+			case 'diagnostics.showStructuralDeviation':
+				return this.plugin.settings.diagnostics.showStructuralDeviation;
+			case 'debugMode':
+				return this.plugin.settings.debugMode;
+			default:
+				// Unreachable in practice - the only keys Obsidian ever asks
+				// for here are the ones getSettingDefinitions() itself
+				// handed out above, and that list matches this switch
+				// exactly. A real hit means a getSettingDefinitions() edit
+				// added a `control.key` without a matching case here - fail
+				// loudly rather than falling through to
+				// `super.getControlValue()` (itself a 1.13.0+-only API
+				// `eslint-plugin-obsidianmd`'s no-unsupported-api rule
+				// correctly flags as unsafe to call given this plugin's own
+				// minAppVersion of 1.12.0, and not something this branch
+				// could productively delegate to anyway - the base
+				// implementation reads `app.vault.getConfig`, meaningless
+				// for this plugin's own settings).
+				throw new Error(`Clew: no setting registered for control key "${key}"`);
+		}
+	}
+
+	/** Counterpart to getControlValue() above - same five keys, same reasoning for a hand-written switch over a generic resolver. Persists via plugin.saveSettings() (not a bare saveData() call), matching every other settings-mutation path in this file and GraphPane's own. */
+	async setControlValue(key: string, value: unknown): Promise<void> {
+		switch (key) {
+			case 'diagnostics.showOrphans':
+				this.plugin.settings.diagnostics.showOrphans = value as boolean;
+				break;
+			case 'diagnostics.showBrokenLinks':
+				this.plugin.settings.diagnostics.showBrokenLinks = value as boolean;
+				break;
+			case 'diagnostics.showIsolatedClusters':
+				this.plugin.settings.diagnostics.showIsolatedClusters = value as boolean;
+				break;
+			case 'diagnostics.showStructuralDeviation':
+				this.plugin.settings.diagnostics.showStructuralDeviation = value as boolean;
+				break;
+			case 'debugMode':
+				this.plugin.settings.debugMode = value as boolean;
+				break;
+			default:
+				// See getControlValue()'s own comment on its identical
+				// default branch - same reasoning applies here.
+				throw new Error(`Clew: no setting registered for control key "${key}"`);
+		}
+		await this.plugin.saveSettings();
+	}
+
+	/**
+	 * The 1.13+ declarative shape - three headed groups mirroring display()
+	 * below exactly (same names/descriptions/order), toggle controls backed
+	 * by getControlValue()/setControlValue() above, and the two custom
+	 * note/folder pickers as `render` definitions delegating to the same
+	 * helpers display() itself calls.
+	 */
+	getSettingDefinitions(): SettingDefinitionItem[] {
+		return [
+			{
+				// SettingDefinitionGroup has no `desc` of its own (only
+				// SettingDefinitionBase-derived items do) - the old intro
+				// paragraph here ("Choose which sections...") is dropped
+				// from this declarative view rather than shoehorned into an
+				// empty-name row purely to hold it; each toggle's own desc
+				// already explains itself, and display() below (still used
+				// on Obsidian < minAppVersion 1.13.0) keeps the paragraph
+				// exactly as before.
+				type: 'group',
+				heading: 'Diagnostics panel',
+				items: [
+					{
+						name: 'Orphans',
+						desc: 'Notes with no links in or out.',
+						control: { type: 'toggle', key: 'diagnostics.showOrphans' },
+					},
+					{
+						name: 'Broken links',
+						desc: 'Links that don\'t resolve to a note. Turn this off if you deliberately link to notes that don\'t exist yet ("stub first, write later") and don\'t want them flagged.',
+						control: { type: 'toggle', key: 'diagnostics.showBrokenLinks' },
+					},
+					{
+						name: 'Isolated clusters',
+						desc: "Groups of linked notes that aren't connected to the rest of the vault.",
+						control: { type: 'toggle', key: 'diagnostics.showIsolatedClusters' },
+					},
+					{
+						name: 'Structural deviation',
+						desc: 'Groups of heavily-linked notes scattered across several different folders.',
+						control: { type: 'toggle', key: 'diagnostics.showStructuralDeviation' },
+					},
+				],
+			},
+			{
+				type: 'group',
+				heading: 'Find path',
+				items: [
+					{
+						// Same "no group-level desc" gap as Diagnostics panel
+						// above - the explanation moves onto this row's own
+						// desc instead, since it's specifically about what
+						// "excluded" means here (a `SettingDefinitionRender`
+						// still extends SettingDefinitionBase, so it does
+						// have `desc`, unlike the group wrapping it).
+						name: 'Excluded notes',
+						desc: 'Notes every Find-path search leaves out entirely (e.g. a big MOC/index note you never want a route hopping through) - excluded notes also get a ring while Find-path is open, so you can see which ones at a glance. Configured only here, not in the Find-path dialog itself.',
+						render: (setting) => this.renderExcludedNotesSetting(setting),
+					},
+					{
+						name: 'Excluded folders',
+						desc: 'Includes subfolders.',
+						render: (setting) => this.renderExcludedFoldersSetting(setting),
+					},
+				],
+			},
+			{
+				type: 'group',
+				heading: 'Debug',
+				items: [
+					{
+						name: 'Show error notifications',
+						desc: 'Every unexpected error already goes to the developer console. Turn this on to also see a copyable notification for it - useful while reporting a bug, noisy for everyday use, which is why it defaults off.',
+						control: { type: 'toggle', key: 'debugMode' },
+					},
+				],
+			},
+		];
 	}
 
 	display(): void {
@@ -80,8 +244,8 @@ export class ClewSettingTab extends PluginSettingTab {
 			text: 'Notes and folders every Find-path search leaves out entirely (e.g. a big MOC/index note, or a whole "Archive" folder, you never want a route hopping through) - excluded notes also get a ring while Find-path is open, so you can see which ones at a glance. Configured only here, not in the Find-path dialog itself.',
 			cls: 'setting-item-description',
 		});
-		this.renderExcludedNotesSetting(containerEl);
-		this.renderExcludedFoldersSetting(containerEl);
+		this.renderExcludedNotesSetting(new Setting(containerEl).setName('Excluded notes'));
+		this.renderExcludedFoldersSetting(new Setting(containerEl).setName('Excluded folders').setDesc('Includes subfolders.'));
 
 		new Setting(containerEl).setName('Debug').setHeading();
 		new Setting(containerEl)
@@ -117,8 +281,20 @@ export class ClewSettingTab extends PluginSettingTab {
 	 * actually configured now. getActive() returns null harmlessly when no
 	 * graph view is open at all.
 	 */
-	private renderExcludedNotesSetting(containerEl: HTMLElement): void {
-		const pickerSetting = new Setting(containerEl).setName('Excluded notes');
+	/**
+	 * Takes an already-constructed, already-named `Setting` rather than a
+	 * bare `containerEl` - shared verbatim between display() (which builds
+	 * the Setting itself, pre-1.13 fallback) and getSettingDefinitions()'s
+	 * `render` definition (which gets one handed to it, already carrying
+	 * the definition's own name/desc, 1.13+ declarative path) - see this
+	 * class's own docstring for why both call the same helper. The chip
+	 * list mounts as `setting.settingEl`'s next sibling (same relative
+	 * position the original single-`containerEl` version had) - `!` is
+	 * safe here, a `Setting` handed to either caller is always already
+	 * attached to a real parent by the time this runs.
+	 */
+	private renderExcludedNotesSetting(pickerSetting: Setting): void {
+		const containerEl = pickerSetting.settingEl.parentElement!;
 		const chipsEl = containerEl.createDiv({ cls: 'clew-filter-pills' });
 
 		const renderChips = (): void => {
@@ -169,8 +345,9 @@ export class ClewSettingTab extends PluginSettingTab {
 	 * - nothing downstream distinguishes a folder-excluded note from an
 	 * individually-excluded one.
 	 */
-	private renderExcludedFoldersSetting(containerEl: HTMLElement): void {
-		const pickerSetting = new Setting(containerEl).setName('Excluded folders').setDesc('Includes subfolders.');
+	/** Same shared-helper shape as renderExcludedNotesSetting() above - see that method's own docstring. */
+	private renderExcludedFoldersSetting(pickerSetting: Setting): void {
+		const containerEl = pickerSetting.settingEl.parentElement!;
 		const chipsEl = containerEl.createDiv({ cls: 'clew-filter-pills' });
 
 		const renderChips = (): void => {
