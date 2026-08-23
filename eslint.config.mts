@@ -26,6 +26,10 @@ export default defineConfig(
 		languageOptions: {
 			globals: {
 				...globals.browser,
+				// esbuild `define` substitution (esbuild.config.mjs) - see
+				// src/globals.d.ts for the equivalent tsc-side ambient
+				// declaration.
+				__EMBEDDING_WORKER_SOURCE__: 'readonly',
 			},
 			parserOptions: {
 				projectService: {

@@ -5,6 +5,7 @@ import { FIND_PATH_ENABLED, GraphPane } from './graph/graphPane';
 import { registerGraphEmbed } from './graph/graphEmbed';
 import { ClewSettingTab } from './settingsTab';
 import { reportError } from './errorReporting';
+import { terminateEmbeddingWorker } from './graph/embeddingModel';
 
 export default class ClewPlugin extends Plugin {
 	settings!: ClewSettings;
@@ -81,7 +82,13 @@ export default class ClewPlugin extends Plugin {
 		});
 	}
 
-	onunload() {}
+	onunload() {
+		// A running embedding worker (and the model it's holding in memory)
+		// is background state this plugin owns, not something Obsidian
+		// itself would ever clean up on a disable/reload - see
+		// embeddingModel.ts's own docstring on terminateEmbeddingWorker().
+		terminateEmbeddingWorker();
+	}
 
 	private async activateStandaloneGraphView(): Promise<void> {
 		const existing = this.app.workspace.getLeavesOfType(CLEW_STANDALONE_GRAPH_VIEW);

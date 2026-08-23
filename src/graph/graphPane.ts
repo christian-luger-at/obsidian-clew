@@ -47,7 +47,7 @@ import {
 	StringOperator,
 	StructuralCohesionBucket,
 } from './nodeGroups';
-import { embedText, loadEmbeddingModel } from './embeddingModel';
+import { embedBatch } from './embeddingModel';
 import { detectSemanticClusters } from './semanticClustering';
 import { ClewAppearanceSettings, DEFAULT_APPEARANCE_SETTINGS, SavedView } from '../settings';
 import {
@@ -139,32 +139,24 @@ const MAX_SAVED_VIEWS = 10;
  * User-reported: enabling a `semanticCluster` criterion left the Color &
  * size/Filter panel stuck on "Computing embeddings…" AND froze Obsidian
  * itself, not just that one panel. Root cause, confirmed by reading
- * embeddingModel.ts's own numThreads=1 comment: the embedding model runs
- * single-threaded WASM directly on the renderer's main thread (no Web
- * Worker), and each `await embedText(...)` inside
- * refreshSemanticClusters()'s per-note loop resolves via a microtask, not a
- * macrotask - so a long run of them in a row never actually hands control
- * back to the browser's paint/input loop, however many `await`s separate
- * them. A vault with enough notes therefore reads as a full app freeze, not
- * just a static label. Yielding via `setTimeout` (a real macrotask) every
- * this many notes breaks that chain up into paint-sized chunks - frequent
- * enough that Obsidian stays responsive, infrequent enough not to
- * meaningfully slow the embedding pass down (per-note cost is ~2.5ms per
- * the spike write-up, so even 20 notes is only ~50ms between yields).
- */
-const SEMANTIC_EMBED_YIELD_EVERY = 20;
-
-/**
- * Same user report as SEMANTIC_EMBED_YIELD_EVERY above: the model is
- * fetched from the Hugging Face CDN (embeddingModel.ts's own docstring) on
- * first use, with no timeout anywhere in that path - a stalled or
- * firewalled connection left `semanticClusteringStatus` stuck at
- * `'loading'` forever, never reaching the `catch` block's `'error'` state
- * the panel already has a real message for. Generous on purpose: the
- * documented worst case is "tens of seconds on a slow connection", so this
- * needs enough headroom not to misfire on merely-slow networks while still
- * eventually giving the user an actionable error instead of an infinite
- * spinner.
+ * embeddingModel.ts's own (now former) numThreads=1 comment: the embedding
+ * model ran single-threaded WASM directly on the renderer's main thread,
+ * and every `await` inside the model-load step and the per-note embed loop
+ * alike resolved via a microtask, not a macrotask - so a long run of them
+ * in a row never actually handed control back to the browser's paint/input
+ * loop, however many `await`s separated them. A vault with enough notes (or
+ * even just a slow one-time model load) therefore read as a full app
+ * freeze, not just a static label.
+ *
+ * A first pass at this fixed only the per-note loop's own share of the
+ * problem (yielding via `setTimeout` between notes) - it left the one-time
+ * ~1.5-2s ONNX-session-creation step itself still blocking, since a single
+ * `await loadEmbeddingModel()` call can't be chunked from the caller's
+ * side. The real fix moves the entire pipeline - model load and every
+ * note's inference - off the main thread entirely: see embeddingWorker.ts's
+ * own docstring and embeddingModel.ts's embedBatch(), which this file now
+ * calls instead of the old per-note embedText()/loadEmbeddingModel() pair.
+ * Nothing here can block Obsidian's UI any more, at any vault size.
  */
 const MODEL_LOAD_TIMEOUT_MS = 45_000;
 
@@ -735,11 +727,11 @@ export class GraphPane {
 	/**
 	 * 0-100, or null before the first progress event/once embedding itself
 	 * (as opposed to the one-time model download) is underway -
-	 * loadEmbeddingModel()'s progress_callback feeds this so the "Computing
+	 * embedBatch()'s onProgress callback feeds this so the "Computing
 	 * embeddings…" badge can read "Downloading model… N%" during that first,
 	 * potentially tens-of-seconds-long download instead of sitting static.
-	 * See SEMANTIC_EMBED_YIELD_EVERY's docstring for the user report this
-	 * (and the other two related fixes) came out of.
+	 * See MODEL_LOAD_TIMEOUT_MS's docstring for the user report this (and
+	 * the other related fix, embeddingWorker.ts) came out of.
 	 */
 	private semanticModelDownloadProgress: number | null = null;
 	private readonly appearanceButton: HTMLButtonElement;
@@ -5064,39 +5056,33 @@ export class GraphPane {
 
 	/**
 	 * GitHub backlog item 16, "Semantisches Clustering" - the async pipeline
-	 * behind the `semanticCluster` criterion. Loads the embedding model
-	 * (embeddingModel.ts's loadEmbeddingModel(), memoized for the whole
-	 * plugin session - only genuinely slow the very first time this runs at
-	 * all), embeds every current note not already in
-	 * semanticEmbeddingCache (reusing noteContentCache's own "title\ncontent"
-	 * text when it's already populated, same as buildCriteriaFacts()'s
-	 * `content` field does, rather than reading every file a second time),
-	 * then re-clusters over all of them (semanticClustering.ts's
+	 * behind the `semanticCluster` criterion. Builds the `{path, text}` list
+	 * for every current note not already in semanticEmbeddingCache (reusing
+	 * noteContentCache's own "title\ncontent" text when it's already
+	 * populated, same as buildCriteriaFacts()'s `content` field does, rather
+	 * than reading every file a second time), hands that whole list to
+	 * embedBatch() in one round trip to embeddingWorker.ts's own Worker
+	 * thread (model load included - see that file's docstring), then
+	 * re-clusters over all of them (semanticClustering.ts's
 	 * detectSemanticClusters()).
 	 *
 	 * Errors - most likely no network on a first-ever model download, since
 	 * the model itself is fetched from the Hugging Face Hub's CDN rather
-	 * than bundled (see embeddingModel.ts's own docstring) - are caught and
+	 * than bundled (see embeddingWorker.ts's own docstring) - are caught and
 	 * surfaced via semanticClusteringStatus instead of becoming an
 	 * unhandled rejection; refreshCriteriaContent() awaits this directly.
 	 *
 	 * User report: "Wenn ich einen Semantic Cluster als Filter oder Color
 	 * wähle, dann kann ich den Cluster nicht wählen. Es steht nur 'Computing
-	 * embeddings....'" - a real bug, not just a slow first load. The initial
-	 * `renderColorAndSizePanel()` call below (entering `'loading'`) painted
-	 * that message correctly, but nothing ever re-rendered either panel once
-	 * this method actually finished - `semanticClusteringStatus` flipped to
-	 * `'ready'`/`'error'` in memory, but the DOM stayed frozen on whatever
-	 * the loading-state render last produced, forever (the panel only
-	 * rebuilds on an explicit user action - add/edit/delete a criterion,
-	 * open/close the panel - none of which "an unrelated async task finished
-	 * in the background" is). refreshCriteriaContent() (this method's only
-	 * caller) called repaintNodeGroups()/applyFilter() afterward, neither of
-	 * which touches either panel's own DOM. Fixed by re-rendering whichever
-	 * of Color & size/Filter is currently open once this method's own
-	 * work concludes (both, not just one - a `semanticCluster` criterion can
-	 * live in either, and there's no cheap way to know which panel the
-	 * criterion that triggered this call actually belongs to from here).
+	 * embeddings....'" plus Obsidian itself freezing - two related bugs, not
+	 * one. The panel-not-updating half was fixed by re-rendering whichever
+	 * of Color & size/Filter is currently open once this method's own work
+	 * concludes (both, not just one - a `semanticCluster` criterion can live
+	 * in either, and there's no cheap way to know which panel the criterion
+	 * that triggered this call actually belongs to from here) - the actual
+	 * freeze was the main-thread-blocking embedding pipeline itself, fixed
+	 * by moving it into embeddingWorker.ts's Worker thread instead (see that
+	 * file's docstring and MODEL_LOAD_TIMEOUT_MS's own for the full story).
 	 */
 	private async refreshSemanticClusters(): Promise<void> {
 		this.semanticClusteringStatus = 'loading';
@@ -5104,46 +5090,49 @@ export class GraphPane {
 		if (this.colorAndSizePanelEl.isShown()) this.renderColorAndSizePanel();
 		if (this.filterPanelEl.isShown()) this.renderFilterPanel();
 		try {
-			// Raced against a timeout, not awaited bare - see
-			// MODEL_LOAD_TIMEOUT_MS's own docstring: a stalled/firewalled
-			// fetch to the Hugging Face CDN would otherwise hang this
-			// forever with no way to ever reach the `catch` block below.
-			// loadEmbeddingModel()'s own memoized modelPromise is left
-			// untouched either way - if it does eventually resolve in the
-			// background after this races it out, the *next* attempt
-			// (reopening this panel) picks up that already-finished result
-			// immediately instead of re-downloading.
-			const extractor = await Promise.race([
-				loadEmbeddingModel((info) => {
-					if (info.status !== 'progress' && info.status !== 'progress_total') return;
-					this.semanticModelDownloadProgress = Math.round(info.progress);
-					this.updateSemanticClusteringBadgeText();
-				}),
-				new Promise<never>((_, reject) => {
-					window.setTimeout(() => reject(new Error(`Clew: embedding model load timed out after ${MODEL_LOAD_TIMEOUT_MS / 1000}s`)), MODEL_LOAD_TIMEOUT_MS);
-				}),
-			]);
-			this.semanticModelDownloadProgress = null;
-			const vectors = new Map<string, Float32Array>();
-			let sinceYield = 0;
+			// cacheKeyByPath: computed once up front (not re-derived after
+			// the batch resolves) so the mtime each note is looked up under
+			// can't drift between "what was requested" and "what gets read
+			// back out of the cache" if a note's mtime changes mid-flight.
+			const cacheKeyByPath = new Map<string, string>();
+			const toEmbed: { key: string; text: string }[] = [];
 			for (const file of this.files) {
 				const mtime = this.mtimeByPath.get(file.path) ?? file.stat.mtime;
 				const cacheKey = `${file.path}:${mtime}`;
-				let vector = this.semanticEmbeddingCache.get(cacheKey);
-				if (!vector) {
+				cacheKeyByPath.set(file.path, cacheKey);
+				if (!this.semanticEmbeddingCache.has(cacheKey)) {
 					const content = this.noteContentCache.get(file.path) ?? `${file.basename}\n${await this.app.vault.cachedRead(file)}`.toLowerCase();
-					vector = await embedText(extractor, content);
-					this.semanticEmbeddingCache.set(cacheKey, vector);
-					// See SEMANTIC_EMBED_YIELD_EVERY's own docstring - only
-					// counts notes that actually ran the (main-thread-
-					// blocking) model, not cache hits, which cost nothing to
-					// begin with and would just yield needlessly often.
-					if (++sinceYield >= SEMANTIC_EMBED_YIELD_EVERY) {
-						sinceYield = 0;
-						await new Promise((resolve) => window.setTimeout(resolve, 0));
-					}
+					toEmbed.push({ key: cacheKey, text: content });
 				}
-				vectors.set(file.path, vector);
+			}
+			if (toEmbed.length > 0) {
+				// Raced against a timeout, not awaited bare - see
+				// MODEL_LOAD_TIMEOUT_MS's own docstring: a stalled/firewalled
+				// fetch to the Hugging Face CDN inside the worker would
+				// otherwise hang this forever with no way to ever reach the
+				// `catch` block below. The worker's own model (memoized for
+				// its whole lifetime) is left untouched either way - if it
+				// does eventually finish loading in the background after
+				// this races it out, the *next* attempt (reopening this
+				// panel) picks up that already-warm worker immediately
+				// instead of spinning up a new one.
+				const fresh = await Promise.race([
+					embedBatch(toEmbed, (percent) => {
+						this.semanticModelDownloadProgress = percent;
+						this.updateSemanticClusteringBadgeText();
+					}),
+					new Promise<never>((_, reject) => {
+						window.setTimeout(() => reject(new Error(`Clew: embedding model load timed out after ${MODEL_LOAD_TIMEOUT_MS / 1000}s`)), MODEL_LOAD_TIMEOUT_MS);
+					}),
+				]);
+				for (const [key, vector] of fresh) this.semanticEmbeddingCache.set(key, vector);
+			}
+			this.semanticModelDownloadProgress = null;
+			const vectors = new Map<string, Float32Array>();
+			for (const file of this.files) {
+				const cacheKey = cacheKeyByPath.get(file.path);
+				const vector = cacheKey ? this.semanticEmbeddingCache.get(cacheKey) : undefined;
+				if (vector) vectors.set(file.path, vector);
 			}
 			this.semanticClusterByPath = detectSemanticClusters([...vectors.keys()], vectors);
 			this.semanticClusteringStatus = 'ready';

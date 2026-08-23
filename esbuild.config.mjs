@@ -10,12 +10,54 @@ if you want to view the source, please visit the github repository of this plugi
 
 const prod = process.argv[2] === 'production';
 
+// The `Xenova/all-MiniLM-L6-v2` embedding pipeline (see embeddingWorker.ts's
+// own docstring for the "Obsidian hängt" user report this exists to fix)
+// runs in its own Worker thread, not on Obsidian's main thread - but
+// Obsidian's plugin loader only ever reads main.js/manifest.json/
+// styles.css, and a Worker built from a path to a *second* shipped file
+// wouldn't survive Obsidian Mobile's sandboxed filesystem access anyway
+// (isDesktopOnly: false in manifest.json). So the worker is bundled here,
+// separately, into a single self-contained script, and its OUTPUT TEXT is
+// baked into the main bundle as a string constant (via `define` below) -
+// embeddingModel.ts's getWorker() then spins it up at runtime from a Blob
+// URL built from that string, needing no second file at all. This keeps
+// the released plugin exactly the three files Obsidian expects, on both
+// desktop and mobile.
+const workerResult = await esbuild.build({
+	entryPoints: ['src/graph/embeddingWorker.ts'],
+	bundle: true,
+	// No obsidian/electron/codemirror externals here (contrast the main
+	// build below) - embeddingWorker.ts never references any of those, it
+	// only ever imports '@huggingface/transformers'. Node builtins are
+	// still marked external for the same reason as the main build: nothing
+	// in here needs them bundled in, and the worker's own dynamic import()
+	// resolves the browser build (transformers.web.js) exactly like the
+	// main thread's own version already did before this change, using the
+	// same package.json "exports" condition matching (esbuild's default
+	// platform is 'browser' for both builds).
+	external: [...builtinModules],
+	format: 'iife',
+	target: 'es2021',
+	logLevel: 'info',
+	treeShaking: true,
+	minify: prod,
+	write: false,
+});
+const workerSource = workerResult.outputFiles[0].text;
+
 const context = await esbuild.context({
 	banner: {
 		js: banner,
 	},
 	entryPoints: ['src/main.ts'],
 	bundle: true,
+	define: {
+		// See this file's own comment above `workerResult` for the full
+		// reasoning - a build-time textual substitution, so main.js ends up
+		// with the worker's entire bundled source embedded as a plain string
+		// literal, no runtime file read involved.
+		__EMBEDDING_WORKER_SOURCE__: JSON.stringify(workerSource),
+	},
 	external: [
 		'obsidian',
 		'electron',
