@@ -69,30 +69,45 @@ interface EmbedResultMessage {
 	requestId: string;
 	vectors: { key: string; vector: Float32Array }[];
 }
-interface EmbedProgressMessage {
-	type: 'progress';
+interface DownloadProgressMessage {
+	type: 'download-progress';
 	requestId: string;
 	progress: number;
+}
+interface EmbedProgressMessage {
+	type: 'embed-progress';
+	requestId: string;
+	done: number;
+	total: number;
 }
 interface EmbedErrorMessage {
 	type: 'error';
 	requestId: string;
 	message: string;
 }
-type EmbedResponseMessage = EmbedResultMessage | EmbedProgressMessage | EmbedErrorMessage;
+type EmbedResponseMessage = EmbedResultMessage | DownloadProgressMessage | EmbedProgressMessage | EmbedErrorMessage;
+
+/**
+ * Surfaced to embedBatch()'s own caller as one of two distinct phases (not
+ * a single percentage) - see graphPane.ts's semanticClusteringBadgeText()
+ * for why: measured live in a real Obsidian vault (not the spike's own
+ * ~2.5ms/note figure, see MODEL_LOAD_TIMEOUT_MS's own docstring), embedding
+ * itself runs ~40-50ms/note, ~18x slower than that figure - the
+ * download-progress badge used to reach 100% almost immediately (a cached
+ * or fast-downloading model), then sit frozen there for the entire
+ * embedding phase after, tens of seconds even for a few hundred notes, with
+ * no visible feedback that anything was still happening at all.
+ */
+export type EmbedProgress = { phase: 'downloading'; percent: number } | { phase: 'embedding'; done: number; total: number };
 
 /**
  * Embeds every `{key, text}` pair in one round trip to the worker (not one
  * message per note) - a single request/response pair per refreshSemanticClusters()
  * call is simpler than a correlation scheme for many in-flight per-note
- * requests, and the actual sequential-per-note cost this batches over is
- * cheap regardless (~2.5ms/note per the spike write-up) once it's off the
- * main thread - there's nothing left here worth parallelizing further.
- * `onProgress` surfaces the worker's own model-load progress (0-100,
- * download percentage) - see graphPane.ts's semanticClusteringBadgeText()
- * for where that shows up.
+ * requests, and there's nothing here worth parallelizing further once it's
+ * off the main thread regardless.
  */
-export function embedBatch(items: { key: string; text: string }[], onProgress?: (percent: number) => void): Promise<Map<string, Float32Array>> {
+export function embedBatch(items: { key: string; text: string }[], onProgress?: (progress: EmbedProgress) => void): Promise<Map<string, Float32Array>> {
 	return new Promise((resolve, reject) => {
 		const w = getWorker();
 		const requestId = String(nextRequestId++);
@@ -100,8 +115,12 @@ export function embedBatch(items: { key: string; text: string }[], onProgress?: 
 		const handleMessage = (event: MessageEvent<EmbedResponseMessage>): void => {
 			const data = event.data;
 			if (data.requestId !== requestId) return; // some other in-flight embedBatch() call's response
-			if (data.type === 'progress') {
-				onProgress?.(data.progress);
+			if (data.type === 'download-progress') {
+				onProgress?.({ phase: 'downloading', percent: data.progress });
+				return;
+			}
+			if (data.type === 'embed-progress') {
+				onProgress?.({ phase: 'embedding', done: data.done, total: data.total });
 				return;
 			}
 			w.removeEventListener('message', handleMessage);

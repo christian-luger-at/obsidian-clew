@@ -109,11 +109,24 @@ async function handleEmbedRequest(event: MessageEvent<EmbedRequest>): Promise<vo
 	try {
 		const extractor = await loadModel((info) => {
 			if (info.status !== 'progress' && info.status !== 'progress_total') return;
-			self.postMessage({ type: 'progress', requestId, progress: Math.round(info.progress) });
+			self.postMessage({ type: 'download-progress', requestId, progress: Math.round(info.progress) });
 		});
 		const vectors: { key: string; vector: Float32Array }[] = [];
+		let done = 0;
+		// User-measured (not the spike's own ~2.5ms/note figure - a real
+		// Obsidian/Electron WASM run of this same model instead measured
+		// ~40-50ms/note, ~18x slower - see MODEL_LOAD_TIMEOUT_MS's own
+		// docstring in graphPane.ts): the download-progress badge above
+		// reaches 100% almost immediately once the model is warm, then
+		// froze there for the *entire* embedding phase - tens of seconds
+		// for a few hundred notes, which read as hung even though real
+		// work was happening the whole time. Reported every note (not
+		// throttled) - postMessage of two small numbers is cheap enough
+		// that batching it wouldn't meaningfully help, and every-note
+		// keeps the count exact rather than approximated.
 		for (const item of items) {
 			vectors.push({ key: item.key, vector: await embedOne(extractor, item.text) });
+			self.postMessage({ type: 'embed-progress', requestId, done: ++done, total: items.length });
 		}
 		// Transfers each vector's underlying buffer instead of structured-
 		// cloning it - cheap either way at this model's 384-float dimension,

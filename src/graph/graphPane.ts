@@ -47,7 +47,7 @@ import {
 	StringOperator,
 	StructuralCohesionBucket,
 } from './nodeGroups';
-import { embedBatch } from './embeddingModel';
+import { embedBatch, EmbedProgress } from './embeddingModel';
 import { detectSemanticClusters } from './semanticClustering';
 import { ClewAppearanceSettings, DEFAULT_APPEARANCE_SETTINGS, SavedView } from '../settings';
 import {
@@ -157,8 +157,40 @@ const MAX_SAVED_VIEWS = 10;
  * own docstring and embeddingModel.ts's embedBatch(), which this file now
  * calls instead of the old per-note embedText()/loadEmbeddingModel() pair.
  * Nothing here can block Obsidian's UI any more, at any vault size.
+ *
+ * User follow-up report on a larger vault: the badge showed "Downloading
+ * model… 100%" and then just sat there. Measured live (see
+ * EMBED_TIMEOUT_PER_NOTE_MS's own docstring below) - it hadn't actually
+ * frozen, it was still genuinely embedding notes with zero visible feedback
+ * once the download itself finished, and a fixed 45s budget (this
+ * constant's own former value) was nowhere near enough for a few hundred
+ * notes at the real, measured per-note cost. Fixed two ways: a scaling
+ * timeout (below) instead of one flat number, and a genuine "Embedding
+ * notes… done/total" progress phase (embeddingWorker.ts's embed-progress
+ * message, surfaced via semanticClusteringBadgeText()) so the badge keeps
+ * moving instead of freezing the moment the download itself is done.
  */
-const MODEL_LOAD_TIMEOUT_MS = 45_000;
+
+/**
+ * Per-note budget for the *embedding* phase's own share of the timeout
+ * below (the *download* phase already has no fixed timeout budget of its
+ * own worth separating out - see modelLoadTimeoutMs()'s calculation).
+ * Real, measured throughput in a live Obsidian vault (not the spike
+ * write-up's own ~2.5ms/note figure, which reflected a different
+ * environment) was ~40-50ms/note - generous headroom over that (a slower
+ * machine, longer note bodies) without letting a genuinely vast vault wait
+ * forever before ever reaching the panel's own "Could not compute
+ * embeddings" error state.
+ */
+const EMBED_TIMEOUT_PER_NOTE_MS = 200;
+
+/** Flat floor under the scaling budget below - covers the one-time model download/init itself (see this constant's own former flat-45s docstring, still accurate for *that* part) even when there are few or no notes left to actually embed. */
+const MODEL_LOAD_TIMEOUT_FLOOR_MS = 45_000;
+
+/** `refreshSemanticClusters()`'s own total timeout budget for one embedBatch() call, scaled by how many notes actually need embedding - see EMBED_TIMEOUT_PER_NOTE_MS/MODEL_LOAD_TIMEOUT_FLOOR_MS's own docstrings for the two components. */
+function modelLoadTimeoutMs(noteCount: number): number {
+	return MODEL_LOAD_TIMEOUT_FLOOR_MS + noteCount * EMBED_TIMEOUT_PER_NOTE_MS;
+}
 
 /**
  * How many entries a Diagnostics list (Orphans/Broken links/Isolated
@@ -725,15 +757,14 @@ export class GraphPane {
 	/** Drives the Color & size panel's "Computing embeddings…" status line (renderColorAndSizePanel()) while refreshSemanticClusters() is in flight - a first-time model download/load can take several seconds to tens of seconds (see the spike write-up), long enough that the panel would otherwise look frozen with no feedback at all. */
 	private semanticClusteringStatus: 'idle' | 'loading' | 'ready' | 'error' = 'idle';
 	/**
-	 * 0-100, or null before the first progress event/once embedding itself
-	 * (as opposed to the one-time model download) is underway -
-	 * embedBatch()'s onProgress callback feeds this so the "Computing
-	 * embeddings…" badge can read "Downloading model… N%" during that first,
-	 * potentially tens-of-seconds-long download instead of sitting static.
-	 * See MODEL_LOAD_TIMEOUT_MS's docstring for the user report this (and
-	 * the other related fix, embeddingWorker.ts) came out of.
+	 * null before the first progress event - embedBatch()'s onProgress
+	 * callback feeds this so semanticClusteringBadgeText() can show
+	 * "Downloading model… N%" during the one-time model download, then
+	 * "Embedding notes… done/total" for the (often much longer, see
+	 * EMBED_TIMEOUT_PER_NOTE_MS's own docstring) per-note phase after it -
+	 * instead of sitting static/frozen through either.
 	 */
-	private semanticModelDownloadProgress: number | null = null;
+	private semanticClusteringProgress: EmbedProgress | null = null;
 	/** Bumped at the start of every refreshSemanticClusters() call - lets that method tell whether it's still the most recently started one once its own async work resolves, so an overlapping older call can never clobber a newer one's result. See that method's own docstring for the user report this fixes. */
 	private semanticClusteringRequestId = 0;
 	private readonly appearanceButton: HTMLButtonElement;
@@ -5084,7 +5115,7 @@ export class GraphPane {
 	 * that triggered this call actually belongs to from here) - the actual
 	 * freeze was the main-thread-blocking embedding pipeline itself, fixed
 	 * by moving it into embeddingWorker.ts's Worker thread instead (see that
-	 * file's docstring and MODEL_LOAD_TIMEOUT_MS's own for the full story).
+	 * file's docstring and modelLoadTimeoutMs()'s own for the full story).
 	 */
 	private async refreshSemanticClusters(): Promise<void> {
 		// User report (follow-up to the Worker-offload fix above): the
@@ -5099,7 +5130,7 @@ export class GraphPane {
 		// criterion is active (e.g. picking the criterion type, then
 		// toggling the group on) fired multiple *overlapping* calls, all
 		// racing to write the same shared semanticClusteringStatus/
-		// semanticModelDownloadProgress fields - whichever call's own
+		// semanticClusteringProgress fields - whichever call's own
 		// `finally` happened to run last "won", even if an *earlier* call
 		// had already succeeded. `semanticClusteringRequestId` makes only
 		// the most recently started call allowed to write any of that
@@ -5110,7 +5141,7 @@ export class GraphPane {
 		// can no longer clobber a newer one that already finished first.
 		const myRequestId = ++this.semanticClusteringRequestId;
 		this.semanticClusteringStatus = 'loading';
-		this.semanticModelDownloadProgress = null;
+		this.semanticClusteringProgress = null;
 		if (this.colorAndSizePanelEl.isShown()) this.renderColorAndSizePanel();
 		if (this.filterPanelEl.isShown()) this.renderFilterPanel();
 		try {
@@ -5131,7 +5162,7 @@ export class GraphPane {
 			}
 			if (toEmbed.length > 0) {
 				// Raced against a timeout, not awaited bare - see
-				// MODEL_LOAD_TIMEOUT_MS's own docstring: a stalled/firewalled
+				// modelLoadTimeoutMs()'s own docstring: a stalled/firewalled
 				// fetch to the Hugging Face CDN inside the worker would
 				// otherwise hang this forever with no way to ever reach the
 				// `catch` block below. The worker's own model (memoized for
@@ -5140,14 +5171,15 @@ export class GraphPane {
 				// this races it out, the *next* attempt (reopening this
 				// panel) picks up that already-warm worker immediately
 				// instead of spinning up a new one.
+				const timeoutMs = modelLoadTimeoutMs(toEmbed.length);
 				const fresh = await Promise.race([
-					embedBatch(toEmbed, (percent) => {
+					embedBatch(toEmbed, (progress) => {
 						if (myRequestId !== this.semanticClusteringRequestId) return; // a newer call has since started - its own progress events are what should drive the badge now
-						this.semanticModelDownloadProgress = percent;
+						this.semanticClusteringProgress = progress;
 						this.updateSemanticClusteringBadgeText();
 					}),
 					new Promise<never>((_, reject) => {
-						window.setTimeout(() => reject(new Error(`Clew: embedding model load timed out after ${MODEL_LOAD_TIMEOUT_MS / 1000}s`)), MODEL_LOAD_TIMEOUT_MS);
+						window.setTimeout(() => reject(new Error(`Clew: embedding timed out after ${Math.round(timeoutMs / 1000)}s`)), timeoutMs);
 					}),
 				]);
 				// Still cache whatever came back even if superseded below -
@@ -5157,7 +5189,7 @@ export class GraphPane {
 				for (const [key, vector] of fresh) this.semanticEmbeddingCache.set(key, vector);
 			}
 			if (myRequestId !== this.semanticClusteringRequestId) return; // superseded - a newer call is already running (or has already finished) and will paint the real, current result instead
-			this.semanticModelDownloadProgress = null;
+			this.semanticClusteringProgress = null;
 			const vectors = new Map<string, Float32Array>();
 			for (const file of this.files) {
 				const cacheKey = cacheKeyByPath.get(file.path);
@@ -5177,39 +5209,56 @@ export class GraphPane {
 			// newer, still-in-flight (or already-finished) call has put on
 			// screen" reasoning as the try/catch guards above.
 			if (myRequestId === this.semanticClusteringRequestId) {
-				this.semanticModelDownloadProgress = null;
+				this.semanticClusteringProgress = null;
 				if (this.colorAndSizePanelEl.isShown()) this.renderColorAndSizePanel();
 				if (this.filterPanelEl.isShown()) this.renderFilterPanel();
 			}
 		}
 	}
 
+	/** Every prefix semanticClusteringBadgeText() can produce - shared with updateSemanticClusteringBadgeText()'s own DOM patch below so the two can't silently drift apart. */
+	private static readonly SEMANTIC_BADGE_PREFIXES = ['Computing embeddings…', 'Downloading model…', 'Embedding notes…'];
+
 	/**
 	 * A direct text-node patch, not a renderColorAndSizePanel()/
-	 * renderFilterPanel() call - the download-progress callback above can
-	 * fire many times over the download's ~2s (one per chunk), and a full
-	 * panel rebuild on every tick would both be wasteful and drop whatever
-	 * the user was mid-typing in an unrelated field in that panel at the
-	 * time. Matched by text prefix, not a dedicated element reference -
-	 * badges aren't retained across the full re-renders every other status
-	 * change already goes through (error/ready), so there's no stable
-	 * handle to hold onto between ticks; matching by content is what the
-	 * `community` criterion's own same-class badge relies on not colliding
-	 * with, so this checks the exact same two prefixes renderCriterionControls()
-	 * writes.
+	 * renderFilterPanel() call - the progress callback above can fire many
+	 * times over the download, and once more per note during the (often
+	 * much longer, see EMBED_TIMEOUT_PER_NOTE_MS's own docstring) embedding
+	 * phase after it - a full panel rebuild on every one of those would both
+	 * be wasteful and drop whatever the user was mid-typing in an unrelated
+	 * field in that panel at the time. Matched by text prefix, not a
+	 * dedicated element reference - badges aren't retained across the full
+	 * re-renders every other status change already goes through
+	 * (error/ready), so there's no stable handle to hold onto between ticks;
+	 * matching by content is what the `community` criterion's own
+	 * same-class badge relies on not colliding with.
 	 */
 	private updateSemanticClusteringBadgeText(): void {
 		const text = this.semanticClusteringBadgeText();
 		for (const el of Array.from(this.containerEl.querySelectorAll<HTMLElement>('.clew-criterion-community-badge'))) {
-			if (el.textContent === 'Computing embeddings…' || el.textContent?.startsWith('Downloading model…')) {
+			if (GraphPane.SEMANTIC_BADGE_PREFIXES.some((prefix) => el.textContent?.startsWith(prefix))) {
 				el.textContent = text;
 			}
 		}
 	}
 
-	/** Single source of truth for the "still working" badge text - used both by the live-patch above and by the initial render in renderCriterionControls(), so the two can never drift out of sync with each other. */
+	/**
+	 * Single source of truth for the "still working" badge text - used both
+	 * by the live-patch above and by the initial render in
+	 * renderCriterionControls(), so the two can never drift out of sync with
+	 * each other. Two distinct phases, not one blended percentage - see
+	 * EmbedProgress's own docstring in embeddingModel.ts for why: the
+	 * download usually finishes in well under a second once the model is
+	 * cached, but the embedding phase after it can run tens of seconds to
+	 * minutes for a large vault (real, measured throughput - see
+	 * EMBED_TIMEOUT_PER_NOTE_MS), and showing "100%" frozen through all of
+	 * that read as a hang even though it wasn't one.
+	 */
 	private semanticClusteringBadgeText(): string {
-		return this.semanticModelDownloadProgress !== null ? `Downloading model… ${this.semanticModelDownloadProgress}%` : 'Computing embeddings…';
+		const progress = this.semanticClusteringProgress;
+		if (!progress) return 'Computing embeddings…';
+		if (progress.phase === 'downloading') return `Downloading model… ${progress.percent}%`;
+		return `Embedding notes… ${progress.done}/${progress.total}`;
 	}
 
 	/** Synchronous repaint using whatever's already in noteContentCache - the part of applyNodeGroups() every group-definition change needs *immediately*, split out so refreshNodeGroupContent() below can call it again once fresh content lands, without redoing the button-state/graph-guard bookkeeping twice. */
