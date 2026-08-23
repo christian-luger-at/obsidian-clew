@@ -115,8 +115,8 @@ async function handleEmbedRequest(event: MessageEvent<EmbedRequest>): Promise<vo
 		let done = 0;
 		// User-measured (not the spike's own ~2.5ms/note figure - a real
 		// Obsidian/Electron WASM run of this same model instead measured
-		// ~40-50ms/note, ~18x slower - see MODEL_LOAD_TIMEOUT_MS's own
-		// docstring in graphPane.ts): the download-progress badge above
+		// ~40-50ms/note, ~18x slower - see IDLE_TIMEOUT_MS's own docstring
+		// in graphPane.ts): the download-progress badge above
 		// reaches 100% almost immediately once the model is warm, then
 		// froze there for the *entire* embedding phase - tens of seconds
 		// for a few hundred notes, which read as hung even though real
