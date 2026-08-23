@@ -21,8 +21,8 @@ import FA2LayoutSupervisor from 'graphology-layout-forceatlas2/worker';
  * though - measured directly: 50 iterations takes ~900ms at 2,000 nodes
  * (fine), ~5.8s at 5,000 (eats the whole settle budget for one block), and
  * would be completely impractical at the 10,000-node vault scale
- * (spike/DEVELOPMENT.md's stress test) - Barnes-Hut exists specifically for
- * that regime and is kept for it.
+ * (TESTING.md's rendering-at-scale stress test) - Barnes-Hut exists
+ * specifically for that regime and is kept for it.
  */
 const EXACT_REPULSION_NODE_LIMIT = 2000;
 

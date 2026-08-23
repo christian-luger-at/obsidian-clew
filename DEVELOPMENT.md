@@ -53,7 +53,6 @@ Nearly every file under `src/` opens with a docstring explaining what it does an
 | `npm run gen-history-vault` | Regenerate the ~290-note demo vault docs screenshots use |
 | `npm run docs:shots` / `docs:shots:showcase` | Regenerate docs site screenshots / the external showcase GIF |
 | `npm run sync-private-vault [-- <path>]` | Build, then copy the three plugin files into a real vault (a copy, not a symlink) |
-| `npm run spike:build` | Build the standalone rendering perf harness (`spike/`) |
 
 ## Testing
 

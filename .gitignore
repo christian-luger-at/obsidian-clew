@@ -27,9 +27,6 @@ data.json
 # Local release staging (assets are uploaded to GitHub releases instead)
 releases/
 
-# Spike harness build output (source lives in spike/, this is generated)
-spike/dist/
-
 # Generated spike test vault (scripts/gen-graph-vault.mjs) - never lands in git
 spike-vault/
 spike-vault.zip

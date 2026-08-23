@@ -7,7 +7,6 @@ export default defineConfig(
 		'node_modules',
 		'dist',
 		'releases',
-		'spike',
 		'spike-vault',
 		'test-vault',
 		'.screenshot-vault',

@@ -76,15 +76,7 @@ Every `npm run build` after that updates the vault automatically. Open `test-vau
 
 Validated once against a 10,000-node graph; two tools remain as standing regression checks for any rendering/layout change (see [DEVELOPMENT.md's performance tests](DEVELOPMENT.md#2-performance-tests-10000-note-regressions) for the non-rendering, automated side).
 
-**Browser harness (no Obsidian needed)**:
-
-```bash
-npm run spike:build
-python3 -m http.server 4173 --directory spike   # not file:// - module loading needs a real server
-# open http://localhost:4173
-```
-
-Renders a synthetic 10k-node graph using the real `src/graph/` modules; the on-screen HUD logs settle time and rolling frame time.
+**Browser harness (no Obsidian needed)**: lives in its own repo, [obsidian-clew-spike](https://github.com/christian-luger-at/obsidian-clew-spike) (moved out of this one so Obsidian's community-plugin Scorecard scan - which covers this entire repo's source, not just what's bundled into the shipped `main.js` - doesn't flag the harness's unavoidable `document.createElement()` call; see that repo's own README). It includes this repo as a git submodule, so it always exercises the exact same `src/graph/` modules the real plugin uses. Renders a synthetic 10k-node graph; the on-screen HUD logs settle time and rolling frame time.
 
 **A large test vault (only testable in the real app)**:
 
@@ -94,7 +86,7 @@ node scripts/gen-graph-vault.mjs   # writes ./spike-vault
 
 Symlink the plugin the same file-by-file way as `test-vault` above, open it, and confirm pan/zoom/click stay smooth and the ~100 cover-image notes render their image (exercises `app.vault.getResourcePath()` feeding a real WebGL texture, which the browser harness alone doesn't prove).
 
-`spike-vault/` and `spike/dist/` are gitignored.
+`spike-vault/` is gitignored.
 
 **Verified on a real tablet** (iPad, Obsidian mobile, GitHub issue #7, closed): the standalone graph view, the ForceAtlas2 layout Worker (spawned from a Blob URL - works fine there), WebGL rendering, pan/zoom/tap, hover-tooltips/hover-highlight-neighbors on tap, and drag-to-pin all work correctly - the touch captor needs its own `touchup` handler alongside the pointer one (see `setupNodeDragging()`'s captor-agnostic `renderer.on('moveBody', ...)`).
 
