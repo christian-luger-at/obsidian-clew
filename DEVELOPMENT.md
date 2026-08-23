@@ -39,36 +39,7 @@ esbuild watch mode - rebuilds `main.js` on every save.
 1. Open the test vault in Obsidian, enable "Clew" under **Settings → Community plugins**.
 2. After a code change: save, wait ~1-2s for the rebuild, then Cmd+P → **Reload plugins**.
 
-## Folder structure
-
-```
-src/
-  main.ts                  # plugin entry point, lifecycle, global error listeners
-  settings.ts               # persisted settings shape + defaults
-  settingsTab.ts             # Settings → Community plugins → Clew
-  errorReporting.ts           # console + optional copyable Notice for Clew's own errors
-  graph/
-    vaultGraph.ts             # builds a graphology graph from vault files + links
-    graphPane.ts               # the graph view's rendering + every panel (toolbar, Filter, Color & size, Diagnostics, Focus, Find path, Timeline, Appearance, Saved views)
-    standaloneGraphView.ts     # the ItemView hosting GraphPane (ribbon icon / "Open graph view")
-    graphEmbed.ts              # ```clew-graph code-fence embed
-    renderer.ts                 # sigma.js setup, node/edge programs
-    layoutRunner.ts              # ForceAtlas2 (Worker-based)
-    hierarchicalLayout.ts / radialLayout.ts / circularLayout.ts / timelineLayout.ts
-    nodeGroups.ts               # Color & size / Filter's shared criteria engine
-    filter.ts                    # FilterPreset on top of nodeGroups.ts
-    pathfinding.ts               # Yen's k-shortest-paths, hub-avoidance weighting
-    diagnostics.ts                # orphans / broken links / isolated clusters
-    egoGraph.ts                   # BFS ego-network (Focus panel)
-    graphAnalytics.ts              # betweenness / PageRank wrappers
-    stagnation.ts                  # Louvain communities, staleness, structural deviation
-    semanticClustering.ts / embeddingModel.ts / embeddingWorker.ts  # local-embedding note clustering (main-thread RPC client + the Worker thread it drives)
-    theme.ts                       # Obsidian CSS-variable → graph color mapping
-    timeline.ts                    # ctime-based replay
-    visibilityFade.ts               # Filter/Focus's shared fade-in/out tracker
-```
-
-Keep `main.ts` limited to lifecycle; split features into their own modules - see [AGENTS.md](AGENTS.md) for conventions.
+Nearly every file under `src/` opens with a docstring explaining what it does and why - `ls src/graph/` plus those is a more reliable map than a hand-maintained tree here would stay. Keep `main.ts` limited to lifecycle; split features into their own modules - see [AGENTS.md](AGENTS.md) for conventions.
 
 ## Build commands
 
