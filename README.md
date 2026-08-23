@@ -63,7 +63,7 @@ Nothing here edits your notes - filters, groups, and appearance settings are Cle
 ## Compatibility
 
 - Requires Obsidian **1.12.0** or later.
-- Works on desktop. Mobile is declared supported (`isDesktopOnly: false`) but hasn't been verified on a tablet yet - see [DEVELOPMENT.md](DEVELOPMENT.md).
+- Works on desktop and has been verified on a real tablet (iPad, Obsidian mobile) - see [DEVELOPMENT.md](DEVELOPMENT.md) for details.
 
 ## Support
 
