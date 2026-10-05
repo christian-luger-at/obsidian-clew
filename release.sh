@@ -115,7 +115,8 @@ fi
 
 # Release notes: use --notes if provided, otherwise auto-generate them from the
 # Conventional Commits since the previous tag, grouped into Features / Fixes /
-# Other. Noise (chore/ci/test/docs/style/build) is omitted.
+# Dependencies / Other. Housekeeping (chore/ci/test/docs/style/build) is left
+# out, except when it is all a release contains - see the Maintenance fallback.
 if [[ -z "$NOTES" ]]; then
 	# Find the previous tag (before the one we're about to create). Note:
 	# $TAG itself doesn't exist as a git ref yet at this point - tagging
@@ -130,16 +131,44 @@ if [[ -z "$NOTES" ]]; then
 	[[ -n "$PREV_TAG" ]] && RANGE="${PREV_TAG}..HEAD"
 
 	SUBJECTS=$(git log "$RANGE" --no-merges --pretty='%s' || true)
-	FEATS=$(printf '%s\n' "$SUBJECTS" | sed -n -E 's/^feat(\([^)]*\))?(!)?: /- /p' || true)
-	FIXES=$(printf '%s\n' "$SUBJECTS" | sed -n -E 's/^fix(\([^)]*\))?(!)?: /- /p' || true)
-	OTHERS=$(printf '%s\n' "$SUBJECTS" \
+	# The version-bump commit is mechanical and present in every single release.
+	SUBJECTS=$(printf '%s\n' "$SUBJECTS" | { grep -vE '^chore: bump version to v' || true; })
+
+	# Dependency work is split off first, so the housekeeping filter below can't
+	# swallow it: a plain `chore:` is dropped as noise, which would leave a
+	# release made only of dependency bumps with notes saying just "Release
+	# X.Y.Z". Matched three ways: the `chore(deps)` scope Dependabot and
+	# .github/dependabot.yml produce, a hand-written `chore: bump <something>`
+	# (the version-bump commit is already filtered out above), and any subject
+	# naming a GHSA or CVE id.
+	DEPS_RE='^(chore|build|fix)\(deps\)(!)?: |^chore(\([^)]*\))?(!)?: bump |GHSA-|CVE-'
+	DEPS_RAW=$(printf '%s\n' "$SUBJECTS" | { grep -E "$DEPS_RE" || true; })
+	REST=$(printf '%s\n' "$SUBJECTS" | { grep -vE "$DEPS_RE" || true; })
+
+	FEATS=$(printf '%s\n' "$REST" | sed -n -E 's/^feat(\([^)]*\))?(!)?: /- /p' || true)
+	FIXES=$(printf '%s\n' "$REST" | sed -n -E 's/^fix(\([^)]*\))?(!)?: /- /p' || true)
+	DEPS=$(printf '%s\n' "$DEPS_RAW" \
+		| sed -E 's/^(chore|build|fix)(\([^)]*\))?(!)?: //' \
+		| sed '/^$/d; s/^/- /')
+	OTHERS=$(printf '%s\n' "$REST" \
 		| { grep -vE '^(feat|fix|chore|ci|test|docs|style|refactor|build|perf)(\([^)]*\))?(!)?: ' || true; } \
 		| sed '/^$/d; s/^/- /')
 
 	NOTES=""
 	[[ -n "$FEATS"  ]] && NOTES+="### Features"$'\n'"$FEATS"$'\n\n'
 	[[ -n "$FIXES"  ]] && NOTES+="### Fixes"$'\n'"$FIXES"$'\n\n'
+	[[ -n "$DEPS"   ]] && NOTES+="### Dependencies"$'\n'"$DEPS"$'\n\n'
 	[[ -n "$OTHERS" ]] && NOTES+="### Other"$'\n'"$OTHERS"$'\n\n'
+
+	# A release that is nothing but housekeeping still has to say what it was:
+	# listing it beats the bare "Release X.Y.Z" those used to get.
+	if [[ -z "$NOTES" ]]; then
+		MAINT=$(printf '%s\n' "$REST" \
+			| { grep -E '^(chore|ci|test|docs|style|refactor|build|perf)(\([^)]*\))?(!)?: ' || true; } \
+			| sed -E 's/^(chore|ci|test|docs|style|refactor|build|perf)(\([^)]*\))?(!)?: //' \
+			| sed '/^$/d; s/^/- /')
+		[[ -n "$MAINT" ]] && NOTES="### Maintenance"$'\n'"$MAINT"$'\n\n'
+	fi
 
 	[[ -z "$NOTES" ]] && NOTES="Release ${TAG}"
 

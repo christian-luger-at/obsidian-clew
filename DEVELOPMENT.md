@@ -111,7 +111,7 @@ npm run release:publish            # build (if not already) + tag + push + GitHu
 npm run release:patch / :minor / :major   # bump + build + publish in one command
 ```
 
-Release notes auto-generate from [Conventional Commits](https://www.conventionalcommits.org/) since the last tag (`feat:`→Features, `fix:`→Fixes, everything else→Other); pass `--notes "…"` to override. Requires the [GitHub CLI](https://cli.github.com/) authenticated, a clean tree, and asks for confirmation before pushing anything.
+Release notes auto-generate from [Conventional Commits](https://www.conventionalcommits.org/) since the last tag (`feat:`→Features, `fix:`→Fixes, `chore(deps):` or a subject naming a GHSA/CVE id→Dependencies, other unprefixed subjects→Other; plain `chore:`/`docs:`/`ci:` are left out unless a release contains nothing else, then they appear under Maintenance); pass `--notes "…"` to override. Requires the [GitHub CLI](https://cli.github.com/) authenticated, a clean tree, and asks for confirmation before pushing anything.
 
 Publishing triggers the `Attest release build` CI workflow, which rebuilds `main.js`, generates a signed build-provenance attestation for all three assets, and re-uploads them - within ~30s the public release carries CI-built, attested assets. Verify with `gh attestation verify main.js --repo christian-luger-at/obsidian-clew`.
 
