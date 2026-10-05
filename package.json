@@ -42,7 +42,7 @@
 		"@types/node": "^22.15.17",
 		"@vitest/coverage-v8": "^4.1.10",
 		"esbuild": "0.28.2",
-		"eslint": "^9.39.4",
+		"eslint": "^10.11.0",
 		"eslint-plugin-obsidianmd": "^0.4.2",
 		"globals": "^17.13.0",
 		"jiti": "^2.6.1",
