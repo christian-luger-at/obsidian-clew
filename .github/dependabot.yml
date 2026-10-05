@@ -24,6 +24,16 @@ updates:
       commit-message:
           prefix: chore(deps)
       open-pull-requests-limit: 5
+      ignore:
+          # eslint-plugin-obsidianmd (including its latest 0.4.2) declares
+          # @eslint/js ^9.30.1 as a peer. A bump to 10 fails to install with
+          # ERESOLVE, and Dependabot's own lockfile only got through CI by
+          # producing an invalid peer tree. eslint itself can be on 10 (the
+          # plugin accepts >=9.19.0); only this package has to stay on 9. Drop
+          # this once the plugin lists @eslint/js 10 as supported.
+          - dependency-name: '@eslint/js'
+            update-types:
+                - version-update:semver-major
       groups:
           # Listed first because Dependabot assigns a package to the first group
           # it matches, and these must not fall into dev-dependencies below.
