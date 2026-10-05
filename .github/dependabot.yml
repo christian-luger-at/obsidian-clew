@@ -34,6 +34,17 @@ updates:
           - dependency-name: '@eslint/js'
             update-types:
                 - version-update:semver-major
+
+          # typescript-eslint (8.71.0, the latest) declares typescript
+          # >=4.8.4 <6.1.0 as a peer, so TypeScript 7 fails to install with
+          # ERESOLVE and the lint toolchain cannot run on it. TypeScript 6 would
+          # also need tsconfig changes (moduleResolution node is deprecated,
+          # import.meta.dirname in eslint.config.mts stops type-checking) for no
+          # gain, so all majors are held. Drop this once typescript-eslint
+          # supports 7.
+          - dependency-name: typescript
+            update-types:
+                - version-update:semver-major
       groups:
           # Listed first because Dependabot assigns a package to the first group
           # it matches, and these must not fall into dev-dependencies below.
