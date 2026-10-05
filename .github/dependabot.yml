@@ -1,0 +1,64 @@
+# Dependency updates.
+#
+# Security fixes arrive separately, from the repository's "Dependabot security
+# updates" setting, which opens a PR per open alert. This file adds the routine
+# side: scheduled version bumps, so a dependency is usually already current by
+# the time an advisory lands.
+#
+# Unlike a plugin that bundles nothing, Clew ships its runtime `dependencies`
+# (sigma, graphology, dagre, @huggingface/transformers, ...) inside main.js. So
+# the two kinds are treated differently below: development-only churn is
+# batched into one weekly PR, while every runtime dependency gets its own PR,
+# because a bump there changes what installed users actually run.
+#
+# Dependabot does not touch the `overrides` block in package.json (sharp,
+# adm-zip, fast-uri, ...). Those pins exist to force a patched transitive
+# version and have to be raised by hand when an advisory lands.
+version: 2
+updates:
+    - package-ecosystem: npm
+      directory: /
+      schedule:
+          interval: weekly
+          day: monday
+      commit-message:
+          prefix: chore(deps)
+      open-pull-requests-limit: 5
+      groups:
+          # Listed first because Dependabot assigns a package to the first group
+          # it matches, and these must not fall into dev-dependencies below.
+          #
+          # vitest and its coverage provider have to move in one PR:
+          # @vitest/coverage-v8 pins vitest to an exact version as a peer, so a
+          # PR bumping only one of the two cannot install and its CI is red by
+          # construction. Majors are included here for exactly that reason, even
+          # though majors are otherwise kept separate.
+          vitest:
+              patterns:
+                  - vitest
+                  - '@vitest/*'
+              update-types:
+                  - major
+                  - minor
+                  - patch
+
+          # One PR a week for the routine tooling churn rather than one per
+          # package. Majors stay separate: those can break the toolchain and
+          # deserve their own review. Runtime dependencies are deliberately not
+          # grouped (see the header) and so open one PR each.
+          dev-dependencies:
+              dependency-type: development
+              update-types:
+                  - minor
+                  - patch
+
+    - package-ecosystem: github-actions
+      directory: /
+      schedule:
+          interval: monthly
+      commit-message:
+          prefix: chore(deps)
+      groups:
+          github-actions:
+              patterns:
+                  - '*'
