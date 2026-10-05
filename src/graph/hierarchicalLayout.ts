@@ -71,11 +71,6 @@ export function runHierarchicalLayout(graph: Graph, options: HierarchicalLayoutO
 		dagreGraph.setEdge(source, target);
 	});
 
-	// @dagrejs/dagre's own `layout()` signature resolves its graphlib.Graph
-	// parameter to fully-untyped generics (Graph<any, any, any>) - passing
-	// dagreGraph (itself untyped for the same reason) here is exactly what
-	// the library expects, not a sign this code is actually unsafe.
-	// eslint-disable-next-line @typescript-eslint/no-unsafe-argument -- dagre's layout() signature itself resolves to fully-untyped generics, see comment above
 	dagre.layout(dagreGraph);
 
 	dagreGraph.nodes().forEach((node: string) => {
